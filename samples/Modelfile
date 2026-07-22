@@ -1,0 +1,6 @@
+FROM glm-ocr:latest
+TEMPLATE {{ .Prompt }}
+RENDERER glm-ocr
+PARSER glm-ocr
+PARAMETER temperature 0
+PARAMETER num_ctx 16384

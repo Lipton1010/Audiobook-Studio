@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+
+# Books, audio, and generated output stay local. PDFs are purchased
+# copyrighted books and must never be pushed; audio is regenerable.
+*.pdf
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.jpg
+app/jobs/
+app/voices/
+audiobooks/

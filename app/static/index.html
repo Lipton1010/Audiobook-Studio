@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audiobook Studio</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1d2026; --panel2: #24282f; --line: #32363e;
+    --text: #e8e9eb; --dim: #9aa0aa; --accent: #e8a33d; --accent2: #5fb2ff;
+    --ok: #5fce7f; --bad: #e56868;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 "Segoe UI", system-ui, sans-serif; }
+  header { padding: 18px 28px; border-bottom: 1px solid var(--line);
+           display: flex; align-items: baseline; gap: 14px; }
+  header h1 { margin: 0; font-size: 20px; letter-spacing: .4px; }
+  header h1 span { color: var(--accent); }
+  header .sub { color: var(--dim); font-size: 13px; }
+  main { max-width: 1060px; margin: 0 auto; padding: 24px 28px 80px; }
+  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 1.2px;
+       color: var(--dim); margin: 30px 0 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line);
+          border-radius: 10px; padding: 16px; }
+  .card .name { font-weight: 600; margin-bottom: 2px; }
+  .card .meta { color: var(--dim); font-size: 13px; margin-bottom: 12px; }
+  button { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+           border-radius: 7px; padding: 7px 14px; font-size: 14px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #1a1408; font-weight: 600; }
+  button.danger:hover { border-color: var(--bad); color: var(--bad); }
+  .job { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+         padding: 16px 18px; margin-bottom: 14px; }
+  .job .row1 { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .job .title { font-weight: 600; font-size: 16px; }
+  .badge { font-size: 12px; padding: 2px 10px; border-radius: 20px;
+           border: 1px solid var(--line); color: var(--dim); }
+  .badge.running { color: var(--accent); border-color: var(--accent); }
+  .badge.done { color: var(--ok); border-color: var(--ok); }
+  .badge.failed, .badge.interrupted { color: var(--bad); border-color: var(--bad); }
+  .spacer { flex: 1; }
+  .bar { height: 7px; background: var(--panel2); border-radius: 4px; overflow: hidden; margin: 10px 0 4px; }
+  .bar i { display: block; height: 100%; background: var(--accent2); border-radius: 4px;
+           transition: width .6s; }
+  .job .detail { color: var(--dim); font-size: 13px; }
+  .job .players { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+  .job .players .p { display: flex; align-items: center; gap: 10px; }
+  .job .players audio { flex: 1; height: 34px; }
+  .job .players a { color: var(--accent2); font-size: 13px; text-decoration: none; }
+  pre.log { background: #101216; border: 1px solid var(--line); border-radius: 8px;
+            padding: 10px 12px; font-size: 12px; color: var(--dim);
+            max-height: 180px; overflow: auto; white-space: pre-wrap; }
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+           border-radius: 12px; padding: 24px; width: 430px; max-width: 92vw; }
+  dialog::backdrop { background: rgba(0,0,0,.55); }
+  dialog h3 { margin: 0 0 4px; }
+  dialog .meta { color: var(--dim); font-size: 13px; margin-bottom: 16px; }
+  label { display: block; font-size: 13px; color: var(--dim); margin: 12px 0 4px; }
+  input[type=number], input[type=text] {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 7px; padding: 7px 10px; width: 110px; font-size: 14px; }
+  input[type=text] { width: 100%; }
+  .radio-row { display: flex; gap: 10px; margin-top: 4px; }
+  .radio-row label { display: flex; align-items: center; gap: 7px; margin: 0;
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 7px;
+    padding: 9px 12px; cursor: pointer; flex: 1; color: var(--text); font-size: 13px; }
+  .radio-row label.sel { border-color: var(--accent); }
+  .radio-row .hint { color: var(--dim); font-size: 12px; }
+  .dlg-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 22px; }
+  .pagerow { display: flex; gap: 14px; }
+  .empty { color: var(--dim); padding: 18px 4px; }
+  .err { color: var(--bad); font-size: 13px; margin-top: 8px; min-height: 18px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Audiobook <span>Studio</span></h1>
+  <div class="sub">PDF in, narrated audiobook out. One GPU stage at a time.</div>
+</header>
+<main>
+  <h2>Jobs</h2>
+  <div id="jobs"></div>
+  <h2>Library</h2>
+  <div id="library" class="grid"></div>
+  <h2>Voices</h2>
+  <div class="card" style="max-width:560px">
+    <div id="voices"></div>
+    <div style="display:flex; gap:10px; align-items:center; margin-top:12px">
+      <input type="file" id="voice-file" accept=".wav,.mp3,.flac,.ogg" style="color:var(--dim); font-size:13px">
+      <button class="primary" onclick="uploadVoice()">Upload voice</button>
+    </div>
+    <div class="meta" style="margin-top:10px">A clean 10–20 second clip works best; longer uploads are trimmed to 20s.
+    Only upload voices you have the rights to use (your own, licensed, or royalty free).</div>
+    <div class="err" id="voice-err"></div>
+  </div>
+</main>
+
+<dialog id="dlg">
+  <h3 id="dlg-title"></h3>
+  <div class="meta" id="dlg-meta"></div>
+  <label>Audiobook title</label>
+  <input type="text" id="f-title">
+  <label>Pipeline</label>
+  <div class="radio-row" id="path-row">
+    <label id="lbl-A"><input type="radio" name="path" value="A">
+      <span>Path A<br><span class="hint">text layer, novels</span></span></label>
+    <label id="lbl-B"><input type="radio" name="path" value="B">
+      <span>Path B<br><span class="hint">GLM-OCR, textbooks</span></span></label>
+  </div>
+  <label>Voice</label>
+  <select id="f-voice" style="background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:7px; padding:7px 10px; width:100%; font-size:14px"></select>
+  <label>Page range</label>
+  <div class="pagerow">
+    <span>from <input type="number" id="f-from" min="1"></span>
+    <span>to <input type="number" id="f-to" min="1"></span>
+  </div>
+  <div class="err" id="dlg-err"></div>
+  <div class="dlg-actions">
+    <button onclick="dlg.close()">Cancel</button>
+    <button class="primary" onclick="createJob()">Start job</button>
+  </div>
+</dialog>
+
+<script>
+const dlg = document.getElementById('dlg');
+let dlgBook = null;
+let library = [];
+
+function fmtBytes(b) {
+  if (b > 1e9) return (b/1e9).toFixed(2) + ' GB';
+  if (b > 1e6) return (b/1e6).toFixed(1) + ' MB';
+  return Math.round(b/1024) + ' KB';
+}
+function fmtEta(s) {
+  if (s == null) return '';
+  s = Math.round(s);
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60);
+  if (h) return `about ${h}h ${m}m left`;
+  if (m) return `about ${m}m left`;
+  return 'under a minute left';
+}
+
+async function loadLibrary() {
+  const r = await fetch('/api/library');
+  library = (await r.json()).items;
+  const el = document.getElementById('library');
+  el.innerHTML = '';
+  for (const b of library) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="name">${b.name}</div>
+      <div class="meta">${b.pages ?? '?'} pages · suggested: Path ${b.suggested_path}</div>`;
+    const btn = document.createElement('button');
+    btn.className = 'primary';
+    btn.textContent = 'New audiobook';
+    btn.onclick = () => openDlg(b);
+    card.appendChild(btn);
+    el.appendChild(card);
+  }
+}
+
+function openDlg(book) {
+  dlgBook = book;
+  document.getElementById('dlg-title').textContent = book.name;
+  document.getElementById('dlg-meta').textContent = `${book.pages} pages · ${book.path}`;
+  document.getElementById('f-title').value = book.name;
+  document.getElementById('f-from').value = 1;
+  document.getElementById('f-to').value = book.pages;
+  document.getElementById('dlg-err').textContent = '';
+  document.querySelector(`input[name=path][value=${book.suggested_path}]`).checked = true;
+  markPath();
+  dlg.showModal();
+}
+document.getElementById('path-row').addEventListener('change', markPath);
+function markPath() {
+  const v = document.querySelector('input[name=path]:checked')?.value;
+  document.getElementById('lbl-A').classList.toggle('sel', v === 'A');
+  document.getElementById('lbl-B').classList.toggle('sel', v === 'B');
+}
+
+let voices = [];
+
+async function loadVoices() {
+  const r = await fetch('/api/voices');
+  voices = (await r.json()).voices;
+  const sel = document.getElementById('f-voice');
+  const cur = sel.value;
+  sel.innerHTML = voices.map(v => `<option value="${v.name}">${v.name}</option>`).join('');
+  if (voices.some(v => v.name === cur)) sel.value = cur;
+  const list = document.getElementById('voices');
+  list.innerHTML = '';
+  for (const v of voices) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex; align-items:center; gap:10px; padding:4px 0';
+    row.innerHTML = `<span>${v.name}</span><span class="spacer"></span>`;
+    if (!v.builtin) {
+      row.appendChild(btn('Delete', 'danger', async () => {
+        if (confirm(`Delete voice "${v.name}"?`)) {
+          await fetch(`/api/voices/${encodeURIComponent(v.name)}/delete`, {method: 'POST'});
+          loadVoices();
+        }
+      }));
+    } else {
+      const tag = document.createElement('span');
+      tag.className = 'badge';
+      tag.textContent = 'built in';
+      row.appendChild(tag);
+    }
+    list.appendChild(row);
+  }
+}
+
+async function uploadVoice() {
+  const inp = document.getElementById('voice-file');
+  const err = document.getElementById('voice-err');
+  err.textContent = '';
+  if (!inp.files.length) { err.textContent = 'Choose an audio file first.'; return; }
+  const f = inp.files[0];
+  const name = f.name.replace(/\.[^.]+$/, '');
+  const ext = (f.name.match(/\.[^.]+$/) || ['.wav'])[0];
+  const r = await fetch(`/api/voices?name=${encodeURIComponent(name)}&ext=${encodeURIComponent(ext)}`,
+    {method: 'POST', body: f});
+  const j = await r.json();
+  if (!r.ok) { err.textContent = j.error || 'Upload failed'; return; }
+  inp.value = '';
+  loadVoices();
+}
+
+async function createJob() {
+  const body = {
+    pdf_path: dlgBook.path,
+    title: document.getElementById('f-title').value,
+    path: document.querySelector('input[name=path]:checked').value,
+    voice: document.getElementById('f-voice').value,
+    page_from: +document.getElementById('f-from').value,
+    page_to: +document.getElementById('f-to').value,
+  };
+  const r = await fetch('/api/jobs', {method: 'POST',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  if (!r.ok) {
+    document.getElementById('dlg-err').textContent = 'Failed: ' + (await r.text());
+    return;
+  }
+  dlg.close();
+  refreshJobs();
+}
+
+const openLogs = new Set();
+
+async function refreshJobs() {
+  const r = await fetch('/api/jobs');
+  const jobs = (await r.json()).jobs;
+  const el = document.getElementById('jobs');
+  if (!jobs.length) {
+    el.innerHTML = '<div class="empty">No jobs yet. Pick a book from the library below.</div>';
+    return;
+  }
+  const details = await Promise.all(jobs.map(j =>
+    fetch('/api/jobs/' + j.id).then(r => r.json())));
+  el.innerHTML = '';
+  for (const j of details) {
+    el.appendChild(renderJob(j));
+  }
+}
+
+function renderJob(j) {
+  const div = document.createElement('div');
+  div.className = 'job';
+  const running = ['queued','extracting','tagging','narrating'].includes(j.status);
+  const badgeCls = running ? 'running' : (j.status === 'done' ? 'done' : j.status);
+
+  let progressHtml = '', detail = '';
+  if (j.status === 'extracting' && j.stage_progress) {
+    const p = j.stage_progress;
+    progressHtml = bar(p.done / p.total);
+    detail = `Extracting pages: ${p.done} / ${p.total}`;
+  } else if (j.status === 'narrating' && j.narrate_progress) {
+    const p = j.narrate_progress;
+    progressHtml = bar(p.total ? p.done / p.total : 0);
+    detail = `Narrating: chunk ${p.done} / ${p.total} · ${fmtEta(p.eta_sec)} · ${p.message}`;
+  } else if (j.status === 'narrating') {
+    detail = 'Narration starting (model loading)...';
+  } else if (j.status === 'queued') {
+    detail = 'Waiting for the GPU (one stage runs at a time)';
+  } else if (j.status === 'failed') {
+    detail = 'Error: ' + (j.error || 'see log');
+  } else if (j.status === 'done' && j.block_counts) {
+    detail = 'Blocks: ' + Object.entries(j.block_counts).map(([k,v]) => `${k} ${v}`).join(', ');
+  }
+
+  const pages = `pages ${j.page_from}–${j.page_to}`;
+  div.innerHTML = `
+    <div class="row1">
+      <span class="title">${j.title}</span>
+      <span class="badge ${badgeCls}">${j.status}</span>
+      <span class="detail">Path ${j.path} · ${pages}${j.voice ? ' · ' + j.voice : ''}</span>
+      <span class="spacer"></span>
+    </div>
+    ${progressHtml}
+    <div class="detail">${detail}</div>`;
+
+  const row = div.querySelector('.row1');
+  if (running) row.appendChild(btn('Cancel', 'danger', async () => {
+    await fetch(`/api/jobs/${j.id}/cancel`, {method: 'POST'}); refreshJobs();
+  }));
+  if (['failed','canceled','interrupted'].includes(j.status)) {
+    row.appendChild(btn('Resume', 'primary', async () => {
+      await fetch(`/api/jobs/${j.id}/resume`, {method: 'POST'}); refreshJobs();
+    }));
+    row.appendChild(btn('Delete', 'danger', async () => {
+      if (confirm('Delete this job and all its files?')) {
+        await fetch(`/api/jobs/${j.id}/delete`, {method: 'POST'}); refreshJobs();
+      }
+    }));
+  }
+  if (j.status === 'done') {
+    row.appendChild(btn('Delete', 'danger', async () => {
+      if (confirm('Delete this job and its audio files?')) {
+        await fetch(`/api/jobs/${j.id}/delete`, {method: 'POST'}); refreshJobs();
+      }
+    }));
+  }
+  row.appendChild(btn(openLogs.has(j.id) ? 'Hide log' : 'Log', '', () => {
+    openLogs.has(j.id) ? openLogs.delete(j.id) : openLogs.add(j.id);
+    refreshJobs();
+  }));
+
+  if (j.outputs && j.outputs.length) {
+    const players = document.createElement('div');
+    players.className = 'players';
+    for (const o of j.outputs) {
+      const p = document.createElement('div');
+      p.className = 'p';
+      p.innerHTML = `<audio controls preload="none" src="/api/jobs/${j.id}/audio/${o.name}"></audio>
+        <a href="/api/jobs/${j.id}/audio/${o.name}" download>${o.name} (${fmtBytes(o.bytes)})</a>`;
+      players.appendChild(p);
+    }
+    div.appendChild(players);
+  }
+
+  if (openLogs.has(j.id) && j.log_tail) {
+    const pre = document.createElement('pre');
+    pre.className = 'log';
+    pre.textContent = j.log_tail.join('\n');
+    div.appendChild(pre);
+  }
+  return div;
+}
+
+function bar(frac) {
+  return `<div class="bar"><i style="width:${Math.round(frac*100)}%"></i></div>`;
+}
+function btn(label, cls, fn) {
+  const b = document.createElement('button');
+  b.textContent = label; b.className = cls; b.onclick = fn;
+  return b;
+}
+
+loadLibrary();
+loadVoices();
+refreshJobs();
+setInterval(refreshJobs, 2500);
+</script>
+</body>
+</html>
