@@ -311,7 +311,9 @@ def run_narration(st):
     config = {
         "path": st["path"],
         "reference_wav": voice_wav_path(st.get("voice")),
-        "part_max_minutes": 60,
+        "title": st["title"],
+        "single_file": True,
+        "fallback_part_minutes": 240,
     }
     (job_dir / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
     st["status"] = "narrating"

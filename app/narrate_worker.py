@@ -19,6 +19,8 @@ watermarker stub, sentence-safe packing, quoted-ellipsis fix, fades.
 
 import json
 import re
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -41,6 +43,11 @@ from chatterbox.tts import ChatterboxTTS
 
 CHAR_CEILING = 400
 SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?])\s+(?=[A-Z"\'‘“])')
+# Headings that name a top-level division become navigable chapters in
+# the m4b/mp3. Sub-section headings (e.g. "REVIEW THE CHARACTERS") do
+# not, so the chapter list stays a real table of contents.
+CHAPTER_RE = re.compile(r"^(BOOK|CHAPTER|PART|CANTO|PROLOGUE|EPILOGUE|INTRODUCTION|PREFACE)\b", re.I)
+AAC_BITRATE = "64k"  # mono 24 kHz narration; transparent for voice
 
 PAUSE_PROFILES = {
     # narrate_tagged.py validated values (Path B tagged material)
@@ -134,6 +141,7 @@ def build_plan(blocks, profile):
                     "text": text,
                     "before_ms": profile["heading_before_ms"],
                     "after_ms": profile["heading_after_ms"] + (0 if last_block else profile["block_gap_ms"]),
+                    "heading": text,
                 }
             )
         else:
@@ -165,13 +173,77 @@ def write_progress(job_dir, done, total, started, msg=""):
     )
 
 
+def _ffmeta_escape(s):
+    for ch in ("\\", "=", ";", "#"):
+        s = s.replace(ch, "\\" + ch)
+    return s.replace("\n", " ")
+
+
+def write_chapters_file(job_dir, chapters, total_ms):
+    """ffmetadata file: one [CHAPTER] per entry, times in ms."""
+    lines = [";FFMETADATA1"]
+    for idx, (start_ms, title) in enumerate(chapters):
+        end_ms = chapters[idx + 1][0] if idx + 1 < len(chapters) else total_ms
+        if end_ms <= start_ms:
+            end_ms = start_ms + 1000
+        lines += ["[CHAPTER]", "TIMEBASE=1/1000",
+                  f"START={start_ms}", f"END={end_ms}", f"title={_ffmeta_escape(title)}"]
+    p = job_dir / "chapters.ffmeta"
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return p
+
+
+def find_ffmpeg():
+    ff = shutil.which("ffmpeg")
+    if ff:
+        return ff
+    fallback = r"C:\ProgramData\chocolatey\bin\ffmpeg.exe"
+    if Path(fallback).exists():
+        return fallback
+    raise RuntimeError("ffmpeg not found on PATH; needed for m4b/mp3 output")
+
+
+def encode_stream(fmt, pcm_iter, sr, out_path, ffmeta_path, logf):
+    """
+    Pipe raw int16 PCM into ffmpeg and encode directly to m4b/mp3 with
+    embedded chapters. No intermediate WAV is written to disk.
+    """
+    ff = find_ffmpeg()
+    if fmt == "m4b":
+        codec = ["-c:a", "aac", "-b:a", AAC_BITRATE, "-f", "mp4"]
+    else:
+        codec = ["-c:a", "libmp3lame", "-b:a", AAC_BITRATE, "-f", "mp3"]
+    cmd = [
+        ff, "-y", "-loglevel", "warning",
+        "-f", "s16le", "-ar", str(sr), "-ac", "1", "-i", "pipe:0",
+        "-i", str(ffmeta_path), "-map", "0:a", "-map_metadata", "1",
+        *codec, str(out_path),
+    ]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=logf, stderr=logf)
+    try:
+        for chunk in pcm_iter:
+            pcm = np.clip(chunk, -1.0, 1.0)
+            proc.stdin.write((pcm * 32767).astype("<i2").tobytes())
+        proc.stdin.close()
+    except BrokenPipeError:
+        proc.wait()
+        raise RuntimeError("ffmpeg closed the pipe early; see log")
+    rc = proc.wait()
+    if rc != 0:
+        raise RuntimeError(f"ffmpeg exited {rc}; see log")
+
+
 def main():
     job_dir = Path(sys.argv[1])
     blocks = json.loads((job_dir / "blocks.json").read_text(encoding="utf-8"))["blocks"]
     config = json.loads((job_dir / "config.json").read_text(encoding="utf-8"))
     profile = PAUSE_PROFILES[config.get("path", "B")]
     ref_wav = config["reference_wav"]
-    part_max_sec = config.get("part_max_minutes", 60) * 60
+    fmt = config.get("format", "m4b").lower()
+    if fmt not in ("m4b", "mp3", "wav"):
+        fmt = "m4b"
+    fallback_part_sec = config.get("fallback_part_minutes", 240) * 60
+    safe_title = re.sub(r"[^\w \-]", "", config.get("title", "audiobook")).strip() or "audiobook"
 
     seg_dir = job_dir / "segments"
     out_dir = job_dir / "output"
@@ -225,36 +297,62 @@ def main():
         print(f"chunk {done}/{total}")
 
     write_progress(job_dir, done, total, started, "assembling")
-    print("Assembling parts...")
+    print("Assembling audiobook...")
 
-    part_idx = 1
-    part_audio = []
-    part_sec = 0.0
+    # Clear any prior assembly output so a re-run never leaves stale
+    # part files next to a freshly written single file.
+    for old in out_dir.glob("*.wav"):
+        old.unlink()
 
-    def flush_part():
-        nonlocal part_idx, part_audio, part_sec
-        if not part_audio:
-            return
-        final = np.concatenate(part_audio)
-        out_path = out_dir / f"part_{part_idx:02d}.wav"
-        sf.write(str(out_path), final, sr, subtype="PCM_16")
-        print(f"wrote {out_path} ({len(final)/sr:.1f} sec)")
-        part_idx += 1
-        part_audio = []
-        part_sec = 0.0
+    def gap(ms):
+        return np.zeros(int(sr * ms / 1000.0), dtype=np.float32)
 
+    # A single mono PCM_16 WAV is capped near 4 GB by the format's
+    # 32-bit size field. Project the size and only split into parts if
+    # one file would exceed that (roughly a 22+ hour book).
+    MAX_WAV_BYTES = int(3.9 * 1024 ** 3)
+    total_samples = 0
     for i, entry in enumerate(plan):
-        seg, seg_sr = sf.read(str(seg_dir / f"seg_{i:06d}.wav"), dtype="float32")
-        if entry["before_ms"]:
-            part_audio.append(np.zeros(int(sr * entry["before_ms"] / 1000.0), dtype=np.float32))
-        part_audio.append(seg)
-        if entry["after_ms"]:
-            part_audio.append(np.zeros(int(sr * entry["after_ms"] / 1000.0), dtype=np.float32))
-        part_sec += len(seg) / sr + (entry["before_ms"] + entry["after_ms"]) / 1000.0
-        block_end = entry["after_ms"] != profile["gap_ms"]
-        if part_sec >= part_max_sec and block_end:
-            flush_part()
-    flush_part()
+        total_samples += sf.info(str(seg_dir / f"seg_{i:06d}.wav")).frames
+        total_samples += int(sr * (entry["before_ms"] + entry["after_ms"]) / 1000.0)
+    projected_bytes = total_samples * 2 + 44
+    single_file = want_single and projected_bytes <= MAX_WAV_BYTES
+
+    if single_file:
+        out_path = out_dir / f"{safe_title}.wav"
+        with sf.SoundFile(str(out_path), mode="w", samplerate=sr, channels=1, subtype="PCM_16") as out:
+            for i, entry in enumerate(plan):
+                if entry["before_ms"]:
+                    out.write(gap(entry["before_ms"]))
+                seg, _ = sf.read(str(seg_dir / f"seg_{i:06d}.wav"), dtype="float32")
+                out.write(seg)
+                if entry["after_ms"]:
+                    out.write(gap(entry["after_ms"]))
+        print(f"wrote {out_path} ({total_samples/sr/3600:.2f} hours, single file)")
+    else:
+        print(f"Projected {projected_bytes/1024**3:.1f} GB exceeds the WAV limit; "
+              f"splitting into parts of up to {fallback_part_sec/60:.0f} min")
+        part_idx = 1
+        part_sec = 0.0
+        writer = sf.SoundFile(str(out_dir / f"{safe_title} - part {part_idx:02d}.wav"),
+                              mode="w", samplerate=sr, channels=1, subtype="PCM_16")
+        for i, entry in enumerate(plan):
+            if entry["before_ms"]:
+                writer.write(gap(entry["before_ms"]))
+            seg, _ = sf.read(str(seg_dir / f"seg_{i:06d}.wav"), dtype="float32")
+            writer.write(seg)
+            if entry["after_ms"]:
+                writer.write(gap(entry["after_ms"]))
+            part_sec += len(seg) / sr + (entry["before_ms"] + entry["after_ms"]) / 1000.0
+            block_end = entry["after_ms"] != profile["gap_ms"]
+            if part_sec >= fallback_part_sec and block_end:
+                writer.close()
+                part_idx += 1
+                part_sec = 0.0
+                writer = sf.SoundFile(str(out_dir / f"{safe_title} - part {part_idx:02d}.wav"),
+                                      mode="w", samplerate=sr, channels=1, subtype="PCM_16")
+        writer.close()
+        print(f"wrote {part_idx} parts")
 
     write_progress(job_dir, total, total, started, "done")
     print("Narration complete.")

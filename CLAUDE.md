@@ -55,7 +55,7 @@ D:\Audiobook_Pipeline\app\ is a local web app wrapping the whole pipeline, PDF t
 
 - server.py runs in BASE miniconda (stdlib + fitz + requests only, nothing installed). One worker thread runs all stages strictly sequentially, so Ollama extraction and Chatterbox narration never share the GPU.
 - pipeline_text.py: shared tagging/extraction. Carries the verified page-number filter plus: headings may end in ? or !, markdown emphasis stripped, cross-page mid-sentence stitching, Path A prose mode (path_a.py x-indent rule, font-size-based drop-cap merge) and verse mode (sentence-run grouping, Book N headings), auto-detected by capitalized-line-start fraction (>0.45 = verse).
-- narrate_worker.py runs in the chatterbox env as a subprocess. Per-chunk WAV segments make narration resumable; parts assembled at block boundaries, ~60 min each, PCM_16 24kHz.
+- narrate_worker.py runs in the chatterbox env as a subprocess. Per-chunk WAV segments make narration resumable. Output is ONE single file "<title>.wav" (PCM_16 24kHz), assembled by streaming so memory stays flat. Only if a single WAV would exceed ~3.9 GB (roughly a 22+ hour book, the WAV format's 4 GB cap) does it fall back to splitting into <=4 hour parts. config keys: single_file (default true), fallback_part_minutes (default 240).
 - Jobs live in app\jobs\<id>\ (state.json, pages\, segments\, output\, log.txt). Path B caches per-page OCR .md so extraction also resumes. Finished parts are also copied to D:\Audiobook_Pipeline\audiobooks\<title>\.
 - GLM-OCR degenerates on full-page ARTWORK pages (endless code fences, empty HTML tables, or looped short tokens). Guards in pipeline_text.tag_blocks: markup-only and code-fence lines dropped, consecutive duplicate body blocks collapsed, and any page whose blocks are >=20 with <30% unique text returns empty (art page). ocr_page caps num_predict at 4096. narrate_worker fingerprints the chunk plan and wipes stale segments if blocks change.
 - Voice cloning: users can upload a voice sample in the UI (wav/mp3/flac/ogg, converted via convert_voice.py in the chatterbox env, soundfile only, trimmed to 20s) and pick a voice per job. Default voice is samples\Voice_Sample\male_ref.wav ("Default narrator (male sample)"). The rights rule above applies to uploads.
@@ -65,6 +65,6 @@ D:\Audiobook_Pipeline\app\ is a local web app wrapping the whole pipeline, PDF t
 
 ## Book-specific notes
 
-- Return of the Lazy Dungeon Master (samples\L_D_M): 88 pages, Path B. Full-book job queued 2026-07-21.
+- Return of the Lazy Dungeon Master (samples\L_D_M): 88 pages, Path B. COMPLETE 2026-07-21: 3.62 hours, single file at audiobooks\Return of the Lazy Dungeon Master\. ffmpeg (chocolatey) is available on this machine for lossless concat / future m4b/mp3 encoding.
 - The Odyssey (samples\The Odyssey): 793 pages, Path A verse. The poem is pages 78 to 610; pages 1-77 are front matter and 611+ are notes/commentary, so create the job with that range. Roughly 14 hours of audio.
 - PHM (samples\Novel sample): 523 pages, Path A prose, was the checkpoint 1 test book.
