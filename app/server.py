@@ -11,7 +11,9 @@ a subprocess inside the chatterbox conda env; this process never
 imports torch or chatterbox.
 """
 
+import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -48,6 +50,18 @@ PORT = 8765
 
 AUDIO_EXTS = {".m4b", ".mp3", ".wav"}
 AUDIO_MIME = {".m4b": "audio/mp4", ".mp3": "audio/mpeg", ".wav": "audio/wav"}
+
+# Bumping the number of narration processes to fit the GPU. Each Chatterbox
+# worker loads its own model copy and, measured on this stack, holds ~9-10 GB
+# of VRAM, so worker count is (usable VRAM / per-worker budget), clamped.
+# Env overrides let a user tune or pin it: AUDIOBOOK_NUM_WORKERS forces a
+# count; AUDIOBOOK_VRAM_PER_WORKER_GB adjusts the per-worker budget.
+VRAM_PER_WORKER_GB = float(os.environ.get("AUDIOBOOK_VRAM_PER_WORKER_GB", "10"))
+VRAM_RESERVE_GB = 1.5
+MAX_WORKERS = 4
+# Bump when the chunk-planning/packing logic changes so old segments (which
+# are keyed by plan index) are treated as stale and regenerated.
+PLAN_VERSION = "1"
 
 JOBS_DIR.mkdir(exist_ok=True)
 VOICES_DIR.mkdir(exist_ok=True)
@@ -204,7 +218,7 @@ def scan_library():
 _queue = []
 _queue_cv = threading.Condition()
 _cancel_flags = {}
-_active_proc = {"proc": None, "job_id": None}
+_active_procs = {"procs": [], "job_id": None}
 
 
 def enqueue(job_id):
@@ -223,11 +237,12 @@ def request_cancel(job_id):
             if st and st["status"] == "queued":
                 st["status"] = "canceled"
                 save_state(st)
-    if _active_proc["job_id"] == job_id and _active_proc["proc"]:
-        try:
-            _active_proc["proc"].kill()
-        except Exception:
-            pass
+    if _active_procs["job_id"] == job_id:
+        for p in _active_procs["procs"]:
+            try:
+                p.kill()
+            except Exception:
+                pass
 
 
 def _cancelled(job_id):
@@ -308,6 +323,73 @@ def run_extraction(st):
     return st
 
 
+def gpu_total_vram_gb():
+    """Total VRAM of GPU 0 in GB, or None if no NVIDIA GPU is present."""
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if out.returncode != 0:
+            return None
+        return float(out.stdout.strip().splitlines()[0]) / 1024.0
+    except Exception:
+        return None
+
+
+def narration_worker_count():
+    """
+    How many Chatterbox processes to run in parallel, sized to the GPU.
+    A modest card (or CPU-only) gets 1; a big card gets several. Honors
+    AUDIOBOOK_NUM_WORKERS as a hard override.
+    """
+    forced = os.environ.get("AUDIOBOOK_NUM_WORKERS")
+    if forced:
+        try:
+            return max(1, min(MAX_WORKERS, int(forced)))
+        except ValueError:
+            pass
+    vram = gpu_total_vram_gb()
+    if not vram:
+        return 1  # CPU or unknown GPU: one worker
+    n = int((vram - VRAM_RESERVE_GB) / VRAM_PER_WORKER_GB)
+    return max(1, min(MAX_WORKERS, n))
+
+
+def _plan_hash(job_dir, st):
+    """Identity of the segment set: if any input that determines the audio
+    changes (text, voice, pause profile, planner version), old segments are
+    stale and must be regenerated."""
+    blob = (job_dir / "blocks.json").read_bytes()
+    key = b"\x00".join([
+        blob,
+        st["path"].encode(),
+        voice_wav_path(st.get("voice")).encode(),
+        PLAN_VERSION.encode(),
+    ])
+    return hashlib.sha256(key).hexdigest()
+
+
+def ensure_segments_fresh(job_dir, st):
+    seg_dir = job_dir / "segments"
+    hp = job_dir / "plan_hash.txt"
+    key = _plan_hash(job_dir, st)
+    old = hp.read_text(encoding="utf-8").strip() if hp.exists() else None
+    if old is not None and old != key and seg_dir.exists():
+        stale = list(seg_dir.glob("seg_*.wav"))
+        for f in stale:
+            f.unlink()
+        log_line(st["id"], f"plan inputs changed; cleared {len(stale)} stale segments")
+    hp.write_text(key, encoding="utf-8")
+
+
+def _spawn_worker(job_dir, logf, extra_args):
+    return subprocess.Popen(
+        [CHATTERBOX_PY, str(APP_DIR / "narrate_worker.py"), str(job_dir), *extra_args],
+        stdout=logf, stderr=subprocess.STDOUT, cwd=str(APP_DIR),
+    )
+
+
 def run_narration(st):
     job_id = st["id"]
     job_dir = JOBS_DIR / job_id
@@ -319,27 +401,43 @@ def run_narration(st):
         "fallback_part_minutes": 240,
     }
     (job_dir / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
+    ensure_segments_fresh(job_dir, st)
+
+    n = narration_worker_count()
     st["status"] = "narrating"
+    st["num_workers"] = n
+    st["narrate_started_at"] = time.time()
     save_state(st)
-    log_line(job_id, "starting narration subprocess (chatterbox env)")
+    log_line(job_id, f"narrating with {n} parallel worker(s)")
 
     with open(job_dir / "log.txt", "a", encoding="utf-8") as logf:
-        proc = subprocess.Popen(
-            [CHATTERBOX_PY, str(APP_DIR / "narrate_worker.py"), str(job_dir)],
-            stdout=logf,
-            stderr=subprocess.STDOUT,
-            cwd=str(APP_DIR),
-        )
-        _active_proc["proc"] = proc
-        _active_proc["job_id"] = job_id
-        code = proc.wait()
-        _active_proc["proc"] = None
-        _active_proc["job_id"] = None
+        # Generation: N shard processes covering disjoint chunks.
+        procs = [_spawn_worker(job_dir, logf, ["--shard", str(k), "--num-shards", str(n)])
+                 for k in range(n)]
+        _active_procs["procs"] = procs
+        _active_procs["job_id"] = job_id
+        codes = [p.wait() for p in procs]
+        _active_procs["procs"] = []
+        _active_procs["job_id"] = None
+
+        if _cancel_flags.pop(job_id, False):
+            raise _Cancelled()
+        if any(c != 0 for c in codes):
+            raise RuntimeError(f"a narration worker failed (exit codes {codes}), see log")
+
+        # Assembly: one process, no model load.
+        log_line(job_id, "generation complete, assembling")
+        ap = _spawn_worker(job_dir, logf, ["--assemble"])
+        _active_procs["procs"] = [ap]
+        _active_procs["job_id"] = job_id
+        acode = ap.wait()
+        _active_procs["procs"] = []
+        _active_procs["job_id"] = None
 
     if _cancel_flags.pop(job_id, False):
         raise _Cancelled()
-    if code != 0:
-        raise RuntimeError(f"narrate_worker exited with code {code}, see log")
+    if acode != 0:
+        raise RuntimeError(f"assembly failed (exit {acode}), see log")
     return st
 
 
@@ -388,6 +486,39 @@ def worker_loop():
             log_line(job_id, f"FAILED: {e}")
 
 
+def _narration_progress(job_dir, st):
+    """Aggregate progress across all parallel workers by counting finished
+    segments. Works regardless of worker count and survives resumes."""
+    seg_dir = job_dir / "segments"
+    total_file = job_dir / "plan_total.txt"
+    total = 0
+    if total_file.exists():
+        try:
+            total = int(total_file.read_text(encoding="utf-8").strip())
+        except ValueError:
+            total = 0
+    done = sum(1 for _ in seg_dir.glob("seg_*.wav")) if seg_dir.exists() else 0
+    n = st.get("num_workers", 1)
+    started = st.get("narrate_started_at")
+    elapsed = time.time() - started if started else 0
+    eta = None
+    if total and done < total and elapsed > 0 and done > 0:
+        eta = (total - done) * (elapsed / done)
+    if total and done >= total:
+        message = "assembling"
+    elif done == 0:
+        message = f"loading model ({n} worker{'s' if n > 1 else ''})"
+    else:
+        message = f"generating ({n} worker{'s' if n > 1 else ''})"
+    return {
+        "done": done,
+        "total": total,
+        "elapsed_sec": round(elapsed, 1),
+        "eta_sec": round(eta, 1) if eta is not None else None,
+        "message": message,
+    }
+
+
 # ---------- HTTP ----------
 
 def _json_response(handler, obj, code=200):
@@ -404,12 +535,8 @@ def job_detail(job_id):
     if not st:
         return None
     job_dir = JOBS_DIR / job_id
-    npz = job_dir / "narrate_progress.json"
-    if npz.exists():
-        try:
-            st["narrate_progress"] = json.loads(npz.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+    if st.get("status") == "narrating":
+        st["narrate_progress"] = _narration_progress(job_dir, st)
     log_path = job_dir / "log.txt"
     if log_path.exists():
         lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()

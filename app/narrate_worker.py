@@ -8,8 +8,13 @@ Usage: python narrate_worker.py <job_dir>
 Reads  <job_dir>/blocks.json   {"blocks": [{"type","text"}, ...]}
        <job_dir>/config.json   pipeline path, pause profile, voice ref
 Writes <job_dir>/segments/seg_NNNNNN.wav   one per chunk (resume unit)
-       <job_dir>/narrate_progress.json     polled by the server
+       <job_dir>/plan_total.txt            chunk count, for server progress
        <job_dir>/output/<title>.<fmt>      single m4b (default), mp3, or wav
+
+Modes: default runs one shard (index 0 of 1) and assembles. The server
+drives parallelism by launching `--shard K --num-shards N` generation
+processes (disjoint chunks by index % N) followed by one `--assemble`.
+Worker count is sized to the GPU by the server.
 
 Default output is a single .m4b with navigable chapters (each top-level
 heading), encoded straight from the segments via ffmpeg with no giant
@@ -21,12 +26,12 @@ segments. Proven Chatterbox setup is reused from narrate_tagged.py:
 watermarker stub, sentence-safe packing, quoted-ellipsis fix, fades.
 """
 
+import argparse
 import json
 import re
 import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import numpy as np
@@ -158,25 +163,6 @@ def build_plan(blocks, profile):
     return plan
 
 
-def write_progress(job_dir, done, total, started, msg=""):
-    elapsed = time.time() - started
-    rate = done / elapsed if elapsed > 0 and done > 0 else 0
-    eta = (total - done) / rate if rate > 0 else None
-    (job_dir / "narrate_progress.json").write_text(
-        json.dumps(
-            {
-                "done": done,
-                "total": total,
-                "elapsed_sec": round(elapsed, 1),
-                "eta_sec": round(eta, 1) if eta is not None else None,
-                "message": msg,
-                "updated_at": time.time(),
-            }
-        ),
-        encoding="utf-8",
-    )
-
-
 def _ffmeta_escape(s):
     for ch in ("\\", "=", ";", "#"):
         s = s.replace(ch, "\\" + ch)
@@ -237,70 +223,62 @@ def encode_stream(fmt, pcm_iter, sr, out_path, ffmeta_path, logf):
         raise RuntimeError(f"ffmpeg exited {rc}; see log")
 
 
-def main():
-    job_dir = Path(sys.argv[1])
+def load_plan(job_dir):
     blocks = json.loads((job_dir / "blocks.json").read_text(encoding="utf-8"))["blocks"]
     config = json.loads((job_dir / "config.json").read_text(encoding="utf-8"))
     profile = PAUSE_PROFILES[config.get("path", "B")]
-    ref_wav = config["reference_wav"]
+    plan = build_plan(blocks, profile)
+    return plan, config, profile
+
+
+def run_generate(job_dir, plan, ref_wav, shard, nshards):
+    """
+    Generate this shard's segments. Work is split by index modulo nshards,
+    so N workers cover disjoint chunks with no coordination, and every
+    worker still skips segments that already exist (resume-safe). The
+    temp file is per-shard so two workers never collide on a write.
+    """
+    seg_dir = job_dir / "segments"
+    seg_dir.mkdir(exist_ok=True)
+    (job_dir / "plan_total.txt").write_text(str(len(plan)), encoding="utf-8")
+    my_indices = [i for i in range(len(plan)) if i % nshards == shard]
+    print(f"Shard {shard}/{nshards}: responsible for {len(my_indices)} of {len(plan)} chunks")
+    print("Loading Chatterbox model...")
+    model = ChatterboxTTS.from_pretrained(device="cuda")
+    sr = model.sr
+    done = 0
+    for i in my_indices:
+        seg_path = seg_dir / f"seg_{i:06d}.wav"
+        if seg_path.exists():
+            continue
+        wav = model.generate(plan[i]["text"], audio_prompt_path=ref_wav)
+        wav_np = wav.squeeze().cpu().numpy().astype(np.float32)
+        wav_np = apply_fade(wav_np, sr, FADE_MS)
+        tmp = seg_path.with_suffix(f".tmp{shard}.wav")
+        sf.write(str(tmp), wav_np, sr, subtype="PCM_16")
+        tmp.replace(seg_path)
+        done += 1
+        if done % 10 == 0:
+            print(f"shard {shard}: {done} generated")
+    print(f"shard {shard} finished: generated {done}, {len(my_indices) - done} already present")
+
+
+def run_assemble(job_dir, plan, config, profile):
+    seg_dir = job_dir / "segments"
+    out_dir = job_dir / "output"
+    out_dir.mkdir(exist_ok=True)
+
+    missing = [i for i in range(len(plan)) if not (seg_dir / f"seg_{i:06d}.wav").exists()]
+    if missing:
+        raise RuntimeError(f"cannot assemble: {len(missing)} segments missing (first: {missing[0]})")
+
+    sr = sf.info(str(seg_dir / "seg_000000.wav")).samplerate
     fmt = config.get("format", "m4b").lower()
     if fmt not in ("m4b", "mp3", "wav"):
         fmt = "m4b"
     fallback_part_sec = config.get("fallback_part_minutes", 240) * 60
     safe_title = re.sub(r"[^\w \-]", "", config.get("title", "audiobook")).strip() or "audiobook"
 
-    seg_dir = job_dir / "segments"
-    out_dir = job_dir / "output"
-    seg_dir.mkdir(exist_ok=True)
-    out_dir.mkdir(exist_ok=True)
-
-    plan = build_plan(blocks, profile)
-    total = len(plan)
-    print(f"Plan: {total} chunks from {len(blocks)} blocks")
-    started = time.time()
-
-    # Segments are keyed by plan index, so a changed plan (re-tagged
-    # blocks) invalidates every existing segment. Compare a fingerprint
-    # and wipe stale segments rather than stitching mismatched audio.
-    import hashlib
-
-    fingerprint = hashlib.sha256(
-        "\x00".join(e["text"] for e in plan).encode("utf-8")
-    ).hexdigest()
-    plan_file = job_dir / "plan_fingerprint.txt"
-    if plan_file.exists() and plan_file.read_text(encoding="utf-8").strip() != fingerprint:
-        stale = list(seg_dir.glob("seg_*.wav"))
-        for f in stale:
-            f.unlink()
-        print(f"Plan changed: removed {len(stale)} stale segments")
-    plan_file.write_text(fingerprint, encoding="utf-8")
-
-    done_already = sum(1 for i in range(total) if (seg_dir / f"seg_{i:06d}.wav").exists())
-    print(f"Resume check: {done_already}/{total} segments already exist")
-
-    write_progress(job_dir, done_already, total, started, "loading model")
-    print("Loading Chatterbox model...")
-    model = ChatterboxTTS.from_pretrained(device="cuda")
-    sr = model.sr
-
-    done = 0
-    for i, entry in enumerate(plan):
-        seg_path = seg_dir / f"seg_{i:06d}.wav"
-        if seg_path.exists():
-            done += 1
-            continue
-        wav = model.generate(entry["text"], audio_prompt_path=ref_wav)
-        wav_np = wav.squeeze().cpu().numpy().astype(np.float32)
-        wav_np = apply_fade(wav_np, sr, FADE_MS)
-        tmp = seg_path.with_suffix(".tmp.wav")
-        sf.write(str(tmp), wav_np, sr, subtype="PCM_16")
-        tmp.replace(seg_path)
-        done += 1
-        if done % 5 == 0 or done == total:
-            write_progress(job_dir, done, total, started, "generating")
-        print(f"chunk {done}/{total}")
-
-    write_progress(job_dir, done, total, started, f"assembling {fmt}")
     print(f"Assembling audiobook ({fmt})...")
 
     # Clear any prior assembly output so a re-run or format change never
@@ -383,8 +361,32 @@ def main():
             writer.close()
             print(f"wrote {part_idx} WAV parts")
 
-    write_progress(job_dir, total, total, started, "done")
-    print("Narration complete.")
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("job_dir")
+    ap.add_argument("--shard", type=int, default=None, help="this worker's index, 0..num-shards-1")
+    ap.add_argument("--num-shards", type=int, default=1)
+    ap.add_argument("--assemble", action="store_true", help="assemble only, no model load")
+    args = ap.parse_args()
+
+    job_dir = Path(args.job_dir)
+    plan, config, profile = load_plan(job_dir)
+
+    if args.assemble:
+        run_assemble(job_dir, plan, config, profile)
+        print("Assembly complete.")
+        return
+
+    shard = args.shard if args.shard is not None else 0
+    run_generate(job_dir, plan, config["reference_wav"], shard, args.num_shards)
+
+    # Manual single-worker convenience: `python narrate_worker.py <job>` with
+    # no shard args generates everything and assembles in one pass. The server
+    # always drives the split path (shards, then a separate --assemble).
+    if args.shard is None and args.num_shards == 1:
+        run_assemble(job_dir, plan, config, profile)
+        print("Narration complete.")
 
 
 if __name__ == "__main__":
