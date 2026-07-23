@@ -1,0 +1,16 @@
+{
+  "_README": "Copy this file to config.json and edit values for your machine. config.json is gitignored. Every key is OPTIONAL: anything you omit is auto-detected or falls back to a sensible default relative to the repo root. Precedence is environment variable > config.json > auto-detection > default. Windows paths need doubled backslashes in JSON (C:\\\\Users\\\\you\\\\...) or use forward slashes.",
+
+  "base_dir": "D:\\Audiobook_Pipeline",
+  "chatterbox_python": "C:\\Users\\you\\miniconda3\\envs\\chatterbox\\python.exe",
+  "reference_wav": "D:\\Audiobook_Pipeline\\samples\\Voice_Sample\\male_ref.wav",
+  "audiobooks_dir": "D:\\Audiobook_Pipeline\\audiobooks",
+  "library_roots": [
+    "D:\\Audiobook_Pipeline\\samples",
+    "D:\\Audiobook_Pipeline\\source_pdfs"
+  ],
+  "ollama_url": "http://localhost:11434/api/generate",
+  "ocr_model": "glm-ocr-doc",
+  "ocr_prompt": "Transcribe this document page as clean Markdown, preserving reading order and tables.",
+  "port": 8765
+}
