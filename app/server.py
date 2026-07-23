@@ -46,6 +46,9 @@ OCR_MODEL = "glm-ocr-doc"
 OCR_PROMPT = "Transcribe this document page as clean Markdown, preserving reading order and tables."
 PORT = 8765
 
+AUDIO_EXTS = {".m4b", ".mp3", ".wav"}
+AUDIO_MIME = {".m4b": "audio/mp4", ".mp3": "audio/mpeg", ".wav": "audio/wav"}
+
 JOBS_DIR.mkdir(exist_ok=True)
 VOICES_DIR.mkdir(exist_ok=True)
 
@@ -312,7 +315,7 @@ def run_narration(st):
         "path": st["path"],
         "reference_wav": voice_wav_path(st.get("voice")),
         "title": st["title"],
-        "single_file": True,
+        "format": st.get("format", "m4b"),
         "fallback_part_minutes": 240,
     }
     (job_dir / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
@@ -361,8 +364,14 @@ def worker_loop():
             safe_title = re.sub(r"[^\w \-]", "", st["title"]).strip() or job_id
             book_dir = AUDIOBOOKS_DIR / safe_title
             book_dir.mkdir(parents=True, exist_ok=True)
-            for f in sorted(out_dir.glob("*.wav")):
-                shutil.copy2(f, book_dir / f.name)
+            # Deliver whatever format the job produced; clear old copies
+            # so a re-run with a new format does not leave both behind.
+            for old in book_dir.glob("*"):
+                if old.suffix.lower() in AUDIO_EXTS:
+                    old.unlink()
+            for f in sorted(out_dir.iterdir()):
+                if f.suffix.lower() in AUDIO_EXTS:
+                    shutil.copy2(f, book_dir / f.name)
             st["audiobook_dir"] = str(book_dir)
             st["status"] = "done"
             st["finished_at"] = time.time()
@@ -408,7 +417,8 @@ def job_detail(job_id):
     out_dir = job_dir / "output"
     if out_dir.exists():
         st["outputs"] = sorted(
-            [{"name": f.name, "bytes": f.stat().st_size} for f in out_dir.glob("*.wav")],
+            [{"name": f.name, "bytes": f.stat().st_size}
+             for f in out_dir.iterdir() if f.suffix.lower() in AUDIO_EXTS],
             key=lambda x: x["name"],
         )
     bl = job_dir / "blocks.json"
@@ -450,10 +460,15 @@ class Handler(BaseHTTPRequestHandler):
                     self._serve_file(bl, "application/json; charset=utf-8")
                 else:
                     _json_response(self, {"error": "no blocks yet"}, 404)
-            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/audio/[\w.\-]+\.wav", path):
+            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/audio/.+\.(wav|m4b|mp3)", path):
                 job_id = path.split("/")[3]
-                fname = unquote(path.rsplit("/", 1)[1])
-                self._serve_audio(JOBS_DIR / job_id / "output" / fname)
+                fname = unquote(path.split("/audio/", 1)[1])
+                out_dir = (JOBS_DIR / job_id / "output").resolve()
+                target = (out_dir / fname).resolve()
+                if target.parent != out_dir or target.suffix.lower() not in AUDIO_EXTS:
+                    self.send_error(404)
+                else:
+                    self._serve_audio(target)
             else:
                 self.send_error(404)
         except (ConnectionAbortedError, BrokenPipeError):
@@ -505,6 +520,7 @@ class Handler(BaseHTTPRequestHandler):
                     "page_from": max(1, int(body.get("page_from", 1))),
                     "page_to": min(n, int(body.get("page_to", n))),
                     "voice": body.get("voice") or DEFAULT_VOICE,
+                    "format": body.get("format") if body.get("format") in ("m4b", "mp3", "wav") else "m4b",
                     "status": "queued",
                     "created_at": time.time(),
                 }
@@ -572,7 +588,7 @@ class Handler(BaseHTTPRequestHandler):
                     start = 0
         length = end - start + 1
         self.send_response(206 if range_header else 200)
-        self.send_header("Content-Type", "audio/wav")
+        self.send_header("Content-Type", AUDIO_MIME.get(fpath.suffix.lower(), "application/octet-stream"))
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(length))
         if range_header:

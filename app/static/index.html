@@ -111,6 +111,12 @@
   </div>
   <label>Voice</label>
   <select id="f-voice" style="background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:7px; padding:7px 10px; width:100%; font-size:14px"></select>
+  <label>Output format</label>
+  <select id="f-format" style="background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:7px; padding:7px 10px; width:100%; font-size:14px">
+    <option value="m4b">m4b — audiobook with chapters (recommended)</option>
+    <option value="mp3">mp3 — universal, plays anywhere</option>
+    <option value="wav">wav — lossless master, large</option>
+  </select>
   <label>Page range</label>
   <div class="pagerow">
     <span>from <input type="number" id="f-from" min="1"></span>
@@ -235,6 +241,7 @@ async function createJob() {
     title: document.getElementById('f-title').value,
     path: document.querySelector('input[name=path]:checked').value,
     voice: document.getElementById('f-voice').value,
+    format: document.getElementById('f-format').value,
     page_from: +document.getElementById('f-from').value,
     page_to: +document.getElementById('f-to').value,
   };
@@ -296,7 +303,7 @@ function renderJob(j) {
     <div class="row1">
       <span class="title">${j.title}</span>
       <span class="badge ${badgeCls}">${j.status}</span>
-      <span class="detail">Path ${j.path} · ${pages}${j.voice ? ' · ' + j.voice : ''}</span>
+      <span class="detail">Path ${j.path} · ${pages}${j.voice ? ' · ' + j.voice : ''}${j.format ? ' · ' + j.format : ''}</span>
       <span class="spacer"></span>
     </div>
     ${progressHtml}

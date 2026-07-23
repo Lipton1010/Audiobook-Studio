@@ -9,7 +9,11 @@ Reads  <job_dir>/blocks.json   {"blocks": [{"type","text"}, ...]}
        <job_dir>/config.json   pipeline path, pause profile, voice ref
 Writes <job_dir>/segments/seg_NNNNNN.wav   one per chunk (resume unit)
        <job_dir>/narrate_progress.json     polled by the server
-       <job_dir>/output/part_NN.wav        assembled parts
+       <job_dir>/output/<title>.<fmt>      single m4b (default), mp3, or wav
+
+Default output is a single .m4b with navigable chapters (each top-level
+heading), encoded straight from the segments via ffmpeg with no giant
+intermediate WAV. Format is set by config["format"] (m4b | mp3 | wav).
 
 Chunk plan is derived deterministically from blocks.json, so a rerun
 after an interruption rebuilds the same plan and skips finished
@@ -296,63 +300,88 @@ def main():
             write_progress(job_dir, done, total, started, "generating")
         print(f"chunk {done}/{total}")
 
-    write_progress(job_dir, done, total, started, "assembling")
-    print("Assembling audiobook...")
+    write_progress(job_dir, done, total, started, f"assembling {fmt}")
+    print(f"Assembling audiobook ({fmt})...")
 
-    # Clear any prior assembly output so a re-run never leaves stale
-    # part files next to a freshly written single file.
-    for old in out_dir.glob("*.wav"):
-        old.unlink()
+    # Clear any prior assembly output so a re-run or format change never
+    # leaves a stale file of another format next to the new one.
+    for old in out_dir.glob("*"):
+        if old.suffix.lower() in (".wav", ".m4b", ".mp3"):
+            old.unlink()
 
     def gap(ms):
         return np.zeros(int(sr * ms / 1000.0), dtype=np.float32)
 
-    # A single mono PCM_16 WAV is capped near 4 GB by the format's
-    # 32-bit size field. Project the size and only split into parts if
-    # one file would exceed that (roughly a 22+ hour book).
-    MAX_WAV_BYTES = int(3.9 * 1024 ** 3)
-    total_samples = 0
-    for i, entry in enumerate(plan):
-        total_samples += sf.info(str(seg_dir / f"seg_{i:06d}.wav")).frames
-        total_samples += int(sr * (entry["before_ms"] + entry["after_ms"]) / 1000.0)
-    projected_bytes = total_samples * 2 + 44
-    single_file = want_single and projected_bytes <= MAX_WAV_BYTES
-
-    if single_file:
-        out_path = out_dir / f"{safe_title}.wav"
-        with sf.SoundFile(str(out_path), mode="w", samplerate=sr, channels=1, subtype="PCM_16") as out:
-            for i, entry in enumerate(plan):
-                if entry["before_ms"]:
-                    out.write(gap(entry["before_ms"]))
-                seg, _ = sf.read(str(seg_dir / f"seg_{i:06d}.wav"), dtype="float32")
-                out.write(seg)
-                if entry["after_ms"]:
-                    out.write(gap(entry["after_ms"]))
-        print(f"wrote {out_path} ({total_samples/sr/3600:.2f} hours, single file)")
-    else:
-        print(f"Projected {projected_bytes/1024**3:.1f} GB exceeds the WAV limit; "
-              f"splitting into parts of up to {fallback_part_sec/60:.0f} min")
-        part_idx = 1
-        part_sec = 0.0
-        writer = sf.SoundFile(str(out_dir / f"{safe_title} - part {part_idx:02d}.wav"),
-                              mode="w", samplerate=sr, channels=1, subtype="PCM_16")
+    def audio_stream():
+        """Segments and inter-block silences in order, float32."""
         for i, entry in enumerate(plan):
             if entry["before_ms"]:
-                writer.write(gap(entry["before_ms"]))
+                yield gap(entry["before_ms"])
             seg, _ = sf.read(str(seg_dir / f"seg_{i:06d}.wav"), dtype="float32")
-            writer.write(seg)
+            yield seg
             if entry["after_ms"]:
-                writer.write(gap(entry["after_ms"]))
-            part_sec += len(seg) / sr + (entry["before_ms"] + entry["after_ms"]) / 1000.0
-            block_end = entry["after_ms"] != profile["gap_ms"]
-            if part_sec >= fallback_part_sec and block_end:
-                writer.close()
-                part_idx += 1
-                part_sec = 0.0
-                writer = sf.SoundFile(str(out_dir / f"{safe_title} - part {part_idx:02d}.wav"),
-                                      mode="w", samplerate=sr, channels=1, subtype="PCM_16")
-        writer.close()
-        print(f"wrote {part_idx} parts")
+                yield gap(entry["after_ms"])
+
+    # One header-only pass: total length + chapter marks. sf.info does
+    # not read audio data, so this is cheap even for thousands of chunks.
+    total_samples = 0
+    chapters = []
+    cursor = 0
+    for i, entry in enumerate(plan):
+        frames = sf.info(str(seg_dir / f"seg_{i:06d}.wav")).frames
+        before = int(sr * entry["before_ms"] / 1000.0)
+        after = int(sr * entry["after_ms"] / 1000.0)
+        head = entry.get("heading")
+        if head and CHAPTER_RE.match(head):
+            chapters.append((int(cursor / sr * 1000), head))
+        cursor += before + frames + after
+    total_samples = cursor
+    total_ms = int(total_samples / sr * 1000)
+    # If the book opens with lead-in before the first chapter heading,
+    # give that region a chapter so navigation covers the whole file.
+    if chapters and chapters[0][0] > 1500:
+        chapters.insert(0, (0, "Opening"))
+    print(f"{len(chapters)} chapters, {total_ms/3600000:.2f} hours total")
+
+    if fmt in ("m4b", "mp3"):
+        out_path = out_dir / f"{safe_title}.{fmt}"
+        ffmeta = write_chapters_file(job_dir, chapters, total_ms)
+        with open(job_dir / "log.txt", "a", encoding="utf-8") as logf:
+            encode_stream(fmt, audio_stream(), sr, out_path, ffmeta, logf)
+        print(f"wrote {out_path} ({fmt}, {len(chapters)} chapters)")
+    else:
+        # Lossless WAV master. Splits only if one file would top the
+        # WAV format's ~4 GB ceiling (roughly a 22+ hour book).
+        MAX_WAV_BYTES = int(3.9 * 1024 ** 3)
+        if total_samples * 2 + 44 <= MAX_WAV_BYTES:
+            out_path = out_dir / f"{safe_title}.wav"
+            with sf.SoundFile(str(out_path), mode="w", samplerate=sr, channels=1, subtype="PCM_16") as out:
+                for chunk in audio_stream():
+                    out.write(chunk)
+            print(f"wrote {out_path} ({total_ms/3600000:.2f} hours, single WAV)")
+        else:
+            print(f"WAV would exceed 4 GB; splitting into <= {fallback_part_sec/60:.0f} min parts")
+            part_idx = 1
+            part_sec = 0.0
+            writer = sf.SoundFile(str(out_dir / f"{safe_title} - part {part_idx:02d}.wav"),
+                                  mode="w", samplerate=sr, channels=1, subtype="PCM_16")
+            for i, entry in enumerate(plan):
+                if entry["before_ms"]:
+                    writer.write(gap(entry["before_ms"]))
+                seg, _ = sf.read(str(seg_dir / f"seg_{i:06d}.wav"), dtype="float32")
+                writer.write(seg)
+                if entry["after_ms"]:
+                    writer.write(gap(entry["after_ms"]))
+                part_sec += len(seg) / sr + (entry["before_ms"] + entry["after_ms"]) / 1000.0
+                block_end = entry["after_ms"] != profile["gap_ms"]
+                if part_sec >= fallback_part_sec and block_end:
+                    writer.close()
+                    part_idx += 1
+                    part_sec = 0.0
+                    writer = sf.SoundFile(str(out_dir / f"{safe_title} - part {part_idx:02d}.wav"),
+                                          mode="w", samplerate=sr, channels=1, subtype="PCM_16")
+            writer.close()
+            print(f"wrote {part_idx} WAV parts")
 
     write_progress(job_dir, total, total, started, "done")
     print("Narration complete.")

@@ -30,6 +30,7 @@ def strip_markdown(text):
         prev = text
         text = MD_EMPHASIS_RE.sub(lambda m: m.group(1) or m.group(2), text)
     text = re.sub(r"^#{1,6}\s*", "", text.strip())
+    text = re.sub(r"\s+", " ", text)  # collapse stray double spaces from PDF extraction
     return text.strip()
 
 
@@ -172,7 +173,21 @@ def stitch_pages(pages_of_blocks):
 
 # ---------- Path A extraction (text-layer PDF) ----------
 
-BOOK_HEADING_RE = re.compile(r"^(BOOK|CHAPTER|PART|CANTO)\s+([IVXLCDM]+|\d+)\s*$", re.IGNORECASE)
+# Chapter divisions numbered as digits, roman numerals, or spelled-out
+# words ("Chapter One", "Chapter Twenty-One"), plus standalone front/back
+# matter divisions. Anchored and number-shaped so it does not fire on a
+# short body paragraph that merely begins with "Chapter"/"Part".
+_NUM_WORD = (
+    r"(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+    r"thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|"
+    r"thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred)"
+    r"(?:[ -](?:one|two|three|four|five|six|seven|eight|nine))?"
+)
+HEADING_LINE_RE = re.compile(
+    r"^(?:(?:BOOK|CHAPTER|PART|CANTO)\s+(?:\d+|[IVXLCDM]+|" + _NUM_WORD + r")"
+    r"|PROLOGUE|EPILOGUE|INTRODUCTION|PREFACE|FOREWORD|AFTERWORD)\s*$",
+    re.IGNORECASE,
+)
 
 LIGATURES = {
     "ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl",
@@ -252,7 +267,9 @@ def detect_text_mode(pdf_path, page_from, page_to):
 
 
 def _prose_page_paragraphs(lines_with_x):
-    """path_a.py's validated x-indent rule: indented line = new paragraph."""
+    """path_a.py's validated x-indent rule: indented line = new paragraph.
+    A chapter/division heading line is always split into its own paragraph,
+    even if its indentation would otherwise merge it."""
     if not lines_with_x:
         return []
     xs = sorted(x0 for x0, _ in lines_with_x)
@@ -261,6 +278,12 @@ def _prose_page_paragraphs(lines_with_x):
     paras = []
     buf = ""
     for x0, text in lines_with_x:
+        if HEADING_LINE_RE.match(text.strip()):
+            if buf:
+                paras.append(buf)
+                buf = ""
+            paras.append(text.strip())
+            continue
         if x0 > indent_threshold:
             if buf:
                 paras.append(buf)
@@ -282,7 +305,7 @@ def _verse_page_paragraphs(lines_with_x):
     paras = []
     buf = []
     for _, text in lines_with_x:
-        if BOOK_HEADING_RE.match(text):
+        if HEADING_LINE_RE.match(text):
             if buf:
                 paras.append(" ".join(buf))
                 buf = []
@@ -301,8 +324,8 @@ def paragraphs_to_blocks(paragraphs):
     """Path A blocks: mostly body, with conservative heading detection."""
     blocks = []
     for p in paragraphs:
-        if BOOK_HEADING_RE.match(p.strip()):
-            blocks.append({"type": "heading", "text": p.strip()})
+        if HEADING_LINE_RE.match(p.strip()):
+            blocks.append({"type": "heading", "text": strip_markdown(p)})
         elif is_heading(p):
             blocks.append({"type": "heading", "text": strip_markdown(p)})
         else:
