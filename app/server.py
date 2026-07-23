@@ -295,7 +295,7 @@ def run_extraction(st):
         save_state(st)
         page_blocks = []
         for idx, pno in enumerate(range(p_from - 1, p_to)):
-            if _cancel_flags.get(job_id):
+            if _cancelled(job_id):
                 raise _Cancelled()
             md_path = pages_dir / f"page_{pno + 1:04d}.md"
             if md_path.exists():
@@ -361,10 +361,18 @@ def _plan_hash(job_dir, st):
     changes (text, voice, pause profile, planner version), old segments are
     stale and must be regenerated."""
     blob = (job_dir / "blocks.json").read_bytes()
+    # Include the voice file's content signature (size + mtime), not just its
+    # path, so overwriting a voice under the same name invalidates segments.
+    vp = voice_wav_path(st.get("voice"))
+    try:
+        vstat = os.stat(vp)
+        voice_sig = f"{vp}:{vstat.st_size}:{vstat.st_mtime_ns}"
+    except OSError:
+        voice_sig = vp
     key = b"\x00".join([
         blob,
         st["path"].encode(),
-        voice_wav_path(st.get("voice")).encode(),
+        voice_sig.encode(),
         PLAN_VERSION.encode(),
     ])
     return hashlib.sha256(key).hexdigest()
@@ -372,6 +380,12 @@ def _plan_hash(job_dir, st):
 
 def ensure_segments_fresh(job_dir, st):
     seg_dir = job_dir / "segments"
+    # Sweep any orphaned atomic-write temp files every run (a worker killed
+    # between write and rename leaves one behind); do this regardless of the
+    # hash so a strict progress count never trips over them.
+    if seg_dir.exists():
+        for t in seg_dir.glob("seg_*.tmp*.wav"):
+            t.unlink()
     hp = job_dir / "plan_hash.txt"
     key = _plan_hash(job_dir, st)
     old = hp.read_text(encoding="utf-8").strip() if hp.exists() else None
@@ -381,6 +395,41 @@ def ensure_segments_fresh(job_dir, st):
             f.unlink()
         log_line(st["id"], f"plan inputs changed; cleared {len(stale)} stale segments")
     hp.write_text(key, encoding="utf-8")
+
+
+_SEG_RE = re.compile(r"seg_\d{6}\.wav$")
+
+
+def _count_segments(seg_dir):
+    """Count only finalized segments. glob('seg_*.wav') would also match the
+    atomic-write temp files seg_NNNNNN.tmpK.wav, so match the exact name."""
+    if not seg_dir.exists():
+        return 0
+    return sum(1 for f in seg_dir.glob("seg_??????.wav") if _SEG_RE.match(f.name))
+
+
+def _write_worker_pids(job_dir, procs):
+    (job_dir / "worker_pids.txt").write_text(
+        "\n".join(str(p.pid) for p in procs), encoding="utf-8"
+    )
+
+
+def _reap_worker_pids(job_dir):
+    """Kill any narration workers left over from a previous server process
+    (Windows does not terminate children when the parent dies)."""
+    pf = job_dir / "worker_pids.txt"
+    if not pf.exists():
+        return
+    for line in pf.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line.isdigit():
+            continue
+        try:
+            subprocess.run(["taskkill", "/F", "/PID", line],
+                           capture_output=True, timeout=10)
+        except Exception:
+            pass
+    pf.unlink(missing_ok=True)
 
 
 def _spawn_worker(job_dir, logf, extra_args):
@@ -404,16 +453,20 @@ def run_narration(st):
     ensure_segments_fresh(job_dir, st)
 
     n = narration_worker_count()
+    seg_dir = job_dir / "segments"
+    baseline = _count_segments(seg_dir)  # segments already done from prior runs
     st["status"] = "narrating"
     st["num_workers"] = n
     st["narrate_started_at"] = time.time()
+    st["narrate_baseline_done"] = baseline
     save_state(st)
-    log_line(job_id, f"narrating with {n} parallel worker(s)")
+    log_line(job_id, f"narrating with {n} parallel worker(s); {baseline} segments already present")
 
     with open(job_dir / "log.txt", "a", encoding="utf-8") as logf:
         # Generation: N shard processes covering disjoint chunks.
         procs = [_spawn_worker(job_dir, logf, ["--shard", str(k), "--num-shards", str(n)])
                  for k in range(n)]
+        _write_worker_pids(job_dir, procs)
         _active_procs["procs"] = procs
         _active_procs["job_id"] = job_id
         codes = [p.wait() for p in procs]
@@ -425,14 +478,23 @@ def run_narration(st):
         if any(c != 0 for c in codes):
             raise RuntimeError(f"a narration worker failed (exit codes {codes}), see log")
 
-        # Assembly: one process, no model load.
+        # Assembly: one process, no model load. Register it BEFORE the cancel
+        # check so a cancel arriving in this window still kills it.
         log_line(job_id, "generation complete, assembling")
         ap = _spawn_worker(job_dir, logf, ["--assemble"])
         _active_procs["procs"] = [ap]
         _active_procs["job_id"] = job_id
+        _write_worker_pids(job_dir, [ap])
+        if _cancel_flags.pop(job_id, False):
+            ap.kill()
+            _active_procs["procs"] = []
+            _active_procs["job_id"] = None
+            raise _Cancelled()
         acode = ap.wait()
         _active_procs["procs"] = []
         _active_procs["job_id"] = None
+
+    (job_dir / "worker_pids.txt").unlink(missing_ok=True)
 
     if _cancel_flags.pop(job_id, False):
         raise _Cancelled()
@@ -497,13 +559,17 @@ def _narration_progress(job_dir, st):
             total = int(total_file.read_text(encoding="utf-8").strip())
         except ValueError:
             total = 0
-    done = sum(1 for _ in seg_dir.glob("seg_*.wav")) if seg_dir.exists() else 0
+    done = _count_segments(seg_dir)
     n = st.get("num_workers", 1)
     started = st.get("narrate_started_at")
     elapsed = time.time() - started if started else 0
+    # Rate must be measured over work done THIS run: on a resume, `done`
+    # includes segments from prior runs that cost ~0 of this run's elapsed.
+    baseline = st.get("narrate_baseline_done", 0)
+    this_run = done - baseline
     eta = None
-    if total and done < total and elapsed > 0 and done > 0:
-        eta = (total - done) * (elapsed / done)
+    if total and done < total and elapsed > 0 and this_run > 0:
+        eta = (total - done) * (elapsed / this_run)
     if total and done >= total:
         message = "assembling"
     elif done == 0:
@@ -665,6 +731,7 @@ class Handler(BaseHTTPRequestHandler):
                 if st and st["status"] in ("failed", "canceled", "interrupted"):
                     st["status"] = "queued"
                     st.pop("error", None)
+                    _cancel_flags.pop(job_id, None)  # no stale cancel survives into the retry
                     save_state(st)
                     enqueue(job_id)
                     _json_response(self, {"ok": True})
@@ -735,6 +802,10 @@ class Handler(BaseHTTPRequestHandler):
 def mark_interrupted_jobs():
     for st in list_jobs():
         if st["status"] in ("extracting", "tagging", "narrating", "queued"):
+            # Kill any workers this job's previous server orphaned before we
+            # let it resume, so they cannot contend for the GPU or collide on
+            # segment temp files with a fresh worker set.
+            _reap_worker_pids(JOBS_DIR / st["id"])
             st["status"] = "interrupted"
             save_state(st)
 

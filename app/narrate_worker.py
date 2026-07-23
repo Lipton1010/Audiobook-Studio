@@ -28,6 +28,7 @@ watermarker stub, sentence-safe packing, quoted-ellipsis fix, fades.
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -254,7 +255,9 @@ def run_generate(job_dir, plan, ref_wav, shard, nshards):
         wav = model.generate(plan[i]["text"], audio_prompt_path=ref_wav)
         wav_np = wav.squeeze().cpu().numpy().astype(np.float32)
         wav_np = apply_fade(wav_np, sr, FADE_MS)
-        tmp = seg_path.with_suffix(f".tmp{shard}.wav")
+        # Temp name unique per process so a fresh worker set and any orphaned
+        # workers from a prior run can never write the same temp path.
+        tmp = seg_path.with_suffix(f".tmp{shard}_{os.getpid()}.wav")
         sf.write(str(tmp), wav_np, sr, subtype="PCM_16")
         tmp.replace(seg_path)
         done += 1
