@@ -56,9 +56,12 @@ AUDIO_MIME = {".m4b": "audio/mp4", ".mp3": "audio/mpeg", ".wav": "audio/wav"}
 # of VRAM, so worker count is (usable VRAM / per-worker budget), clamped.
 # Env overrides let a user tune or pin it: AUDIOBOOK_NUM_WORKERS forces a
 # count; AUDIOBOOK_VRAM_PER_WORKER_GB adjusts the per-worker budget.
-VRAM_PER_WORKER_GB = float(os.environ.get("AUDIOBOOK_VRAM_PER_WORKER_GB", "10"))
-VRAM_RESERVE_GB = 1.5
-MAX_WORKERS = 4
+# Measured on the 4090: each worker holds ~6 GB under multi-process pressure,
+# and throughput peaks at 3 workers (1.0x/1.12x/1.28x/1.15x for N=1..4) then
+# falls off as time-slicing overhead dominates. So cap at 3 and budget ~6.5 GB.
+VRAM_PER_WORKER_GB = float(os.environ.get("AUDIOBOOK_VRAM_PER_WORKER_GB", "6.5"))
+VRAM_RESERVE_GB = 2.0
+MAX_WORKERS = 3
 # Bump when the chunk-planning/packing logic changes so old segments (which
 # are keyed by plan index) are treated as stale and regenerated.
 PLAN_VERSION = "1"
