@@ -58,6 +58,10 @@ SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?])\s+(?=[A-Z"\'‘“])')
 # not, so the chapter list stays a real table of contents.
 CHAPTER_RE = re.compile(r"^(BOOK|CHAPTER|PART|CANTO|PROLOGUE|EPILOGUE|INTRODUCTION|PREFACE)\b", re.I)
 AAC_BITRATE = "64k"  # mono 24 kHz narration; transparent for voice
+# Chunks per T3 forward-pass batch for engine="batched". Measured on a 4090:
+# per-step cost barely grows from N=1 to N=6, so throughput scales nearly
+# linearly; 6 keeps padding waste and per-bucket tail latency low.
+BATCH_SIZE = 6
 
 PAUSE_PROFILES = {
     # narrate_tagged.py validated values (Path B tagged material)
@@ -232,38 +236,93 @@ def load_plan(job_dir):
     return plan, config, profile
 
 
-def run_generate(job_dir, plan, ref_wav, shard, nshards):
+def _write_segment(seg_dir, i, wav_np, sr, shard):
+    """Atomic per-chunk segment write, identical for both engines. The temp
+    name is unique per process so a fresh worker set and any orphaned workers
+    from a prior run can never write the same temp path."""
+    wav_np = apply_fade(wav_np.astype(np.float32), sr, FADE_MS)
+    seg_path = seg_dir / f"seg_{i:06d}.wav"
+    tmp = seg_path.with_suffix(f".tmp{shard}_{os.getpid()}.wav")
+    sf.write(str(tmp), wav_np, sr, subtype="PCM_16")
+    tmp.replace(seg_path)
+
+
+def _generate_serial(model, plan, ref_wav, todo, seg_dir, sr, shard):
+    """v1 engine: one model.generate per chunk (re-embeds the voice each call)."""
+    done = 0
+    for i in todo:
+        wav = model.generate(plan[i]["text"], audio_prompt_path=ref_wav)
+        _write_segment(seg_dir, i, wav.squeeze().cpu().numpy(), sr, shard)
+        done += 1
+        if done % 10 == 0:
+            print(f"shard {shard}: {done} generated", flush=True)
+
+
+def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size):
+    """
+    Batched engine: generate `batch_size` chunks per T3 forward-pass batch.
+    Verified numerically equivalent to the serial path per chunk (see
+    batched_narrate.py and ab_selftest.py), so segments from either engine are
+    interchangeable and resume still works across an engine switch.
+
+    Chunks are sorted by token length and bucketed so each batch pads little
+    and its rows finish at similar times (a bucket runs until its slowest row).
+    """
+    import batched_narrate as bn
+
+    # The voice conditioning is identical for every chunk, so compute it ONCE
+    # instead of re-embedding the reference per chunk as the serial path does.
+    model.prepare_conditionals(ref_wav)
+    conds = model.conds
+
+    toks = [(i, bn.tokenize_chunk(model, plan[i]["text"])) for i in todo]
+    toks.sort(key=lambda it: it[1].numel())
+    done = 0
+    for b in range(0, len(toks), batch_size):
+        bucket = toks[b:b + batch_size]
+        seqs = bn.batched_generate(model, [t for _, t in bucket], conds)
+        wavs = bn.seqs_to_wavs(model, conds, seqs)
+        for (i, _), wav in zip(bucket, wavs):
+            if wav is None:
+                # Degenerate empty token stream: fall back to the serial path
+                # for just this chunk rather than emitting silence.
+                print(f"shard {shard}: chunk {i} empty from batch, retrying serially", flush=True)
+                wav = model.generate(plan[i]["text"], audio_prompt_path=ref_wav)
+                wav = wav.squeeze().cpu().numpy()
+            _write_segment(seg_dir, i, wav, sr, shard)
+            done += 1
+        print(f"shard {shard}: {done}/{len(toks)} generated", flush=True)
+
+
+def run_generate(job_dir, plan, ref_wav, shard, nshards, engine="parallel", batch_size=BATCH_SIZE):
     """
     Generate this shard's segments. Work is split by index modulo nshards,
     so N workers cover disjoint chunks with no coordination, and every
-    worker still skips segments that already exist (resume-safe). The
-    temp file is per-shard so two workers never collide on a write.
+    worker still skips segments that already exist (resume-safe).
+
+    engine="parallel" -> v1 one-at-a-time generation (the shipped default).
+    engine="batched"  -> batched T3 inference; the server runs a single worker
+                         for this engine because batching, not multiprocessing,
+                         is what fills the GPU.
     """
     seg_dir = job_dir / "segments"
     seg_dir.mkdir(exist_ok=True)
     (job_dir / "plan_total.txt").write_text(str(len(plan)), encoding="utf-8")
     my_indices = [i for i in range(len(plan)) if i % nshards == shard]
-    print(f"Shard {shard}/{nshards}: responsible for {len(my_indices)} of {len(plan)} chunks")
+    todo = [i for i in my_indices if not (seg_dir / f"seg_{i:06d}.wav").exists()]
+    print(f"Shard {shard}/{nshards}: {len(my_indices)} of {len(plan)} chunks, "
+          f"{len(todo)} to generate, engine={engine}")
     print("Loading Chatterbox model...")
     model = ChatterboxTTS.from_pretrained(device="cuda")
     sr = model.sr
-    done = 0
-    for i in my_indices:
-        seg_path = seg_dir / f"seg_{i:06d}.wav"
-        if seg_path.exists():
-            continue
-        wav = model.generate(plan[i]["text"], audio_prompt_path=ref_wav)
-        wav_np = wav.squeeze().cpu().numpy().astype(np.float32)
-        wav_np = apply_fade(wav_np, sr, FADE_MS)
-        # Temp name unique per process so a fresh worker set and any orphaned
-        # workers from a prior run can never write the same temp path.
-        tmp = seg_path.with_suffix(f".tmp{shard}_{os.getpid()}.wav")
-        sf.write(str(tmp), wav_np, sr, subtype="PCM_16")
-        tmp.replace(seg_path)
-        done += 1
-        if done % 10 == 0:
-            print(f"shard {shard}: {done} generated")
-    print(f"shard {shard} finished: generated {done}, {len(my_indices) - done} already present")
+
+    if engine == "batched":
+        _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size)
+    else:
+        _generate_serial(model, plan, ref_wav, todo, seg_dir, sr, shard)
+
+    print(f"shard {shard} finished: generated {len(todo)}, "
+          f"{len(my_indices) - len(todo)} already present")
 
 
 def run_assemble(job_dir, plan, config, profile):
@@ -382,7 +441,10 @@ def main():
         return
 
     shard = args.shard if args.shard is not None else 0
-    run_generate(job_dir, plan, config["reference_wav"], shard, args.num_shards)
+    engine = config.get("engine", "parallel")
+    batch_size = int(config.get("batch_size", BATCH_SIZE))
+    run_generate(job_dir, plan, config["reference_wav"], shard, args.num_shards,
+                 engine=engine, batch_size=batch_size)
 
     # Manual single-worker convenience: `python narrate_worker.py <job>` with
     # no shard args generates everything and assembles in one pass. The server

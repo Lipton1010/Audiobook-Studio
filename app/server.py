@@ -65,6 +65,13 @@ MAX_WORKERS = 3
 # Bump when the chunk-planning/packing logic changes so old segments (which
 # are keyed by plan index) are treated as stale and regenerated.
 PLAN_VERSION = "1"
+# Narration engine: "parallel" = the shipped v1 one-chunk-at-a-time path run in
+# N processes; "batched" = batched T3 inference in a SINGLE process (measured
+# ~2.7-3.3x vs v1-single on a 4090, and numerically verified to produce
+# per-chunk output equivalent to v1). Default stays "parallel" until the
+# batched engine is signed off by listening. Override per job or via env.
+DEFAULT_ENGINE = os.environ.get("AUDIOBOOK_ENGINE", "parallel")
+BATCH_SIZE = int(os.environ.get("AUDIOBOOK_BATCH_SIZE", "6"))
 
 JOBS_DIR.mkdir(exist_ok=True)
 VOICES_DIR.mkdir(exist_ok=True)
@@ -445,17 +452,22 @@ def _spawn_worker(job_dir, logf, extra_args):
 def run_narration(st):
     job_id = st["id"]
     job_dir = JOBS_DIR / job_id
+    engine = st.get("engine", DEFAULT_ENGINE)
     config = {
         "path": st["path"],
         "reference_wav": voice_wav_path(st.get("voice")),
         "title": st["title"],
         "format": st.get("format", "m4b"),
         "fallback_part_minutes": 240,
+        "engine": engine,
+        "batch_size": BATCH_SIZE,
     }
     (job_dir / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
     ensure_segments_fresh(job_dir, st)
 
-    n = narration_worker_count()
+    # The batched engine fills the GPU by batching sequences, so extra processes
+    # would only time-slice against each other (Windows has no CUDA MPS).
+    n = 1 if engine == "batched" else narration_worker_count()
     seg_dir = job_dir / "segments"
     baseline = _count_segments(seg_dir)  # segments already done from prior runs
     st["status"] = "narrating"
@@ -717,6 +729,7 @@ class Handler(BaseHTTPRequestHandler):
                     "page_to": min(n, int(body.get("page_to", n))),
                     "voice": body.get("voice") or DEFAULT_VOICE,
                     "format": body.get("format") if body.get("format") in ("m4b", "mp3", "wav") else "m4b",
+                    "engine": body.get("engine") if body.get("engine") in ("parallel", "batched") else DEFAULT_ENGINE,
                     "status": "queued",
                     "created_at": time.time(),
                 }
