@@ -58,10 +58,14 @@ SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?])\s+(?=[A-Z"\'‘“])')
 # not, so the chapter list stays a real table of contents.
 CHAPTER_RE = re.compile(r"^(BOOK|CHAPTER|PART|CANTO|PROLOGUE|EPILOGUE|INTRODUCTION|PREFACE)\b", re.I)
 AAC_BITRATE = "64k"  # mono 24 kHz narration; transparent for voice
-# Chunks per T3 forward-pass batch for engine="batched". Measured on a 4090:
-# per-step cost barely grows from N=1 to N=6, so throughput scales nearly
-# linearly; 6 keeps padding waste and per-bucket tail latency low.
-BATCH_SIZE = 6
+# Batching controls for engine="batched". BATCH_SIZE is the hard cap on rows
+# per batch. BATCH_TOKEN_BUDGET caps rows*Tmax so the KV-cache stays within
+# VRAM: on a 4090, 6 x 234-token chunks already peaked at ~19 GB, so a fixed
+# count OOM-thrashes (hangs) once chunks get long. A budget of ~700 keeps peak
+# reserved near ~7-9 GB across short and long chunks alike. Both are overridable
+# per job (config) or via env (AUDIOBOOK_BATCH_SIZE / AUDIOBOOK_BATCH_TOKEN_BUDGET).
+BATCH_SIZE = 12
+BATCH_TOKEN_BUDGET = 700
 
 PAUSE_PROFILES = {
     # narrate_tagged.py validated values (Path B tagged material)
@@ -258,15 +262,37 @@ def _generate_serial(model, plan, ref_wav, todo, seg_dir, sr, shard):
             print(f"shard {shard}: {done} generated", flush=True)
 
 
-def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size):
+def _make_buckets(toks_sorted, max_batch, token_budget):
+    """Greedy VRAM-aware bucketing. The batched KV-cache scales with
+    (rows x sequence_length), so a FIXED batch size blows past 24 GB once
+    chunks get long (measured: 6 x 234-token chunks peaked at ~19 GB, and the
+    longest chunks at batch 6 exceeded the card and thrashed into shared
+    memory, i.e. hung). Instead we cap rows*Tmax by a token budget: many short
+    chunks per bucket, few long ones. `toks_sorted` is ascending by token
+    length, so the running max is just the newest chunk's length."""
+    buckets, cur = [], []
+    for item in toks_sorted:
+        tl = int(item[1].numel())
+        if cur and (len(cur) + 1 > max_batch or (len(cur) + 1) * tl > token_budget):
+            buckets.append(cur)
+            cur = []
+        cur.append(item)          # a single chunk over budget still goes alone
+    if cur:
+        buckets.append(cur)
+    return buckets
+
+
+def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size,
+                      token_budget=BATCH_TOKEN_BUDGET):
     """
-    Batched engine: generate `batch_size` chunks per T3 forward-pass batch.
+    Batched engine: generate several chunks per T3 forward-pass batch.
     Verified numerically equivalent to the serial path per chunk (see
     batched_narrate.py and ab_selftest.py), so segments from either engine are
     interchangeable and resume still works across an engine switch.
 
-    Chunks are sorted by token length and bucketed so each batch pads little
-    and its rows finish at similar times (a bucket runs until its slowest row).
+    Chunks are sorted by token length, then bucketed by a VRAM budget
+    (rows x Tmax <= token_budget, capped at batch_size rows) so batches pad
+    little, finish at similar times, and never exceed the GPU's memory.
     """
     import batched_narrate as bn
 
@@ -280,9 +306,9 @@ def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size
 
     toks = [(i, bn.tokenize_chunk(model, plan[i]["text"]).cpu()) for i in todo]
     toks.sort(key=lambda it: it[1].numel())
+    buckets = _make_buckets(toks, batch_size, token_budget)
     done = 0
-    for b in range(0, len(toks), batch_size):
-        bucket = toks[b:b + batch_size]
+    for bnum, bucket in enumerate(buckets):
         _tmax = max(int(t.numel()) for _, t in bucket)
         _t0 = _time.time()
         seqs = bn.batched_generate(model, [t for _, t in bucket], conds)
@@ -292,7 +318,7 @@ def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size
         _s3s = _time.time() - _t0
         # Per-bucket telemetry: without this a stall is invisible, since
         # segments are only written once a whole bucket finishes.
-        print(f"shard {shard}: bucket@{b} N={len(bucket)} Tmax={_tmax} "
+        print(f"shard {shard}: bucket {bnum+1}/{len(buckets)} N={len(bucket)} Tmax={_tmax} "
               f"t3={_t3s:.2f}s s3gen={_s3s:.2f}s "
               f"tok_out={[len(s) for s in seqs]} "
               f"reserved={_torch.cuda.memory_reserved()/1e9:.2f}GB", flush=True)
@@ -308,7 +334,8 @@ def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size
         print(f"shard {shard}: {done}/{len(toks)} generated", flush=True)
 
 
-def run_generate(job_dir, plan, ref_wav, shard, nshards, engine="parallel", batch_size=BATCH_SIZE):
+def run_generate(job_dir, plan, ref_wav, shard, nshards, engine="parallel",
+                 batch_size=BATCH_SIZE, token_budget=BATCH_TOKEN_BUDGET):
     """
     Generate this shard's segments. Work is split by index modulo nshards,
     so N workers cover disjoint chunks with no coordination, and every
@@ -331,7 +358,7 @@ def run_generate(job_dir, plan, ref_wav, shard, nshards, engine="parallel", batc
     sr = model.sr
 
     if engine == "batched":
-        _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size)
+        _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size, token_budget)
     else:
         _generate_serial(model, plan, ref_wav, todo, seg_dir, sr, shard)
 
@@ -457,8 +484,9 @@ def main():
     shard = args.shard if args.shard is not None else 0
     engine = config.get("engine", "parallel")
     batch_size = int(config.get("batch_size", BATCH_SIZE))
+    token_budget = int(config.get("batch_token_budget", BATCH_TOKEN_BUDGET))
     run_generate(job_dir, plan, config["reference_wav"], shard, args.num_shards,
-                 engine=engine, batch_size=batch_size)
+                 engine=engine, batch_size=batch_size, token_budget=token_budget)
 
     # Manual single-worker convenience: `python narrate_worker.py <job>` with
     # no shard args generates everything and assembles in one pass. The server
