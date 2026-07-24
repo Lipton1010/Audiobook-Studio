@@ -275,13 +275,27 @@ def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size
     model.prepare_conditionals(ref_wav)
     conds = model.conds
 
-    toks = [(i, bn.tokenize_chunk(model, plan[i]["text"])) for i in todo]
+    import time as _time
+    import torch as _torch
+
+    toks = [(i, bn.tokenize_chunk(model, plan[i]["text"]).cpu()) for i in todo]
     toks.sort(key=lambda it: it[1].numel())
     done = 0
     for b in range(0, len(toks), batch_size):
         bucket = toks[b:b + batch_size]
+        _tmax = max(int(t.numel()) for _, t in bucket)
+        _t0 = _time.time()
         seqs = bn.batched_generate(model, [t for _, t in bucket], conds)
+        _t3s = _time.time() - _t0
+        _t0 = _time.time()
         wavs = bn.seqs_to_wavs(model, conds, seqs)
+        _s3s = _time.time() - _t0
+        # Per-bucket telemetry: without this a stall is invisible, since
+        # segments are only written once a whole bucket finishes.
+        print(f"shard {shard}: bucket@{b} N={len(bucket)} Tmax={_tmax} "
+              f"t3={_t3s:.2f}s s3gen={_s3s:.2f}s "
+              f"tok_out={[len(s) for s in seqs]} "
+              f"reserved={_torch.cuda.memory_reserved()/1e9:.2f}GB", flush=True)
         for (i, _), wav in zip(bucket, wavs):
             if wav is None:
                 # Degenerate empty token stream: fall back to the serial path
