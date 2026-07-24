@@ -28,25 +28,27 @@ import fitz  # PyMuPDF
 import requests
 
 import pipeline_text as pt
+from config import CFG
 
 APP_DIR = Path(__file__).parent
 JOBS_DIR = APP_DIR / "jobs"
 STATIC_DIR = APP_DIR / "static"
-LIBRARY_ROOTS = [
-    Path(r"D:\Audiobook_Pipeline\samples"),
-    Path(r"D:\Audiobook_Pipeline\source_pdfs"),
-]
-# Converted from "Voice Sample Male.mp3" via convert_voice.py; the old
-# ref_15s.wav default was judged bad on listening (2026-07-21).
-REFERENCE_WAV = r"D:\Audiobook_Pipeline\samples\Voice_Sample\male_ref.wav"
-DEFAULT_VOICE = "Default narrator (male sample)"
 VOICES_DIR = APP_DIR / "voices"
-AUDIOBOOKS_DIR = Path(r"D:\Audiobook_Pipeline\audiobooks")
-CHATTERBOX_PY = r"C:\Users\paulm\miniconda3\envs\chatterbox\python.exe"
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OCR_MODEL = "glm-ocr-doc"
-OCR_PROMPT = "Transcribe this document page as clean Markdown, preserving reading order and tables."
-PORT = 8765
+
+# Machine-specific settings now come from config.py (env > config.json >
+# auto-detect > original default), so the app is portable across machines
+# without editing source. See config.example.json.
+LIBRARY_ROOTS = CFG.library_roots
+# Default voice: converted from "Voice Sample Male.mp3" via convert_voice.py;
+# the old ref_15s.wav default was judged bad on listening (2026-07-21).
+REFERENCE_WAV = CFG.reference_wav
+DEFAULT_VOICE = "Default narrator (male sample)"
+AUDIOBOOKS_DIR = CFG.audiobooks_dir
+CHATTERBOX_PY = CFG.chatterbox_python
+OLLAMA_URL = CFG.ollama_url
+OCR_MODEL = CFG.ocr_model
+OCR_PROMPT = CFG.ocr_prompt
+PORT = CFG.port
 
 AUDIO_EXTS = {".m4b", ".mp3", ".wav"}
 AUDIO_MIME = {".m4b": "audio/mp4", ".mp3": "audio/mpeg", ".wav": "audio/wav"}
@@ -70,7 +72,7 @@ PLAN_VERSION = "1"
 # ~2.7-3.3x vs v1-single on a 4090, and numerically verified to produce
 # per-chunk output equivalent to v1). Default stays "parallel" until the
 # batched engine is signed off by listening. Override per job or via env.
-DEFAULT_ENGINE = os.environ.get("AUDIOBOOK_ENGINE", "parallel")
+DEFAULT_ENGINE = os.environ.get("AUDIOBOOK_ENGINE", "batched")
 BATCH_SIZE = int(os.environ.get("AUDIOBOOK_BATCH_SIZE", "6"))
 
 JOBS_DIR.mkdir(exist_ok=True)
@@ -827,10 +829,15 @@ def mark_interrupted_jobs():
 
 
 def main():
+    for line in CFG.warnings():
+        print(f"[config] WARNING: {line}")
     mark_interrupted_jobs()
     threading.Thread(target=worker_loop, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     print(f"Audiobook Studio running at http://localhost:{PORT}")
+    print(f"  chatterbox python: {CHATTERBOX_PY}")
+    print(f"  audiobooks dir:    {AUDIOBOOKS_DIR}")
+    print(f"  library roots:     {', '.join(str(r) for r in LIBRARY_ROOTS) or '(none)'}")
     server.serve_forever()
 
 
