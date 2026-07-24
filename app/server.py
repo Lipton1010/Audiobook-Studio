@@ -73,7 +73,10 @@ PLAN_VERSION = "1"
 # per-chunk output equivalent to v1). Default stays "parallel" until the
 # batched engine is signed off by listening. Override per job or via env.
 DEFAULT_ENGINE = os.environ.get("AUDIOBOOK_ENGINE", "batched")
-BATCH_SIZE = int(os.environ.get("AUDIOBOOK_BATCH_SIZE", "6"))
+BATCH_SIZE = int(os.environ.get("AUDIOBOOK_BATCH_SIZE", "12"))
+# Caps rows*Tmax per batch so the batched KV-cache stays within VRAM; a fixed
+# row count OOM-thrashes (hangs) once chunks get long. See narrate_worker.
+BATCH_TOKEN_BUDGET = int(os.environ.get("AUDIOBOOK_BATCH_TOKEN_BUDGET", "700"))
 
 JOBS_DIR.mkdir(exist_ok=True)
 VOICES_DIR.mkdir(exist_ok=True)
@@ -199,6 +202,47 @@ def suggest_path(pdf_path, pages):
         return "A"
     except Exception:
         return "B"
+
+
+def extract_book_meta(pdf_path, title, job_dir):
+    """Pull audiobook tags + cover art from the source PDF (base env has fitz;
+    the narration worker does not). Returns (metadata_dict, cover_path_or_None).
+    Cover: the first embedded image on page 1, else page 1 rendered. Never
+    fatal - a missing cover or metadata just yields fewer tags."""
+    meta = {"title": title, "album": title, "genre": "Audiobook",
+            "media_type": "2"}  # 2 = Audiobook in the iTunes/MP4 stik atom
+    cover_path = None
+    try:
+        doc = fitz.open(pdf_path)
+        pdf_meta = doc.metadata or {}
+        if pdf_meta.get("author"):
+            meta["artist"] = pdf_meta["author"]      # narrator/author field
+            meta["album_artist"] = pdf_meta["author"]
+        if pdf_meta.get("title"):
+            meta["title"] = meta["album"] = pdf_meta["title"]
+        # Cover: prefer the largest embedded image on page 1, else render it.
+        try:
+            page = doc.load_page(0)
+            best = None
+            for img in page.get_images(full=True):
+                base = doc.extract_image(img[0])
+                if base and (best is None or len(base["image"]) > len(best["image"])):
+                    best = base
+            cp = job_dir / "cover.jpg"
+            if best and best["width"] >= 200 and best["height"] >= 200:
+                ext = best["ext"]
+                raw = job_dir / f"cover.{ext}"
+                raw.write_bytes(best["image"])
+                cover_path = str(raw)
+            else:
+                page.get_pixmap(dpi=150).save(str(cp))
+                cover_path = str(cp)
+        except Exception as e:
+            print(f"cover extraction failed: {e}")
+        doc.close()
+    except Exception as e:
+        print(f"metadata extraction failed: {e}")
+    return meta, cover_path
 
 
 def scan_library():
@@ -455,6 +499,7 @@ def run_narration(st):
     job_id = st["id"]
     job_dir = JOBS_DIR / job_id
     engine = st.get("engine", DEFAULT_ENGINE)
+    meta, cover = extract_book_meta(st["pdf_path"], st["title"], job_dir)
     config = {
         "path": st["path"],
         "reference_wav": voice_wav_path(st.get("voice")),
@@ -463,6 +508,9 @@ def run_narration(st):
         "fallback_part_minutes": 240,
         "engine": engine,
         "batch_size": BATCH_SIZE,
+        "batch_token_budget": BATCH_TOKEN_BUDGET,
+        "metadata": meta,
+        "cover_image": cover,
     }
     (job_dir / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
     ensure_segments_fresh(job_dir, st)

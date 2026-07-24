@@ -178,9 +178,13 @@ def _ffmeta_escape(s):
     return s.replace("\n", " ")
 
 
-def write_chapters_file(job_dir, chapters, total_ms):
-    """ffmetadata file: one [CHAPTER] per entry, times in ms."""
+def write_chapters_file(job_dir, chapters, total_ms, metadata=None):
+    """ffmetadata file: global tags (title/artist/album/...) then one [CHAPTER]
+    per entry, times in ms. ffmpeg copies the global tags via -map_metadata."""
     lines = [";FFMETADATA1"]
+    for key, val in (metadata or {}).items():
+        if val:
+            lines.append(f"{key}={_ffmeta_escape(str(val))}")
     for idx, (start_ms, title) in enumerate(chapters):
         end_ms = chapters[idx + 1][0] if idx + 1 < len(chapters) else total_ms
         if end_ms <= start_ms:
@@ -202,22 +206,34 @@ def find_ffmpeg():
     raise RuntimeError("ffmpeg not found on PATH; needed for m4b/mp3 output")
 
 
-def encode_stream(fmt, pcm_iter, sr, out_path, ffmeta_path, logf):
+def encode_stream(fmt, pcm_iter, sr, out_path, ffmeta_path, logf, cover_path=None):
     """
     Pipe raw int16 PCM into ffmpeg and encode directly to m4b/mp3 with
-    embedded chapters. No intermediate WAV is written to disk.
+    embedded chapters, global metadata, and (if given) cover art. No
+    intermediate WAV is written to disk.
     """
     ff = find_ffmpeg()
+    have_cover = bool(cover_path and Path(cover_path).exists())
+    # Inputs: 0 = raw PCM (stdin), 1 = ffmetadata (chapters+tags), [2 = cover].
+    inputs = [
+        "-f", "s16le", "-ar", str(sr), "-ac", "1", "-i", "pipe:0",
+        "-i", str(ffmeta_path),
+    ]
+    if have_cover:
+        inputs += ["-i", str(cover_path)]
+    maps = ["-map", "0:a", "-map_metadata", "1"]
+    if have_cover:
+        # Attach the image as cover art (m4b 'covr' atom / mp3 APIC frame).
+        maps += ["-map", "2:v", "-c:v", "mjpeg", "-disposition:v:0", "attached_pic"]
+        if fmt != "m4b":
+            maps += ["-metadata:s:v", "title=Album cover", "-metadata:s:v", "comment=Cover (front)"]
     if fmt == "m4b":
         codec = ["-c:a", "aac", "-b:a", AAC_BITRATE, "-f", "mp4"]
     else:
         codec = ["-c:a", "libmp3lame", "-b:a", AAC_BITRATE, "-f", "mp3"]
-    cmd = [
-        ff, "-y", "-loglevel", "warning",
-        "-f", "s16le", "-ar", str(sr), "-ac", "1", "-i", "pipe:0",
-        "-i", str(ffmeta_path), "-map", "0:a", "-map_metadata", "1",
-        *codec, str(out_path),
-    ]
+        if have_cover:
+            codec += ["-id3v2_version", "3"]
+    cmd = [ff, "-y", "-loglevel", "warning", *inputs, *maps, *codec, str(out_path)]
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=logf, stderr=logf)
     try:
         for chunk in pcm_iter:
@@ -426,10 +442,16 @@ def run_assemble(job_dir, plan, config, profile):
 
     if fmt in ("m4b", "mp3"):
         out_path = out_dir / f"{safe_title}.{fmt}"
-        ffmeta = write_chapters_file(job_dir, chapters, total_ms)
+        # Book metadata + cover art, prepared by the server from the PDF.
+        metadata = config.get("metadata") or {}
+        cover = config.get("cover_image")
+        if cover and not Path(cover).exists():
+            cover = None
+        ffmeta = write_chapters_file(job_dir, chapters, total_ms, metadata)
         with open(job_dir / "log.txt", "a", encoding="utf-8") as logf:
-            encode_stream(fmt, audio_stream(), sr, out_path, ffmeta, logf)
-        print(f"wrote {out_path} ({fmt}, {len(chapters)} chapters)")
+            encode_stream(fmt, audio_stream(), sr, out_path, ffmeta, logf, cover_path=cover)
+        tags = ", ".join(k for k, v in metadata.items() if v) or "none"
+        print(f"wrote {out_path} ({fmt}, {len(chapters)} chapters, cover={'yes' if cover else 'no'}, tags: {tags})")
     else:
         # Lossless WAV master. Splits only if one file would top the
         # WAV format's ~4 GB ceiling (roughly a 22+ hour book).
