@@ -13,3 +13,6 @@ __pycache__/
 app/jobs/
 app/voices/
 audiobooks/
+
+# Machine-specific config stays local; only config.example.json is tracked.
+app/config.json
