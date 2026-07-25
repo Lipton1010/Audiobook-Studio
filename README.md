@@ -18,19 +18,45 @@ Books (PDFs), audio, and generated jobs are gitignored; only code and docs are t
 
 ## Requirements
 
-- Windows, NVIDIA GPU with enough VRAM for the models (built on a 24 GB RTX 4090)
-- ffmpeg on PATH (for m4b/mp3 encoding and chapter embedding)
-- Ollama with the `glm-ocr-doc` model (`ollama create glm-ocr-doc -f samples/Modelfile`)
-- A conda env `chatterbox` (Python 3.11, torch + chatterbox-tts + soundfile)
-- Base Python with PyMuPDF and requests for the server
-- A reference voice clip at `samples/Voice_Sample/male_ref.wav` (licensed, synthetic, or royalty free only), or upload one in the UI
+You provide these; the installer sets up everything else.
+
+- **Windows** with an **NVIDIA GPU**, roughly **6 GB+ VRAM** (built on a 24 GB RTX 4090). This is a hard requirement for narration: the TTS model runs on CUDA, so a Mac, an AMD card, or integrated graphics **cannot generate audio**. Text extraction alone works without a GPU.
+- **Miniconda** (or Anaconda) installed: https://docs.conda.io/en/latest/miniconda.html
+- Roughly **10 GB of free disk** for the Python environment and the TTS models (models download on first narration).
+- **ffmpeg** for `.m4b`/`.mp3` output with chapters and cover art. WAV works without it. Install from https://www.gyan.dev/ffmpeg/builds/ or `choco install ffmpeg`.
+- **Your own** reference voice clip and books. The default voice sample is **not** shipped (see below), and PDFs are never included.
+- Optional: **Ollama** with the `glm-ocr-doc` model, only for scanned-image books (Path B): `ollama create glm-ocr-doc -f samples/Modelfile`.
+
+## Install
+
+From the repo folder, run:
+
+```
+setup.bat
+```
+
+It checks your prerequisites (conda, GPU, ffmpeg, Ollama), then builds the two conda environments the app needs, pinned to known-good versions (Python 3.11, torch 2.6.0+cu124, chatterbox-tts 0.1.7, transformers 5.2.0 from `install/requirements-chatterbox.txt`). It is safe to re-run, and it never modifies Ollama. If anything is missing it tells you exactly what to install.
+
+To only check prerequisites without installing: `python setup.py --check-only`.
+
+## Configure (optional)
+
+The app auto-detects your conda env and defaults every path relative to the repo, so it usually runs with no config. To override anything (folders, port, the chatterbox python), copy `app/config.example.json` to `app/config.json` and edit it. Settings can also come from environment variables. `app/config.json` is gitignored.
+
+## Provide a voice and books
+
+- **Voice:** the default narrator clip is not distributed. Upload your own in the UI (wav/mp3/flac/ogg), or drop a clip at `samples/Voice_Sample/male_ref.wav`. Per the project rule, a cloned voice must be **licensed, synthetic, or royalty-free** — not a real identifiable person without rights.
+- **Books:** put PDFs of books you legally own under `samples/` or `source_pdfs/` (or set your own `library_roots` in config).
 
 ## Run
 
-Double-click `Start_Audiobook_Studio.bat`, or:
+Double-click `Start_Audiobook_Studio.bat` (it finds your Python and opens the browser), then open http://localhost:8765, pick a PDF, choose pipeline/voice/page range, and start the job.
 
-```
-python app/server.py
-```
+## Narration engines
 
-then open http://localhost:8765, pick a PDF from the library, choose pipeline, voice, and page range, and start the job.
+Two narrators are available, selectable per job (default `batched`):
+
+- **`batched`** — generates several text chunks in one GPU pass. Much faster than the parallel engine on short/medium chunks; a VRAM budget keeps it from exceeding your card on long chunks. Verified to produce audio equivalent to the parallel engine.
+- **`parallel`** — the original one-chunk-at-a-time engine, run in several processes. Kept as a fallback (`v1-parallel` tag).
+
+Set the default with the `AUDIOBOOK_ENGINE` environment variable, or per job in the UI.

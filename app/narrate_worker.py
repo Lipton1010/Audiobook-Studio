@@ -58,6 +58,17 @@ SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?])\s+(?=[A-Z"\'‘“])')
 # not, so the chapter list stays a real table of contents.
 CHAPTER_RE = re.compile(r"^(BOOK|CHAPTER|PART|CANTO|PROLOGUE|EPILOGUE|INTRODUCTION|PREFACE)\b", re.I)
 AAC_BITRATE = "64k"  # mono 24 kHz narration; transparent for voice
+# Batching controls for engine="batched". BATCH_SIZE is the hard cap on rows
+# per batch. BATCH_TOKEN_BUDGET caps rows*Tmax so the KV-cache stays within
+# VRAM (a fixed count OOM-thrashes/hangs once chunks get long). Calibrated on a
+# 4090 (24 GB) with the LONGEST chunks (Tmax ~323, output ~750): N=3 -> 10 GB,
+# N=4 -> 15 GB @ 18 chunks/min, N=5 -> 24 GB (thrash). Budget 1300 lands the
+# longest chunks at N=4 (the sweet spot, ~9 GB headroom for model+desktop+
+# runaway margin), medium chunks at ~N=8, short at the N=12 cap. On a smaller
+# card, lower the budget (peak scales ~linearly with it). Overridable per job or
+# via env (AUDIOBOOK_BATCH_SIZE / AUDIOBOOK_BATCH_TOKEN_BUDGET).
+BATCH_SIZE = 12
+BATCH_TOKEN_BUDGET = 1300
 
 PAUSE_PROFILES = {
     # narrate_tagged.py validated values (Path B tagged material)
@@ -170,9 +181,13 @@ def _ffmeta_escape(s):
     return s.replace("\n", " ")
 
 
-def write_chapters_file(job_dir, chapters, total_ms):
-    """ffmetadata file: one [CHAPTER] per entry, times in ms."""
+def write_chapters_file(job_dir, chapters, total_ms, metadata=None):
+    """ffmetadata file: global tags (title/artist/album/...) then one [CHAPTER]
+    per entry, times in ms. ffmpeg copies the global tags via -map_metadata."""
     lines = [";FFMETADATA1"]
+    for key, val in (metadata or {}).items():
+        if val:
+            lines.append(f"{key}={_ffmeta_escape(str(val))}")
     for idx, (start_ms, title) in enumerate(chapters):
         end_ms = chapters[idx + 1][0] if idx + 1 < len(chapters) else total_ms
         if end_ms <= start_ms:
@@ -194,22 +209,34 @@ def find_ffmpeg():
     raise RuntimeError("ffmpeg not found on PATH; needed for m4b/mp3 output")
 
 
-def encode_stream(fmt, pcm_iter, sr, out_path, ffmeta_path, logf):
+def encode_stream(fmt, pcm_iter, sr, out_path, ffmeta_path, logf, cover_path=None):
     """
     Pipe raw int16 PCM into ffmpeg and encode directly to m4b/mp3 with
-    embedded chapters. No intermediate WAV is written to disk.
+    embedded chapters, global metadata, and (if given) cover art. No
+    intermediate WAV is written to disk.
     """
     ff = find_ffmpeg()
+    have_cover = bool(cover_path and Path(cover_path).exists())
+    # Inputs: 0 = raw PCM (stdin), 1 = ffmetadata (chapters+tags), [2 = cover].
+    inputs = [
+        "-f", "s16le", "-ar", str(sr), "-ac", "1", "-i", "pipe:0",
+        "-i", str(ffmeta_path),
+    ]
+    if have_cover:
+        inputs += ["-i", str(cover_path)]
+    maps = ["-map", "0:a", "-map_metadata", "1"]
+    if have_cover:
+        # Attach the image as cover art (m4b 'covr' atom / mp3 APIC frame).
+        maps += ["-map", "2:v", "-c:v", "mjpeg", "-disposition:v:0", "attached_pic"]
+        if fmt != "m4b":
+            maps += ["-metadata:s:v", "title=Album cover", "-metadata:s:v", "comment=Cover (front)"]
     if fmt == "m4b":
         codec = ["-c:a", "aac", "-b:a", AAC_BITRATE, "-f", "mp4"]
     else:
         codec = ["-c:a", "libmp3lame", "-b:a", AAC_BITRATE, "-f", "mp3"]
-    cmd = [
-        ff, "-y", "-loglevel", "warning",
-        "-f", "s16le", "-ar", str(sr), "-ac", "1", "-i", "pipe:0",
-        "-i", str(ffmeta_path), "-map", "0:a", "-map_metadata", "1",
-        *codec, str(out_path),
-    ]
+        if have_cover:
+            codec += ["-id3v2_version", "3"]
+    cmd = [ff, "-y", "-loglevel", "warning", *inputs, *maps, *codec, str(out_path)]
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=logf, stderr=logf)
     try:
         for chunk in pcm_iter:
@@ -232,38 +259,130 @@ def load_plan(job_dir):
     return plan, config, profile
 
 
-def run_generate(job_dir, plan, ref_wav, shard, nshards):
+def _write_segment(seg_dir, i, wav_np, sr, shard):
+    """Atomic per-chunk segment write, identical for both engines. The temp
+    name is unique per process so a fresh worker set and any orphaned workers
+    from a prior run can never write the same temp path."""
+    wav_np = apply_fade(wav_np.astype(np.float32), sr, FADE_MS)
+    seg_path = seg_dir / f"seg_{i:06d}.wav"
+    tmp = seg_path.with_suffix(f".tmp{shard}_{os.getpid()}.wav")
+    sf.write(str(tmp), wav_np, sr, subtype="PCM_16")
+    tmp.replace(seg_path)
+
+
+def _generate_serial(model, plan, ref_wav, todo, seg_dir, sr, shard):
+    """v1 engine: one model.generate per chunk (re-embeds the voice each call)."""
+    done = 0
+    for i in todo:
+        wav = model.generate(plan[i]["text"], audio_prompt_path=ref_wav)
+        _write_segment(seg_dir, i, wav.squeeze().cpu().numpy(), sr, shard)
+        done += 1
+        if done % 10 == 0:
+            print(f"shard {shard}: {done} generated", flush=True)
+
+
+def _make_buckets(toks_sorted, max_batch, token_budget):
+    """Greedy VRAM-aware bucketing. The batched KV-cache scales with
+    (rows x sequence_length), so a FIXED batch size blows past 24 GB once
+    chunks get long (measured: 6 x 234-token chunks peaked at ~19 GB, and the
+    longest chunks at batch 6 exceeded the card and thrashed into shared
+    memory, i.e. hung). Instead we cap rows*Tmax by a token budget: many short
+    chunks per bucket, few long ones. `toks_sorted` is ascending by token
+    length, so the running max is just the newest chunk's length."""
+    buckets, cur = [], []
+    for item in toks_sorted:
+        tl = int(item[1].numel())
+        if cur and (len(cur) + 1 > max_batch or (len(cur) + 1) * tl > token_budget):
+            buckets.append(cur)
+            cur = []
+        cur.append(item)          # a single chunk over budget still goes alone
+    if cur:
+        buckets.append(cur)
+    return buckets
+
+
+def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size,
+                      token_budget=BATCH_TOKEN_BUDGET):
+    """
+    Batched engine: generate several chunks per T3 forward-pass batch.
+    Verified numerically equivalent to the serial path per chunk (see
+    batched_narrate.py and ab_selftest.py), so segments from either engine are
+    interchangeable and resume still works across an engine switch.
+
+    Chunks are sorted by token length, then bucketed by a VRAM budget
+    (rows x Tmax <= token_budget, capped at batch_size rows) so batches pad
+    little, finish at similar times, and never exceed the GPU's memory.
+    """
+    import batched_narrate as bn
+
+    # The voice conditioning is identical for every chunk, so compute it ONCE
+    # instead of re-embedding the reference per chunk as the serial path does.
+    model.prepare_conditionals(ref_wav)
+    conds = model.conds
+
+    import time as _time
+    import torch as _torch
+
+    toks = [(i, bn.tokenize_chunk(model, plan[i]["text"]).cpu()) for i in todo]
+    toks.sort(key=lambda it: it[1].numel())
+    buckets = _make_buckets(toks, batch_size, token_budget)
+    done = 0
+    for bnum, bucket in enumerate(buckets):
+        _tmax = max(int(t.numel()) for _, t in bucket)
+        _t0 = _time.time()
+        seqs = bn.batched_generate(model, [t for _, t in bucket], conds)
+        _t3s = _time.time() - _t0
+        _t0 = _time.time()
+        wavs = bn.seqs_to_wavs(model, conds, seqs)
+        _s3s = _time.time() - _t0
+        # Per-bucket telemetry: without this a stall is invisible, since
+        # segments are only written once a whole bucket finishes.
+        print(f"shard {shard}: bucket {bnum+1}/{len(buckets)} N={len(bucket)} Tmax={_tmax} "
+              f"t3={_t3s:.2f}s s3gen={_s3s:.2f}s "
+              f"tok_out={[len(s) for s in seqs]} "
+              f"reserved={_torch.cuda.memory_reserved()/1e9:.2f}GB", flush=True)
+        for (i, _), wav in zip(bucket, wavs):
+            if wav is None:
+                # Degenerate empty token stream: fall back to the serial path
+                # for just this chunk rather than emitting silence.
+                print(f"shard {shard}: chunk {i} empty from batch, retrying serially", flush=True)
+                wav = model.generate(plan[i]["text"], audio_prompt_path=ref_wav)
+                wav = wav.squeeze().cpu().numpy()
+            _write_segment(seg_dir, i, wav, sr, shard)
+            done += 1
+        print(f"shard {shard}: {done}/{len(toks)} generated", flush=True)
+
+
+def run_generate(job_dir, plan, ref_wav, shard, nshards, engine="parallel",
+                 batch_size=BATCH_SIZE, token_budget=BATCH_TOKEN_BUDGET):
     """
     Generate this shard's segments. Work is split by index modulo nshards,
     so N workers cover disjoint chunks with no coordination, and every
-    worker still skips segments that already exist (resume-safe). The
-    temp file is per-shard so two workers never collide on a write.
+    worker still skips segments that already exist (resume-safe).
+
+    engine="parallel" -> v1 one-at-a-time generation (the shipped default).
+    engine="batched"  -> batched T3 inference; the server runs a single worker
+                         for this engine because batching, not multiprocessing,
+                         is what fills the GPU.
     """
     seg_dir = job_dir / "segments"
     seg_dir.mkdir(exist_ok=True)
     (job_dir / "plan_total.txt").write_text(str(len(plan)), encoding="utf-8")
     my_indices = [i for i in range(len(plan)) if i % nshards == shard]
-    print(f"Shard {shard}/{nshards}: responsible for {len(my_indices)} of {len(plan)} chunks")
+    todo = [i for i in my_indices if not (seg_dir / f"seg_{i:06d}.wav").exists()]
+    print(f"Shard {shard}/{nshards}: {len(my_indices)} of {len(plan)} chunks, "
+          f"{len(todo)} to generate, engine={engine}")
     print("Loading Chatterbox model...")
     model = ChatterboxTTS.from_pretrained(device="cuda")
     sr = model.sr
-    done = 0
-    for i in my_indices:
-        seg_path = seg_dir / f"seg_{i:06d}.wav"
-        if seg_path.exists():
-            continue
-        wav = model.generate(plan[i]["text"], audio_prompt_path=ref_wav)
-        wav_np = wav.squeeze().cpu().numpy().astype(np.float32)
-        wav_np = apply_fade(wav_np, sr, FADE_MS)
-        # Temp name unique per process so a fresh worker set and any orphaned
-        # workers from a prior run can never write the same temp path.
-        tmp = seg_path.with_suffix(f".tmp{shard}_{os.getpid()}.wav")
-        sf.write(str(tmp), wav_np, sr, subtype="PCM_16")
-        tmp.replace(seg_path)
-        done += 1
-        if done % 10 == 0:
-            print(f"shard {shard}: {done} generated")
-    print(f"shard {shard} finished: generated {done}, {len(my_indices) - done} already present")
+
+    if engine == "batched":
+        _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size, token_budget)
+    else:
+        _generate_serial(model, plan, ref_wav, todo, seg_dir, sr, shard)
+
+    print(f"shard {shard} finished: generated {len(todo)}, "
+          f"{len(my_indices) - len(todo)} already present")
 
 
 def run_assemble(job_dir, plan, config, profile):
@@ -326,10 +445,16 @@ def run_assemble(job_dir, plan, config, profile):
 
     if fmt in ("m4b", "mp3"):
         out_path = out_dir / f"{safe_title}.{fmt}"
-        ffmeta = write_chapters_file(job_dir, chapters, total_ms)
+        # Book metadata + cover art, prepared by the server from the PDF.
+        metadata = config.get("metadata") or {}
+        cover = config.get("cover_image")
+        if cover and not Path(cover).exists():
+            cover = None
+        ffmeta = write_chapters_file(job_dir, chapters, total_ms, metadata)
         with open(job_dir / "log.txt", "a", encoding="utf-8") as logf:
-            encode_stream(fmt, audio_stream(), sr, out_path, ffmeta, logf)
-        print(f"wrote {out_path} ({fmt}, {len(chapters)} chapters)")
+            encode_stream(fmt, audio_stream(), sr, out_path, ffmeta, logf, cover_path=cover)
+        tags = ", ".join(k for k, v in metadata.items() if v) or "none"
+        print(f"wrote {out_path} ({fmt}, {len(chapters)} chapters, cover={'yes' if cover else 'no'}, tags: {tags})")
     else:
         # Lossless WAV master. Splits only if one file would top the
         # WAV format's ~4 GB ceiling (roughly a 22+ hour book).
@@ -382,7 +507,11 @@ def main():
         return
 
     shard = args.shard if args.shard is not None else 0
-    run_generate(job_dir, plan, config["reference_wav"], shard, args.num_shards)
+    engine = config.get("engine", "parallel")
+    batch_size = int(config.get("batch_size", BATCH_SIZE))
+    token_budget = int(config.get("batch_token_budget", BATCH_TOKEN_BUDGET))
+    run_generate(job_dir, plan, config["reference_wav"], shard, args.num_shards,
+                 engine=engine, batch_size=batch_size, token_budget=token_budget)
 
     # Manual single-worker convenience: `python narrate_worker.py <job>` with
     # no shard args generates everything and assembles in one pass. The server

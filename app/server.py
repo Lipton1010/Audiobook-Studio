@@ -67,6 +67,16 @@ MAX_WORKERS = 3
 # Bump when the chunk-planning/packing logic changes so old segments (which
 # are keyed by plan index) are treated as stale and regenerated.
 PLAN_VERSION = "1"
+# Narration engine: "parallel" = the shipped v1 one-chunk-at-a-time path run in
+# N processes; "batched" = batched T3 inference in a SINGLE process (measured
+# ~2.7-3.3x vs v1-single on a 4090, and numerically verified to produce
+# per-chunk output equivalent to v1). Default stays "parallel" until the
+# batched engine is signed off by listening. Override per job or via env.
+DEFAULT_ENGINE = os.environ.get("AUDIOBOOK_ENGINE", "batched")
+BATCH_SIZE = int(os.environ.get("AUDIOBOOK_BATCH_SIZE", "12"))
+# Caps rows*Tmax per batch so the batched KV-cache stays within VRAM; a fixed
+# row count OOM-thrashes (hangs) once chunks get long. See narrate_worker.
+BATCH_TOKEN_BUDGET = int(os.environ.get("AUDIOBOOK_BATCH_TOKEN_BUDGET", "1300"))
 
 JOBS_DIR.mkdir(exist_ok=True)
 VOICES_DIR.mkdir(exist_ok=True)
@@ -192,6 +202,47 @@ def suggest_path(pdf_path, pages):
         return "A"
     except Exception:
         return "B"
+
+
+def extract_book_meta(pdf_path, title, job_dir):
+    """Pull audiobook tags + cover art from the source PDF (base env has fitz;
+    the narration worker does not). Returns (metadata_dict, cover_path_or_None).
+    Cover: the first embedded image on page 1, else page 1 rendered. Never
+    fatal - a missing cover or metadata just yields fewer tags."""
+    meta = {"title": title, "album": title, "genre": "Audiobook",
+            "media_type": "2"}  # 2 = Audiobook in the iTunes/MP4 stik atom
+    cover_path = None
+    try:
+        doc = fitz.open(pdf_path)
+        pdf_meta = doc.metadata or {}
+        if pdf_meta.get("author"):
+            meta["artist"] = pdf_meta["author"]      # narrator/author field
+            meta["album_artist"] = pdf_meta["author"]
+        if pdf_meta.get("title"):
+            meta["title"] = meta["album"] = pdf_meta["title"]
+        # Cover: prefer the largest embedded image on page 1, else render it.
+        try:
+            page = doc.load_page(0)
+            best = None
+            for img in page.get_images(full=True):
+                base = doc.extract_image(img[0])
+                if base and (best is None or len(base["image"]) > len(best["image"])):
+                    best = base
+            cp = job_dir / "cover.jpg"
+            if best and best["width"] >= 200 and best["height"] >= 200:
+                ext = best["ext"]
+                raw = job_dir / f"cover.{ext}"
+                raw.write_bytes(best["image"])
+                cover_path = str(raw)
+            else:
+                page.get_pixmap(dpi=150).save(str(cp))
+                cover_path = str(cp)
+        except Exception as e:
+            print(f"cover extraction failed: {e}")
+        doc.close()
+    except Exception as e:
+        print(f"metadata extraction failed: {e}")
+    return meta, cover_path
 
 
 def scan_library():
@@ -447,17 +498,26 @@ def _spawn_worker(job_dir, logf, extra_args):
 def run_narration(st):
     job_id = st["id"]
     job_dir = JOBS_DIR / job_id
+    engine = st.get("engine", DEFAULT_ENGINE)
+    meta, cover = extract_book_meta(st["pdf_path"], st["title"], job_dir)
     config = {
         "path": st["path"],
         "reference_wav": voice_wav_path(st.get("voice")),
         "title": st["title"],
         "format": st.get("format", "m4b"),
         "fallback_part_minutes": 240,
+        "engine": engine,
+        "batch_size": BATCH_SIZE,
+        "batch_token_budget": BATCH_TOKEN_BUDGET,
+        "metadata": meta,
+        "cover_image": cover,
     }
     (job_dir / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
     ensure_segments_fresh(job_dir, st)
 
-    n = narration_worker_count()
+    # The batched engine fills the GPU by batching sequences, so extra processes
+    # would only time-slice against each other (Windows has no CUDA MPS).
+    n = 1 if engine == "batched" else narration_worker_count()
     seg_dir = job_dir / "segments"
     baseline = _count_segments(seg_dir)  # segments already done from prior runs
     st["status"] = "narrating"
@@ -719,6 +779,7 @@ class Handler(BaseHTTPRequestHandler):
                     "page_to": min(n, int(body.get("page_to", n))),
                     "voice": body.get("voice") or DEFAULT_VOICE,
                     "format": body.get("format") if body.get("format") in ("m4b", "mp3", "wav") else "m4b",
+                    "engine": body.get("engine") if body.get("engine") in ("parallel", "batched") else DEFAULT_ENGINE,
                     "status": "queued",
                     "created_at": time.time(),
                 }
