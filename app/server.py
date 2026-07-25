@@ -76,7 +76,7 @@ DEFAULT_ENGINE = os.environ.get("AUDIOBOOK_ENGINE", "batched")
 BATCH_SIZE = int(os.environ.get("AUDIOBOOK_BATCH_SIZE", "12"))
 # Caps rows*Tmax per batch so the batched KV-cache stays within VRAM; a fixed
 # row count OOM-thrashes (hangs) once chunks get long. See narrate_worker.
-BATCH_TOKEN_BUDGET = int(os.environ.get("AUDIOBOOK_BATCH_TOKEN_BUDGET", "700"))
+BATCH_TOKEN_BUDGET = int(os.environ.get("AUDIOBOOK_BATCH_TOKEN_BUDGET", "1300"))
 
 JOBS_DIR.mkdir(exist_ok=True)
 VOICES_DIR.mkdir(exist_ok=True)

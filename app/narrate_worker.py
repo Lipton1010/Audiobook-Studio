@@ -60,12 +60,15 @@ CHAPTER_RE = re.compile(r"^(BOOK|CHAPTER|PART|CANTO|PROLOGUE|EPILOGUE|INTRODUCTI
 AAC_BITRATE = "64k"  # mono 24 kHz narration; transparent for voice
 # Batching controls for engine="batched". BATCH_SIZE is the hard cap on rows
 # per batch. BATCH_TOKEN_BUDGET caps rows*Tmax so the KV-cache stays within
-# VRAM: on a 4090, 6 x 234-token chunks already peaked at ~19 GB, so a fixed
-# count OOM-thrashes (hangs) once chunks get long. A budget of ~700 keeps peak
-# reserved near ~7-9 GB across short and long chunks alike. Both are overridable
-# per job (config) or via env (AUDIOBOOK_BATCH_SIZE / AUDIOBOOK_BATCH_TOKEN_BUDGET).
+# VRAM (a fixed count OOM-thrashes/hangs once chunks get long). Calibrated on a
+# 4090 (24 GB) with the LONGEST chunks (Tmax ~323, output ~750): N=3 -> 10 GB,
+# N=4 -> 15 GB @ 18 chunks/min, N=5 -> 24 GB (thrash). Budget 1300 lands the
+# longest chunks at N=4 (the sweet spot, ~9 GB headroom for model+desktop+
+# runaway margin), medium chunks at ~N=8, short at the N=12 cap. On a smaller
+# card, lower the budget (peak scales ~linearly with it). Overridable per job or
+# via env (AUDIOBOOK_BATCH_SIZE / AUDIOBOOK_BATCH_TOKEN_BUDGET).
 BATCH_SIZE = 12
-BATCH_TOKEN_BUDGET = 700
+BATCH_TOKEN_BUDGET = 1300
 
 PAUSE_PROFILES = {
     # narrate_tagged.py validated values (Path B tagged material)
