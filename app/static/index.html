@@ -194,7 +194,7 @@ async function loadVoices() {
   voices = (await r.json()).voices;
   const sel = document.getElementById('f-voice');
   const cur = sel.value;
-  sel.innerHTML = voices.map(v => `<option value="${v.name}">${v.name}</option>`).join('');
+  sel.innerHTML = voices.map(v => `<option value="${v.name}"${v.available === false ? ' disabled' : ''}>${v.name}${v.available === false ? ' \u2014 missing, upload a voice' : ''}</option>`).join('');
   if (voices.some(v => v.name === cur)) sel.value = cur;
   const list = document.getElementById('voices');
   list.innerHTML = '';
