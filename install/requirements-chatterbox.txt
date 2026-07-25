@@ -1,3 +1,14 @@
+# Full pinned dependency closure of chatterbox-tts 0.1.7 on Python 3.11,
+# captured from a known-good env and re-verified from scratch 2026-07-25.
+#
+# Do NOT prune what looks like stray dev tooling: pre_commit is a RUNTIME
+# dependency of s3tokenizer (upstream oddity), and virtualenv, nodeenv,
+# identify, cfgv, distlib and python-discovery all cascade from it. gradio
+# (with fastapi/uvicorn/starlette) is likewise required by chatterbox-tts
+# itself. Removing any of them desyncs this file from what pip installs.
+#
+# numpy must stay <2.0.0 (chatterbox-tts requires it); setup.py pins 1.26.4
+# in the torch step so the env never transiently holds numpy 2.x.
 aiofiles==24.1.0
 annotated-doc==0.0.4
 annotated-types==0.7.0

@@ -85,10 +85,30 @@ VOICES_DIR.mkdir(exist_ok=True)
 # ---------- voices ----------
 
 def list_voices():
-    voices = [{"name": DEFAULT_VOICE, "builtin": True}]
+    # The default clip is NOT shipped with the repo (rights rule), so on a fresh
+    # clone it is absent. Report that instead of offering a voice that cannot work.
+    voices = [{"name": DEFAULT_VOICE, "builtin": True,
+               "available": Path(REFERENCE_WAV).exists()}]
     for f in sorted(VOICES_DIR.glob("*.wav")):
-        voices.append({"name": f.stem, "builtin": False})
+        voices.append({"name": f.stem, "builtin": False, "available": True})
     return voices
+
+
+def missing_voice_error(name):
+    """None if `name` resolves to a reference clip that exists, else a message.
+
+    Checked at job creation because the alternative is failing inside the worker
+    after extraction has finished and the TTS weights have downloaded, which is
+    the most expensive possible place to discover a missing file."""
+    vp = voice_wav_path(name)
+    if Path(vp).exists():
+        return None
+    if not name or name == DEFAULT_VOICE:
+        return (f"No default voice clip at {vp}. The default narrator sample is not "
+                f"distributed with this repo: upload a voice in the Voices panel, or "
+                f"set reference_wav in app/config.json.")
+    return (f"Voice '{name}' not found, and the default clip at {vp} is missing too. "
+            f"Upload a voice in the Voices panel.")
 
 
 def voice_wav_path(name):
@@ -766,6 +786,12 @@ class Handler(BaseHTTPRequestHandler):
                 _json_response(self, {"ok": True})
             elif path == "/api/jobs":
                 body = self._read_json()
+                # Preflight the voice before creating anything, so a fresh install
+                # fails here with a clear message instead of hours into the job.
+                verr = missing_voice_error(body.get("voice") or DEFAULT_VOICE)
+                if verr:
+                    _json_response(self, {"error": verr}, 400)
+                    return
                 job_id = str(uuid.uuid4())
                 job_dir = JOBS_DIR / job_id
                 job_dir.mkdir()

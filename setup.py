@@ -33,7 +33,12 @@ INSTALL = REPO / "install"
 CHATTERBOX_ENV = "chatterbox"
 PY_VERSION = "3.11"
 CU_INDEX = "https://download.pytorch.org/whl/cu124"
-TORCH_PINS = ["torch==2.6.0+cu124", "torchaudio==2.6.0+cu124", "torchvision==0.21.0+cu124"]
+# numpy is pinned alongside torch on purpose: torch does not pin it, so step 1
+# would pull numpy 2.x and step 2 would immediately downgrade it. chatterbox-tts
+# requires numpy<2.0.0, so a failure between the two steps would otherwise leave
+# the env with a numpy the narrator cannot use. The cu124 index carries 1.26.4.
+TORCH_PINS = ["torch==2.6.0+cu124", "torchaudio==2.6.0+cu124", "torchvision==0.21.0+cu124",
+              "numpy==1.26.4"]
 
 
 # ---------- pretty output ----------
@@ -74,17 +79,6 @@ def env_exists(conda, name):
         if parts and parts[0] == name:
             return True
     return False
-
-
-def env_python(conda, name):
-    """Best-effort path to an env's python.exe."""
-    home = Path(os.path.expanduser("~"))
-    for root in (home / "miniconda3", home / "anaconda3", home / "miniforge3",
-                 Path("C:/ProgramData/miniconda3")):
-        p = root / "envs" / name / "python.exe"
-        if p.exists():
-            return str(p)
-    return None
 
 
 # ---------- checks ----------
@@ -188,10 +182,10 @@ def verify(conda):
         err(f"base env import failed: {(r.stderr or '').strip()[:200]}")
         good = False
 
-    r = run([conda, "run", "-n", CHATTERBOX_ENV, "python", "-c",
-             "import torch, transformers, chatterbox; "
-             "print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), "
-             "'transformers', transformers.__version__)"],
+    # Import exactly what the narrator imports at runtime, not just the top-level
+    # packages: a shallower check passes envs that die later on soundfile, the
+    # perth watermarker stub, or the transformers 5.2 API the batched engine uses.
+    r = run([conda, "run", "-n", CHATTERBOX_ENV, "python", "-c", "import torch, transformers, numpy, soundfile, perth;import chatterbox.tts as T;T.ChatterboxTTS; T.punc_norm;from chatterbox.models.s3tokenizer import drop_invalid_tokens;from transformers.generation.logits_process import RepetitionPenaltyLogitsProcessor, MinPLogitsWarper, TopPLogitsWarper;DC = getattr(transformers, 'DynamicCache', None) or __import__('transformers.cache_utils', fromlist=['DynamicCache']).DynamicCache;print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), 'transformers', transformers.__version__, 'numpy', numpy.__version__, 'sndfile', soundfile.__libsndfile_version__, 'cache', DC.__name__)"],
             capture_output=True, text=True)
     out = (r.stdout or "").strip()
     if r.returncode == 0:
@@ -202,6 +196,9 @@ def verify(conda):
         if "transformers 5.2.0" not in out:
             warn("transformers is not 5.2.0 - the batched engine was verified on 5.2.0; "
                  "pin it with: pip install transformers==5.2.0")
+        if " numpy 2." in out:
+            warn("numpy is 2.x but chatterbox-tts requires <2.0.0; "
+                 "fix with: pip install numpy==1.26.4")
     else:
         err(f"chatterbox env import failed: {(r.stderr or '').strip()[:200]}")
         good = False
