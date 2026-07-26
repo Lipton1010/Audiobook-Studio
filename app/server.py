@@ -77,6 +77,10 @@ BATCH_SIZE = int(os.environ.get("AUDIOBOOK_BATCH_SIZE", "12"))
 # Caps rows*Tmax per batch so the batched KV-cache stays within VRAM; a fixed
 # row count OOM-thrashes (hangs) once chunks get long. See narrate_worker.
 BATCH_TOKEN_BUDGET = int(os.environ.get("AUDIOBOOK_BATCH_TOKEN_BUDGET", "1300"))
+# Vocode each bucket in one S3Gen pass instead of row by row. Measured ~1.16x
+# whole book, with audio inside the model's own run-to-run variation. See the
+# performance section of CLAUDE.md; AUDIOBOOK_BATCH_S3GEN=0 falls back.
+BATCH_S3GEN = os.environ.get("AUDIOBOOK_BATCH_S3GEN", "1") not in ("0", "false", "False")
 
 JOBS_DIR.mkdir(exist_ok=True)
 VOICES_DIR.mkdir(exist_ok=True)
@@ -529,6 +533,7 @@ def run_narration(st):
         "engine": engine,
         "batch_size": BATCH_SIZE,
         "batch_token_budget": BATCH_TOKEN_BUDGET,
+        "batch_s3gen": BATCH_S3GEN,
         "metadata": meta,
         "cover_image": cover,
     }

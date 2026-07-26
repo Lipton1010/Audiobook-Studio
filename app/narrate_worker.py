@@ -69,6 +69,14 @@ AAC_BITRATE = "64k"  # mono 24 kHz narration; transparent for voice
 # via env (AUDIOBOOK_BATCH_SIZE / AUDIOBOOK_BATCH_TOKEN_BUDGET).
 BATCH_SIZE = 12
 BATCH_TOKEN_BUDGET = 1300
+# Vocode a whole bucket in one S3Gen pass rather than row by row. The row-by-row
+# loop was ~41% of whole-book time (measured, 472-bucket Odyssey run) and ~67% in
+# a book's short-chunk head. Batching it measures 2.05x at N=12 tapering to ~1.0x
+# by N=3, 1.42x on the stage, ~1.16x whole book. Audio quality is unchanged: it
+# lands 1.006x against the model's OWN run-to-run variation (S3Gen is
+# stochastic, so a rerun differs by the same amount). Set to False, or
+# AUDIOBOOK_BATCH_S3GEN=0, to fall back to the row-by-row path.
+BATCH_S3GEN = os.environ.get("AUDIOBOOK_BATCH_S3GEN", "1") not in ("0", "false", "False")
 
 PAUSE_PROFILES = {
     # narrate_tagged.py validated values (Path B tagged material)
@@ -302,7 +310,7 @@ def _make_buckets(toks_sorted, max_batch, token_budget):
 
 
 def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size,
-                      token_budget=BATCH_TOKEN_BUDGET):
+                      token_budget=BATCH_TOKEN_BUDGET, batch_s3gen=BATCH_S3GEN):
     """
     Batched engine: generate several chunks per T3 forward-pass batch.
     Verified numerically equivalent to the serial path per chunk (see
@@ -333,7 +341,8 @@ def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size
         seqs = bn.batched_generate(model, [t for _, t in bucket], conds)
         _t3s = _time.time() - _t0
         _t0 = _time.time()
-        wavs = bn.seqs_to_wavs(model, conds, seqs)
+        wavs = (bn.seqs_to_wavs_batched if batch_s3gen else bn.seqs_to_wavs)(
+            model, conds, seqs)
         _s3s = _time.time() - _t0
         # Per-bucket telemetry: without this a stall is invisible, since
         # segments are only written once a whole bucket finishes.
@@ -354,7 +363,8 @@ def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size
 
 
 def run_generate(job_dir, plan, ref_wav, shard, nshards, engine="parallel",
-                 batch_size=BATCH_SIZE, token_budget=BATCH_TOKEN_BUDGET):
+                 batch_size=BATCH_SIZE, token_budget=BATCH_TOKEN_BUDGET,
+                 batch_s3gen=BATCH_S3GEN):
     """
     Generate this shard's segments. Work is split by index modulo nshards,
     so N workers cover disjoint chunks with no coordination, and every
@@ -377,7 +387,8 @@ def run_generate(job_dir, plan, ref_wav, shard, nshards, engine="parallel",
     sr = model.sr
 
     if engine == "batched":
-        _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size, token_budget)
+        _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size,
+                          token_budget, batch_s3gen)
     else:
         _generate_serial(model, plan, ref_wav, todo, seg_dir, sr, shard)
 
@@ -510,8 +521,10 @@ def main():
     engine = config.get("engine", "parallel")
     batch_size = int(config.get("batch_size", BATCH_SIZE))
     token_budget = int(config.get("batch_token_budget", BATCH_TOKEN_BUDGET))
+    batch_s3gen = bool(config.get("batch_s3gen", BATCH_S3GEN))
     run_generate(job_dir, plan, config["reference_wav"], shard, args.num_shards,
-                 engine=engine, batch_size=batch_size, token_budget=token_budget)
+                 engine=engine, batch_size=batch_size, token_budget=token_budget,
+                 batch_s3gen=batch_s3gen)
 
     # Manual single-worker convenience: `python narrate_worker.py <job>` with
     # no shard args generates everything and assembles in one pass. The server
