@@ -1,0 +1,10 @@
+Audiobook Studio running at http://localhost:8765
+  chatterbox python: C:\Users\paulm\miniconda3\envs\chatterbox\python.exe
+  audiobooks dir:    D:\Audiobook_Pipeline\audiobooks
+  library roots:     D:\Audiobook_Pipeline\samples, D:\Audiobook_Pipeline\source_pdfs
+ba09215e created: The Odyssey path A pages 78..610
+ba09215e path A text mode: verse
+ba09215e tagged 4465 blocks: {'heading': 24, 'body': 4441}
+ba09215e narrating with 1 parallel worker(s); 0 segments already present
+ba09215e generation complete, assembling
+ba09215e job complete, audiobook copied to D:\Audiobook_Pipeline\audiobooks\The Odyssey
