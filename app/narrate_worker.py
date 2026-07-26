@@ -211,6 +211,12 @@ def find_ffmpeg():
     ff = shutil.which("ffmpeg")
     if ff:
         return ff
+    # Installer-fetched static build (install/bootstrap_ffmpeg.py), checked
+    # before the chocolatey fallback since it's the path a fresh install
+    # actually produces.
+    bundled = Path(__file__).resolve().parent.parent / "tools" / "ffmpeg.exe"
+    if bundled.exists():
+        return str(bundled)
     fallback = r"C:\ProgramData\chocolatey\bin\ffmpeg.exe"
     if Path(fallback).exists():
         return fallback

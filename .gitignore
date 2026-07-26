@@ -23,3 +23,10 @@ ab_samples/
 # Server console output. The launcher can redirect the server's stdout/stderr
 # here; it is machine-local noise, never part of the app.
 app/*.log
+
+# ffmpeg fetched at install time by install/bootstrap_ffmpeg.py; not part of
+# the source tree, redownloaded per machine.
+tools/
+
+# Miniconda installer downloaded transiently by install/bootstrap_conda.py.
+install/*.exe

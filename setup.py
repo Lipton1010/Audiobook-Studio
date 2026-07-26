@@ -15,11 +15,26 @@ What it sets up:
   * chatterbox env (the narrator): Python 3.11 + torch 2.6.0+cu124 +
     chatterbox-tts 0.1.7 + transformers 5.2.0, from install/requirements-chatterbox.txt
 
-Prerequisites it checks and reports on (does NOT auto-install these):
-  * Miniconda/Anaconda        - required
-  * an NVIDIA GPU (nvidia-smi) - required for narration; text extraction works without it
-  * ffmpeg on PATH            - required for m4b/mp3 output; WAV works without it
-  * Ollama                    - OPTIONAL, only for scanned-image books (Path B)
+Prerequisites it checks and reports on:
+  * Miniconda/Anaconda        - required. Auto-installed silently with
+                                --auto-install-conda (install/bootstrap_conda.py);
+                                otherwise only reported.
+  * an NVIDIA GPU (nvidia-smi) - required for narration; text extraction works
+                                without it. Never auto-installed (a driver, not
+                                a package this tool can safely touch).
+  * ffmpeg                    - required for m4b/mp3 output; WAV works without
+                                it. Auto-fetched as a static build with
+                                --auto-install-ffmpeg (install/bootstrap_ffmpeg.py);
+                                otherwise only reported.
+  * Ollama                    - OPTIONAL, only for scanned-image books (Path B).
+                                Never touched by this installer (hard project rule).
+
+--prefetch-weights downloads Chatterbox's ~3 GB of TTS weights right after the
+chatterbox env is built, via install/bootstrap_weights.py. This is a plain
+HTTP download (huggingface_hub), no CUDA/inference involved, so a failure here
+is isolated from whether the GPU/torch stack itself works. Point of this flag:
+without it, the ~3 GB download happens silently on first narration instead,
+which is the single most common thing that makes a fresh install look broken.
 """
 import argparse
 import os
@@ -81,17 +96,53 @@ def env_exists(conda, name):
     return False
 
 
+# ---------- auto-install (opt-in) ----------
+
+def auto_install_conda():
+    step("Miniconda not found; installing silently")
+    r = run([sys.executable, str(INSTALL / "bootstrap_conda.py")])
+    return r.returncode == 0
+
+
+def auto_install_ffmpeg():
+    step("ffmpeg not found; fetching a static build")
+    r = run([sys.executable, str(INSTALL / "bootstrap_ffmpeg.py")])
+    return r.returncode == 0
+
+
+def prefetch_weights(conda):
+    step("Pre-fetching Chatterbox weights (~3 GB, one-time)")
+    r = run([conda, "run", "-n", CHATTERBOX_ENV, "python", str(INSTALL / "bootstrap_weights.py")])
+    if r.returncode == 0:
+        ok("weights cached")
+    else:
+        warn("weights pre-fetch failed; first narration will download them instead (see errors above)")
+    return r.returncode == 0
+
+
 # ---------- checks ----------
 
-def check_prereqs():
+def check_prereqs(auto_conda=False):
     step("Checking prerequisites")
     problems = []
     conda = find_conda()
     if conda:
         ok(f"conda found: {conda}")
+    elif auto_conda:
+        if auto_install_conda():
+            conda = find_conda()
+            if conda:
+                ok(f"conda installed: {conda}")
+            else:
+                err("Miniconda installer reported success but conda still can't be found. "
+                    "Close and reopen this terminal (PATH may need a refresh) and re-run.")
+                problems.append("conda")
+        else:
+            err("Automatic Miniconda install failed; see output above.")
+            problems.append("conda")
     else:
         err("conda not found. Install Miniconda from https://docs.conda.io/en/latest/miniconda.html, "
-            "reopen your terminal, and re-run this.")
+            "reopen your terminal, and re-run this (or re-run with --auto-install-conda).")
         problems.append("conda")
 
     if shutil.which("nvidia-smi"):
@@ -105,13 +156,17 @@ def check_prereqs():
         warn("No NVIDIA GPU detected (nvidia-smi missing). Narration REQUIRES an NVIDIA GPU "
              "with ~6 GB+ VRAM. You can extract text but not generate audio.")
 
+    bundled_ffmpeg = REPO / "tools" / "ffmpeg.exe"
     if shutil.which("ffmpeg"):
         ok("ffmpeg on PATH")
+    elif bundled_ffmpeg.exists():
+        ok(f"ffmpeg found ({bundled_ffmpeg})")
     elif Path(r"C:\ProgramData\chocolatey\bin\ffmpeg.exe").exists():
         ok("ffmpeg found (chocolatey)")
     else:
         warn("ffmpeg not found. Needed for .m4b/.mp3 output (WAV works without it). "
-             "Install from https://www.gyan.dev/ffmpeg/builds/ or 'choco install ffmpeg', then reopen the terminal.")
+             "Install from https://www.gyan.dev/ffmpeg/builds/ or 'choco install ffmpeg' "
+             "(or re-run with --auto-install-ffmpeg), then reopen the terminal.")
 
     if shutil.which("ollama"):
         ok("Ollama present (optional, for scanned-image books). NOTE: this installer never changes it.")
@@ -209,27 +264,40 @@ def main():
     ap = argparse.ArgumentParser(description="Audiobook Studio setup")
     ap.add_argument("--yes", action="store_true", help="non-interactive; assume yes")
     ap.add_argument("--check-only", action="store_true", help="only check prerequisites, install nothing")
+    ap.add_argument("--auto-install-conda", action="store_true",
+                     help="silently install Miniconda if not found (current user only, no admin)")
+    ap.add_argument("--auto-install-ffmpeg", action="store_true",
+                     help="fetch a static ffmpeg build into tools/ if not found")
+    ap.add_argument("--prefetch-weights", action="store_true",
+                     help="download Chatterbox's ~3 GB of TTS weights now instead of on first narration")
     args = ap.parse_args()
 
     hr()
     print("  Audiobook Studio - setup")
     hr()
-    conda, problems = check_prereqs()
+    conda, problems = check_prereqs(auto_conda=args.auto_install_conda)
     if "conda" in problems:
         print("\nInstall the missing prerequisites above, then re-run.")
         sys.exit(1)
+
+    if args.auto_install_ffmpeg:
+        auto_install_ffmpeg()
+
     if args.check_only:
         print("\nCheck-only mode: nothing installed.")
         return
 
     base_ok = setup_base_env(conda)
     cb_ok = setup_chatterbox_env(conda, assume_yes=args.yes)
-    all_ok = verify(conda) and base_ok and cb_ok
+    weights_ok = True
+    if args.prefetch_weights and cb_ok:
+        weights_ok = prefetch_weights(conda)
+    all_ok = verify(conda) and base_ok and cb_ok and weights_ok
 
     hr()
     if all_ok:
         print("  Setup complete. Launch the app with:  Start_Audiobook_Studio.bat")
-        print("  Then open http://localhost:8765")
+        print("  It opens in its own window (falls back to your browser if that fails).")
     else:
         print("  Setup finished with problems (see [FAIL]/[WARN] above).")
         print("  Fix those and re-run  python setup.py  (it is safe to re-run).")

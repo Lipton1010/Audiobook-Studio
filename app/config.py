@@ -175,9 +175,12 @@ class Config:
                 f"default voice sample not found at {self.reference_wav}. "
                 f"Upload a voice in the UI, or set reference_wav in config.json."
             )
-        if shutil.which("ffmpeg") is None and not Path(
-            r"C:\ProgramData\chocolatey\bin\ffmpeg.exe"
-        ).exists():
+        bundled_ffmpeg = self.base_dir / "tools" / "ffmpeg.exe"
+        if (
+            shutil.which("ffmpeg") is None
+            and not bundled_ffmpeg.exists()
+            and not Path(r"C:\ProgramData\chocolatey\bin\ffmpeg.exe").exists()
+        ):
             out.append(
                 "ffmpeg not found on PATH; m4b/mp3 output will fail (wav still works). "
                 "Install ffmpeg and reopen the launcher."
