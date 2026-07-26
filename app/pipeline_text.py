@@ -30,6 +30,11 @@ def strip_markdown(text):
         prev = text
         text = MD_EMPHASIS_RE.sub(lambda m: m.group(1) or m.group(2), text)
     text = re.sub(r"^#{1,6}\s*", "", text.strip())
+    # Safety net for stray inline HTML from OCR. Whole HTML tables are caught
+    # earlier and replaced with a marker; this stops a lone <br> or <em> from
+    # ever being spoken. Requires a letter or slash after "<" so ordinary prose
+    # comparisons are untouched.
+    text = HTML_TAG_RE.sub(" ", text)
     text = re.sub(r"\s+", " ", text)  # collapse stray double spaces from PDF extraction
     return text.strip()
 
@@ -72,6 +77,13 @@ ROLL_PREFIX_RE = re.compile(r"^\d+\s*(?:[-–—]\s*\d+)?\s+")
 # detection in stitch_pages, which sees every page; this targeted form is what
 # the 2024 DMG needs and cannot touch a real chapter opener.
 RUNNING_HEADER_RE = re.compile(r"^(CHAPTER|APPENDIX|PART)\b[^|]{0,24}\|", re.I)
+# GLM-OCR usually returns plain text or markdown, but on a few pages it emits a
+# full HTML table on one line. The markup-only guard cannot catch it because the
+# cells contain real words, so the tags reach narration and get read aloud:
+# "table class table bordered thead tr th Name and Epithet". Measured on 3 of
+# 208 DMG pages, ~8700 characters of markup.
+HTML_TABLE_RE = re.compile(r"<\s*(table|tr|td|th|thead|tbody)\b", re.I)
+HTML_TAG_RE = re.compile(r"<[a-zA-Z/][^>]*>")
 
 
 def is_dice_table_header(ln):
@@ -129,6 +141,10 @@ def tag_blocks(raw_text):
             i += 1
             continue
         if re.fullmatch(r"`{3,}[\w-]*", stripped):
+            i += 1
+            continue
+        if HTML_TABLE_RE.search(stripped):
+            blocks.append({"type": "table", "text": "A reference table is omitted here."})
             i += 1
             continue
         if is_table_row(ln):
