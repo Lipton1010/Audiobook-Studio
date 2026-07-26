@@ -149,18 +149,58 @@ def _state_path(job_id):
     return JOBS_DIR / job_id / "state.json"
 
 
+# Serializes state.json access WITHIN this process, which is where the real
+# contention is: the worker thread writes progress constantly while every HTTP
+# handler thread reads it (the UI polls). On Windows a reader's open handle
+# lacks FILE_SHARE_DELETE, so it blocks the rename in save_state and the write
+# fails with "[WinError 5] Access is denied". Retries alone do NOT fix this:
+# measured with 6 readers hammering, only 2 of many writes got through in 6
+# seconds. Holding this lock makes the replace collision-free; the retries that
+# remain cover outside interference such as antivirus touching the .tmp file.
+_STATE_LOCK = threading.RLock()
+
+
 def load_state(job_id):
     p = _state_path(job_id)
-    if not p.exists():
-        return None
-    return json.loads(p.read_text(encoding="utf-8"))
+    with _STATE_LOCK:
+        if not p.exists():
+            return None
+        return json.loads(p.read_text(encoding="utf-8"))
 
 
 def save_state(state):
+    """Atomically write a job's state.
+
+    The replace is retried because on Windows it is NOT reliably atomic against
+    concurrent readers: load_state (called from every HTTP handler thread, and
+    the UI polls constantly) opens state.json without FILE_SHARE_DELETE, which
+    makes a rename onto that path fail with "[WinError 5] Access is denied".
+    Antivirus touching the .tmp file causes the same thing. This is not
+    hypothetical: an unretried replace killed a 208-page DMG job at 74% after
+    the extraction had already survived a separate failure.
+
+    Progress state is not worth aborting a multi-hour job over, so after the
+    retries are exhausted we give up on THIS write and let the next one carry
+    the state forward, rather than raising into the worker loop.
+    """
     p = _state_path(state["id"])
     tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
-    tmp.replace(p)
+    blob = json.dumps(state, indent=2)
+    with _STATE_LOCK:
+        for attempt in range(12):
+            try:
+                tmp.write_text(blob, encoding="utf-8")
+                tmp.replace(p)
+                return
+            except OSError:
+                if attempt == 11:
+                    print(f"save_state: giving up on this write for {state['id'][:8]}")
+                    try:
+                        tmp.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    return
+                time.sleep(0.05 * (attempt + 1))
 
 
 def log_line(job_id, msg):
