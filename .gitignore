@@ -39,3 +39,11 @@ Output/
 # Written by setup.py / the one-click installer on the target machine.
 install_log.txt
 install_warnings.txt
+
+# Scratch working notes (audit briefs, handoffs). CLAUDE.md is the authoritative
+# running log and already carries everything durable from these; keeping the raw
+# handoffs too would just be a second copy to go stale and contradict it.
+AUDIT_*.md
+
+# Local Claude Code session state and settings, machine-specific.
+.claude/

@@ -152,11 +152,22 @@ FIXED, and these were real:
 DISMISSED, with reasons, so they are not re-raised: the AppId "{{FF5AC68A-..." double brace is correct Inno escaping and the GUID is valid hex, both auditors agreed on second look. bootstrap_ffmpeg's endswith("bin/ffmpeg.exe") match is correct and version-agnostic (zip entries use forward slashes per the spec; verified against a synthetic copy of the real 8.1.2 archive layout, and one auditor verified it against the live zip's central directory). The Miniconda silent flags are still exactly what Anaconda documents, /D last and unquoted. bootstrap_weights.py's five filenames still exist in ResembleAI/chatterbox and it shares the app's HF cache as long as installer and app run as the same user, which PrivilegesRequired=lowest guarantees. pywebview 5.4 resolves cleanly with pymupdf 1.28.0 and requests 2.33.1 on base Python 3.13 (pythonnet 3.1.0 has a cp313 wheel); its icon= argument is accepted but silently ignored on Windows (GTK/QT only) rather than throwing, so it cannot trigger the browser fallback, comment corrected instead. Idle window close was already clean: webview.start() returns, main() returns, daemon threads die, no orphaned process on the port.
 
 STILL UNVERIFIED after all of this, and none of it is a small residue:
-- The .iss has still never been compiled since the rewrite. Expect a compile-test-iterate loop, not one clean build. Every Pascal identifier used was checked against Inno's own docs (PrepareToInstall, LoadStringsFromFile, GetArrayLength, WizardForm.PreparingLabel/StatusLabel/FinishedLabel/ProgressGauge, npbstMarquee, Format, Trim, IntToStr) but checking a doc is not compiling.
+- The .iss has still never been compiled since the rewrite. Expect a compile-test-iterate loop, not one clean build. Every Pascal identifier used was checked against Inno's own docs (PrepareToInstall, LoadStringsFromFile, GetArrayLength, WizardForm.PreparingLabel/StatusLabel/FinishedLabel/ProgressGauge, npbstMarquee, Format, IntToStr, DownloadTemporaryFile's real 4-arg signature) but checking a doc is not compiling.
 - No end to end run on a machine missing conda and ffmpeg. The Pascal Miniconda path, the ffmpeg fetch, and the weights prefetch have never executed in the compiled installer's context.
 - pywebview is NOT installed in this machine's base env, so the native window has never been seen by anyone. Start_Audiobook_Studio.bat currently takes the browser fallback here. Install it and launch once before demoing.
-- A fresh Miniconda3-latest may ship a Python newer than the base pins support (pymupdf 1.28.0, pywebview 5.4). Today's base is 3.13 and resolves; if Anaconda's "latest" moves to 3.14 before wheels exist, base env setup fails on a friend's machine and works on this one. Pinning a dated Miniconda installer URL would fix it and has not been done.
 - No conda at all, no ffmpeg, no NVIDIA GPU, and a non-default conda root are all still untested, same as the setup.py section above.
+
+### Miniconda is now PINNED (2026-07-26)
+
+bootstrap_conda.py and AudiobookStudio.iss both fetch Miniconda3-py313_26.5.3-1-Windows-x86_64.exe by exact name, and both verify SHA-256 c229a161e9fad48fd7d2c701da363e6a307b233eba379cd967bc26aa2cb3fa68 (the .iss passes it to DownloadTemporaryFile's RequiredSHA256OfFile argument, so Inno raises on mismatch; the .py hashes it itself and refuses to execute a bad file). The two constants must be bumped together, from the table at https://repo.anaconda.com/miniconda/.
+
+Two reasons, and the second is the honest one:
+- Determinism. Miniconda3-latest is a moving alias, and as of 2026-07-08 it is byte-identical to the py314 build (same SHA-256, 124.7 MB, verified against the repo listing). Unpinned, a friend's base env would be whatever Anaconda shipped that week while this machine keeps the 3.13 base everything was verified on.
+- Integrity. This is a 125 MB executable downloaded and then run silently, and nothing was checking it. A moving alias changes hash by design so it cannot be checked at all; a pinned filename has a published hash.
+
+NOT a reason, despite an earlier version of this file claiming it: the base pins would have survived Python 3.14 anyway. pymupdf 1.28.0 ships a cp310-abi3 wheel, which by definition installs on every CPython from 3.10 up, and pythonnet 3.1.0 ships explicit cp314 win_amd64 wheels. The "latest may ship a Python with no wheels" worry was plausible and turned out to be false when actually checked. Recorded because it is the kind of thing that gets re-derived from first principles and re-added as a blocker.
+
+Cost of pinning: the URL can 404 if Anaconda ever prunes old builds, and the pinned conda ages. Both fail loudly and are a one-line fix.
 
 ## Portable configuration
 

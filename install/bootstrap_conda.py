@@ -20,16 +20,34 @@ already has conda installed.
 Safe to re-run: if conda is already found, this is a no-op.
 """
 import argparse
+import hashlib
 import subprocess
 import sys
 import tempfile
 import urllib.request
 from pathlib import Path
 
-# Miniconda3 latest Windows 64-bit installer. Anaconda publishes a stable
-# "latest" alias at this URL; pin a dated build here if that ever proves to
-# drift under us (checked 2026-07-26).
-MINICONDA_URL = "https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe"
+# PINNED, not "latest", for two reasons.
+#
+# 1. Reproducibility. Miniconda3-latest-Windows-x86_64.exe is a moving alias:
+#    on 2026-07-08 it became byte-identical to the py314 build (same SHA-256,
+#    124.7 MB). So an unpinned install gives a friend whatever base Python
+#    Anaconda shipped that week, while this machine keeps the 3.13 base that
+#    everything was actually verified on. Pinning py313 makes their base env
+#    match the one that works here. (Checked 2026-07-26: the base pins would
+#    ALSO have survived 3.14, since pymupdf 1.28.0 ships a cp310-abi3 wheel and
+#    pythonnet 3.1.0 ships real cp314 wheels. So this is about determinism, not
+#    about dodging a live breakage.)
+# 2. A pinned filename has a published SHA-256, so this 125 MB executable can be
+#    verified before it is run. The "latest" alias changes hash by design and
+#    cannot be checked at all.
+#
+# To bump: take the name and SHA-256 from the table at
+# https://repo.anaconda.com/miniconda/ and update BOTH constants, and the
+# matching pair in install/AudiobookStudio.iss.
+MINICONDA_FILE = "Miniconda3-py313_26.5.3-1-Windows-x86_64.exe"
+MINICONDA_URL = "https://repo.anaconda.com/miniconda/" + MINICONDA_FILE
+MINICONDA_SHA256 = "c229a161e9fad48fd7d2c701da363e6a307b233eba379cd967bc26aa2cb3fa68"
 DEFAULT_INSTALL_DIR = str(Path.home() / "miniconda3")
 
 
@@ -56,12 +74,36 @@ def download(url, dest):
     print()
 
 
+def verify_hash(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    actual = h.hexdigest().lower()
+    if actual != MINICONDA_SHA256:
+        print("  [FAIL] downloaded Miniconda installer does not match its published SHA-256.")
+        print(f"         expected {MINICONDA_SHA256}")
+        print(f"         got      {actual}")
+        print("         Refusing to run it. If Anaconda has replaced this build, update")
+        print("         MINICONDA_FILE and MINICONDA_SHA256 from https://repo.anaconda.com/miniconda/")
+        return False
+    return True
+
+
 def install_miniconda(install_dir=DEFAULT_INSTALL_DIR):
     # gettempdir() honours TEMP/TMP; the previous hand-built
     # ~\AppData\Local\Temp path broke on any machine that redirects them.
     tmp = Path(tempfile.gettempdir()) / "miniconda_installer.exe"
     tmp.parent.mkdir(parents=True, exist_ok=True)
     download(MINICONDA_URL, tmp)
+
+    # Verify before executing. This is a 125 MB executable fetched over the
+    # network and then run silently; the check is not optional the way the
+    # ffmpeg one is.
+    if not verify_hash(tmp):
+        tmp.unlink(missing_ok=True)
+        return False
+    print("  [ OK ] installer checksum matches Anaconda's published SHA-256")
 
     print(f"  Installing Miniconda to {install_dir} (silent, current user only)...")
     # /D must be unquoted and must be the final argument per Anaconda's own

@@ -127,7 +127,17 @@ var
   SetupPyOk: Boolean;
 
 const
-  MinicondaUrl = 'https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe';
+  // PINNED, and kept in sync with install/bootstrap_conda.py's MINICONDA_FILE
+  // and MINICONDA_SHA256. Miniconda3-latest is a moving alias (as of 2026-07-08
+  // it is byte-identical to the py314 build), so an unpinned install would give
+  // a friend a different base Python from the 3.13 one everything was verified
+  // on, and a moving alias has no stable hash to verify against. Passing the
+  // SHA-256 as DownloadTemporaryFile's 3rd argument makes Inno verify it and
+  // raise on mismatch, so a corrupted or swapped 125 MB executable is never
+  // run. To bump, update both files from https://repo.anaconda.com/miniconda/
+  MinicondaFile = 'Miniconda3-py313_26.5.3-1-Windows-x86_64.exe';
+  MinicondaUrl = 'https://repo.anaconda.com/miniconda/Miniconda3-py313_26.5.3-1-Windows-x86_64.exe';
+  MinicondaSha256 = 'c229a161e9fad48fd7d2c701da363e6a307b233eba379cd967bc26aa2cb3fa68';
 
 function InitializeSetup: Boolean;
 begin
@@ -195,16 +205,21 @@ var
   ResultCode: Integer;
 begin
   Result := False;
-  InstallerPath := ExpandConstant('{tmp}\miniconda_installer.exe');
+  InstallerPath := ExpandConstant('{tmp}\') + MinicondaFile;
   InstallDir := ExpandConstant('{%USERPROFILE}\miniconda3');
 
   WizardForm.PreparingLabel.Caption := 'Downloading Miniconda (first-time setup)...';
   try
     // BaseName is written under {tmp}; that is what InstallerPath points at.
-    DownloadTemporaryFile(MinicondaUrl, 'miniconda_installer.exe', '', @OnMinicondaDownloadProgress);
+    // The 3rd argument is a required SHA-256: Inno checks it and raises if the
+    // download does not match, so the except branch below covers both a failed
+    // download and a corrupted or substituted one.
+    DownloadTemporaryFile(MinicondaUrl, MinicondaFile, MinicondaSha256, @OnMinicondaDownloadProgress);
   except
     MsgBox('Could not download Miniconda:' + #13#10#13#10 + GetExceptionMessage +
-           #13#10#13#10 + 'Check your internet connection and run this installer again.',
+           #13#10#13#10 + 'Check your internet connection and run this installer again. ' +
+           'If the message mentions a hash or checksum, the pinned Miniconda build ' +
+           'has been replaced upstream and this installer needs rebuilding.',
            mbError, MB_OK);
     exit;
   end;
