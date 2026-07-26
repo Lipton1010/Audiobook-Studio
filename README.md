@@ -13,7 +13,7 @@ Local PDF to audiobook pipeline for legally purchased books, personal use only. 
 - `samples/` — the validated standalone scripts the app grew out of (`path_a.py`, `stage_two.py`, `harvest_lazy_dm.py`, `chunk_and_narrate.py`, `narrate_tagged.py`) and the Ollama `Modelfile` for the tuned `glm-ocr-doc` model.
 - `CLAUDE.md` — standing rules and current validated state of the project.
 - `Start_Audiobook_Studio.bat` — one-click launcher; opens the app in its own window (falls back to your browser if that fails).
-- `install/AudiobookStudio.iss` — Inno Setup script that builds a single `Setup_AudiobookStudio.exe` (see Install below).
+- `install/AudiobookStudio.iss` — Inno Setup script that builds a single `Setup_AudiobookStudio.exe` (see Install below). Build it with `install\build_installer.bat`, which stages a clean copy of the repo with `git archive` first so only tracked files can be packaged.
 
 Books (PDFs), audio, and generated jobs are gitignored; only code and docs are tracked.
 
@@ -33,6 +33,8 @@ You provide these; the installer sets up everything else, including Miniconda an
 ## Install
 
 **Easiest: `Setup_AudiobookStudio.exe`.** One installer, no terminal. It silently installs Miniconda and ffmpeg if you don't already have them, builds the app's Python environment, and pre-downloads the ~3 GB of TTS model weights so the first narration doesn't have to. Double-click it, click through the wizard, and it's done — a shortcut is added to your Start Menu (and Desktop, if you check that box). This installer is built from source with Inno Setup (see `install/AudiobookStudio.iss`) rather than distributed as a signed release, so Windows SmartScreen may warn that it's from an unknown publisher the first time; that's expected for an unsigned personal-project installer, not a sign anything is wrong.
+
+If the install fails or the wizard shows a warning box, everything it did is logged to `install_log.txt` in the install folder (usually `%LOCALAPPDATA%\Programs\Audiobook Studio`). Send that file. You can retry the environment build without reinstalling by running `setup.bat` from that same folder.
 
 **From source, for development or if you'd rather see what's happening:**
 

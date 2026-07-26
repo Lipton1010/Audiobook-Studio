@@ -7,7 +7,9 @@ Audiobook Studio setup / installer. Run from the repo root:
 Runs in a plain Python (stdlib only) and drives conda to build the two
 environments the app needs, pinned to the versions this project is known to
 work with. Idempotent: re-running checks what exists and only does what's
-missing. It never touches Ollama (a hard project rule) and never upgrades an
+missing. It never touches Ollama (optional, Path B only, and shared with other
+projects on the author's machine, so it is not this installer's to manage; the
+old do-not-upgrade rule is retired, see CLAUDE.md) and never upgrades an
 existing chatterbox env without asking.
 
 What it sets up:
@@ -58,11 +60,38 @@ TORCH_PINS = ["torch==2.6.0+cu124", "torchaudio==2.6.0+cu124", "torchvision==0.2
 
 # ---------- pretty output ----------
 
+# Warnings a non-technical user actually needs to see. When the one-click
+# installer runs this, stdout goes to install_log.txt with no visible console,
+# so anything only printed here is invisible in practice. These get written to
+# install_warnings.txt, which AudiobookStudio.iss shows in a message box.
+# Ordinary warn() stays log-only (env already exists, version drift, etc).
+USER_WARNINGS = []
+WARNINGS_FILE = REPO / "install_warnings.txt"
+
+
 def hr(): print("=" * 64)
 def ok(msg): print(f"  [ OK ] {msg}")
 def warn(msg): print(f"  [WARN] {msg}")
 def err(msg): print(f"  [FAIL] {msg}")
 def step(msg): print(f"\n>>> {msg}")
+
+
+def user_warn(msg):
+    print(f"  [WARN] {msg}")
+    USER_WARNINGS.append(msg)
+
+
+def write_warnings_file():
+    """Always rewrite (or remove) the file so a clean re-run clears stale
+    warnings from a previous attempt."""
+    try:
+        if USER_WARNINGS:
+            WARNINGS_FILE.write_text(
+                "\n".join(f"- {w}" for w in USER_WARNINGS), encoding="utf-8")
+        else:
+            WARNINGS_FILE.unlink(missing_ok=True)
+    except Exception as e:
+        warn(f"could not write {WARNINGS_FILE.name}: {e}")
 
 
 def run(cmd, **kw):
@@ -74,6 +103,15 @@ def run(cmd, **kw):
 
 def find_conda():
     """Return a path to the conda executable, or None."""
+    # If we are already running under a conda base python (which is exactly
+    # what the one-click installer does -- it hands us the python.exe it just
+    # found or installed), use THAT install's conda. Otherwise a machine with
+    # two condas can have the installer pick one and setup.py build the envs in
+    # the other, leaving a launcher that finds neither. No-op everywhere else:
+    # a system python has no sibling Scripts\conda.exe.
+    sibling = Path(sys.executable).resolve().parent / "Scripts" / "conda.exe"
+    if sibling.exists():
+        return str(sibling)
     exe = shutil.which("conda")
     if exe:
         return exe
@@ -116,15 +154,18 @@ def prefetch_weights(conda):
     if r.returncode == 0:
         ok("weights cached")
     else:
-        warn("weights pre-fetch failed; first narration will download them instead (see errors above)")
+        user_warn("The 3 GB voice model could not be downloaded now. This is not fatal: "
+                  "the app will download it the first time you narrate a book, so that "
+                  "first run will sit at 0% for several minutes before anything happens.")
     return r.returncode == 0
 
 
 # ---------- checks ----------
 
-def check_prereqs(auto_conda=False):
+def check_prereqs(auto_conda=False, auto_ffmpeg=False):
     step("Checking prerequisites")
     problems = []
+    ffmpeg_ok = True
     conda = find_conda()
     if conda:
         ok(f"conda found: {conda}")
@@ -153,27 +194,46 @@ def check_prereqs(auto_conda=False):
         except Exception:
             ok("NVIDIA GPU present")
     else:
-        warn("No NVIDIA GPU detected (nvidia-smi missing). Narration REQUIRES an NVIDIA GPU "
-             "with ~6 GB+ VRAM. You can extract text but not generate audio.")
+        user_warn("No NVIDIA GPU detected (nvidia-smi missing). Narration REQUIRES an "
+                  "NVIDIA GPU with ~6 GB+ VRAM. You can extract text from PDFs but "
+                  "the app will not be able to generate audio on this machine.")
 
-    bundled_ffmpeg = REPO / "tools" / "ffmpeg.exe"
-    if shutil.which("ffmpeg"):
-        ok("ffmpeg on PATH")
-    elif bundled_ffmpeg.exists():
-        ok(f"ffmpeg found ({bundled_ffmpeg})")
-    elif Path(r"C:\ProgramData\chocolatey\bin\ffmpeg.exe").exists():
-        ok("ffmpeg found (chocolatey)")
+    # Auto-install BEFORE reporting, so the user is not shown a scary "ffmpeg
+    # not found" warning immediately followed by it being installed.
+    def _find_ffmpeg():
+        if shutil.which("ffmpeg"):
+            return "ffmpeg on PATH"
+        if (REPO / "tools" / "ffmpeg.exe").exists():
+            return f"ffmpeg found ({REPO / 'tools' / 'ffmpeg.exe'})"
+        if Path(r"C:\ProgramData\chocolatey\bin\ffmpeg.exe").exists():
+            return "ffmpeg found (chocolatey)"
+        return None
+
+    found = _find_ffmpeg()
+    if not found and auto_ffmpeg:
+        auto_install_ffmpeg()
+        found = _find_ffmpeg()
+    if found:
+        ok(found)
     else:
-        warn("ffmpeg not found. Needed for .m4b/.mp3 output (WAV works without it). "
-             "Install from https://www.gyan.dev/ffmpeg/builds/ or 'choco install ffmpeg' "
-             "(or re-run with --auto-install-ffmpeg), then reopen the terminal.")
+        # The previous version discarded auto_install_ffmpeg()'s return value
+        # entirely, so a failed fetch was invisible. It is now reported and
+        # surfaced to the user, but deliberately does NOT fail the install:
+        # WAV output still works, and the app repeats the warning at launch via
+        # CFG.warnings(). Judgement call -- the cost of being wrong is that a
+        # friend narrates a whole book and the m4b encode fails at the very end.
+        ffmpeg_ok = False
+        user_warn("ffmpeg could not be installed. Without it, .m4b and .mp3 output "
+                  "WILL FAIL at the end of a narration (choose WAV output instead, "
+                  "or install ffmpeg from https://www.gyan.dev/ffmpeg/builds/ or with "
+                  "'choco install ffmpeg' and re-run setup).")
 
     if shutil.which("ollama"):
         ok("Ollama present (optional, for scanned-image books). NOTE: this installer never changes it.")
     else:
         print("  [ -- ] Ollama not found (optional; only needed for scanned-image PDFs / Path B).")
 
-    return conda, problems
+    return conda, problems, ffmpeg_ok
 
 
 # ---------- env building ----------
@@ -246,8 +306,9 @@ def verify(conda):
     if r.returncode == 0:
         ok(f"chatterbox env imports: {out}")
         if "cuda True" not in out:
-            warn("torch.cuda.is_available() is False - the GPU/driver isn't visible to torch. "
-                 "Narration will fail until the NVIDIA driver + CUDA runtime are working.")
+            user_warn("torch cannot see your GPU (torch.cuda.is_available() is False). "
+                      "Narration will fail until the NVIDIA driver is installed/updated. "
+                      "Text extraction still works.")
         if "transformers 5.2.0" not in out:
             warn("transformers is not 5.2.0 - the batched engine was verified on 5.2.0; "
                  "pin it with: pip install transformers==5.2.0")
@@ -275,29 +336,39 @@ def main():
     hr()
     print("  Audiobook Studio - setup")
     hr()
-    conda, problems = check_prereqs(auto_conda=args.auto_install_conda)
+    conda, problems, ffmpeg_ok = check_prereqs(auto_conda=args.auto_install_conda,
+                                               auto_ffmpeg=args.auto_install_ffmpeg)
     if "conda" in problems:
+        write_warnings_file()
         print("\nInstall the missing prerequisites above, then re-run.")
         sys.exit(1)
 
-    if args.auto_install_ffmpeg:
-        auto_install_ffmpeg()
-
     if args.check_only:
+        write_warnings_file()
         print("\nCheck-only mode: nothing installed.")
         return
 
     base_ok = setup_base_env(conda)
     cb_ok = setup_chatterbox_env(conda, assume_yes=args.yes)
-    weights_ok = True
     if args.prefetch_weights and cb_ok:
-        weights_ok = prefetch_weights(conda)
-    all_ok = verify(conda) and base_ok and cb_ok and weights_ok
+        # Deliberately NOT part of all_ok: a failed pre-fetch means a slow first
+        # narration, not a broken install, and prefetch_weights() already says
+        # so. Counting it made the exit code contradict the message.
+        prefetch_weights(conda)
+    # ffmpeg_ok is reported but not gated on: a missing ffmpeg costs m4b/mp3
+    # output, not the install. The exit code means "the Python environments are
+    # broken", which is the only condition where launching is pointless.
+    all_ok = verify(conda) and base_ok and cb_ok
 
+    write_warnings_file()
     hr()
     if all_ok:
         print("  Setup complete. Launch the app with:  Start_Audiobook_Studio.bat")
         print("  It opens in its own window (falls back to your browser if that fails).")
+        if USER_WARNINGS:
+            print("\n  Things to know about this machine:")
+            for w in USER_WARNINGS:
+                print(f"   - {w}")
     else:
         print("  Setup finished with problems (see [FAIL]/[WARN] above).")
         print("  Fix those and re-run  python setup.py  (it is safe to re-run).")

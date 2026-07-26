@@ -20,9 +20,9 @@ already has conda installed.
 Safe to re-run: if conda is already found, this is a no-op.
 """
 import argparse
-import hashlib
 import subprocess
 import sys
+import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -57,7 +57,9 @@ def download(url, dest):
 
 
 def install_miniconda(install_dir=DEFAULT_INSTALL_DIR):
-    tmp = Path.home() / "AppData" / "Local" / "Temp" / "miniconda_installer.exe"
+    # gettempdir() honours TEMP/TMP; the previous hand-built
+    # ~\AppData\Local\Temp path broke on any machine that redirects them.
+    tmp = Path(tempfile.gettempdir()) / "miniconda_installer.exe"
     tmp.parent.mkdir(parents=True, exist_ok=True)
     download(MINICONDA_URL, tmp)
 

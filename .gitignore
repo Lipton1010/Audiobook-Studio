@@ -30,3 +30,12 @@ tools/
 
 # Miniconda installer downloaded transiently by install/bootstrap_conda.py.
 install/*.exe
+
+# Compiled installer. OutputDir in AudiobookStudio.iss is ..\Output relative to
+# install\, i.e. the repo root -- so without this a rebuild would try to package
+# the previous Setup_AudiobookStudio.exe into the new one and fail.
+Output/
+
+# Written by setup.py / the one-click installer on the target machine.
+install_log.txt
+install_warnings.txt
