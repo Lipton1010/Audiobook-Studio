@@ -58,6 +58,30 @@ def is_dialogue(ln):
     return bool(m)
 
 
+# A random table in a D&D book always opens with dice notation naming its
+# column ("1d20 Claim to Fame", "1d12 Calamity", "d100 Trinket"), then rows that
+# start with a roll or a roll range. GLM-OCR renders these as plain indented
+# text, NOT as markdown pipe tables, so is_table_row never sees them and
+# is_number_heavy_list rejects them for lacking a bullet. Without this the DMG
+# narrates every row: "1 Delicious food. 2 Rude people. 3 Friendly folk."
+DICE_HEADER_RE = re.compile(r"^\d*d\d+\b", re.I)
+TABLE_ROW_RE = re.compile(r"^\d+\s*(?:[-–—]\s*\d+)?\s+\S")
+ROLL_PREFIX_RE = re.compile(r"^\d+\s*(?:[-–—]\s*\d+)?\s+")
+# "CHAPTER 6 | COSMOLOGY" / "APPENDIX B | MAPS": the pipe form is only ever the
+# repeating running header. A general fix would be cross-page repetition
+# detection in stitch_pages, which sees every page; this targeted form is what
+# the 2024 DMG needs and cannot touch a real chapter opener.
+RUNNING_HEADER_RE = re.compile(r"^(CHAPTER|APPENDIX|PART)\b[^|]{0,24}\|", re.I)
+
+
+def is_dice_table_header(ln):
+    return bool(DICE_HEADER_RE.match(strip_markdown(ln)))
+
+
+def is_dice_table_row(ln):
+    return bool(TABLE_ROW_RE.match(strip_markdown(ln)))
+
+
 def is_number_heavy_list(ln):
     s = ln.strip()
     if not (s.startswith("-") or s.startswith("•")):
@@ -87,6 +111,15 @@ def tag_blocks(raw_text):
         if stripped.isdigit() and len(stripped) <= 4:
             i += 1
             continue
+        # Running header, e.g. "CHAPTER 6 | COSMOLOGY" or "APPENDIX B | MAPS",
+        # which OCR transcribes on EVERY page. is_heading accepts it (short, all
+        # caps), so without this it narrates mid-page and, worse, matches
+        # narrate_worker's CHAPTER_RE and plants a bogus m4b chapter mark per
+        # page. Real chapter openers are safe: they emit "CHAPTER 6" and
+        # "COSMOLOGY" as separate lines with no pipe.
+        if RUNNING_HEADER_RE.match(strip_markdown(stripped)):
+            i += 1
+            continue
         # GLM-OCR degenerates on full-page artwork, emitting endless
         # code fences, punctuation lines, or empty HTML table markup.
         # A line with no letter/digit outside of markup is not
@@ -109,6 +142,44 @@ def tag_blocks(raw_text):
                 i += 1
             blocks.append({"type": "table", "text": "A reference table is omitted here."})
             continue
+        if is_dice_table_header(ln):
+            # Look ahead and collect the rows. Only act if real numbered rows
+            # follow, so a prose line merely mentioning "1d20" is not swallowed.
+            j, row_texts = i + 1, []
+            while j < n:
+                s = lines[j].strip()
+                if not s:
+                    nxt = lines[j + 1].strip() if j + 1 < n else ""
+                    if nxt and (is_dice_table_row(nxt) or is_dice_table_header(nxt)):
+                        j += 1
+                        continue
+                    break
+                if is_dice_table_header(s):
+                    j += 1              # repeated column label mid-table, skip
+                    continue
+                if is_dice_table_row(s):
+                    row_texts.append(strip_markdown(s))
+                    j += 1
+                    continue
+                break
+            if len(row_texts) >= 3:
+                lens = sorted(len(t) for t in row_texts)
+                median = lens[len(lens) // 2]
+                # Short rows are unlistenable data ("1 Delicious food") and get
+                # one marker. Long rows are real prose that merely happens to be
+                # tabulated (DMG page 180's 1d10 adventure hooks run 100+ chars
+                # each), so keep them and only drop the roll numbers and the
+                # column label, which are the figure labels the rule excludes.
+                if median < 60:
+                    blocks.append({"type": "table",
+                                   "text": "A random table is omitted here."})
+                else:
+                    for t in row_texts:
+                        t = ROLL_PREFIX_RE.sub("", t)
+                        if t:
+                            blocks.append({"type": "body", "text": t})
+                i = j
+                continue
         if is_number_heavy_list(ln):
             while i < n and (is_number_heavy_list(lines[i]) or not lines[i].strip()):
                 if not lines[i].strip():
@@ -140,6 +211,24 @@ def tag_blocks(raw_text):
         unique = len(set(b["text"] for b in blocks))
         if unique / len(blocks) < 0.3:
             return []
+    # Label-list detector: a diagram transcribes as many SHORT, ALL-DISTINCT
+    # lines, which the repetition check above cannot catch. Measured on the 2024
+    # DMG's cosmology wheel (page 176): 43 blocks averaging 12 characters, which
+    # would narrate as "Plane of Water. Plane of Ice. Feywild." The extraction
+    # rule says never read figure labels, so collapse the page to one marker.
+    # Real prose pages are nowhere near this: they run ~250 characters a block.
+    bodies = [b["text"] for b in blocks if b["type"] in ("body", "heading")]
+    if len(bodies) >= 15:
+        lens = sorted(len(t) for t in bodies)
+        median = lens[len(lens) // 2]
+        total = sum(lens)
+        # The total-volume ceiling is what makes this safe. Without it this also
+        # ate DMG page 95, a page of random tables (2418 chars, "1d20 Claim to
+        # Fame") that the number-heavy-list detector above already handles
+        # correctly by keeping each table's title and omitting only its rows.
+        # A real diagram page carries almost no text: page 176 is 553 chars.
+        if median < 30 and total < 900:
+            return [{"type": "omitted_data", "text": "A diagram is omitted here."}]
     return blocks
 
 
