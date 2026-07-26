@@ -449,11 +449,28 @@ def extract_path_a(pdf_path, page_from, page_to, progress_cb=None):
 
 # ---------- Path B rasterize ----------
 
-def rasterize_page(pdf_path, page_index, out_path, dpi=200):
+MAX_RASTER_MEGAPIXELS = 12.0
+
+
+def rasterize_page(pdf_path, page_index, out_path, dpi=200,
+                   max_megapixels=MAX_RASTER_MEGAPIXELS):
+    """Render one page to an image for OCR, with a hard pixel budget.
+
+    Books contain fold-out pages. The 2024 Dungeon Master's Guide page 154 is a
+    4934x7000pt map, which at 200 dpi is 266 megapixels and wrote a 107 MB JPEG
+    (typical page: 3.7 MP, 1.4 MB). Ollama rejected it with 413 Request Entity
+    Too Large and killed the whole extraction 148 pages in. Scaling the dpi down
+    to fit the budget keeps a normal page untouched (3.7 MP is far under it)
+    while making an oversized page merely lower-resolution instead of fatal.
+    """
     doc = fitz.open(pdf_path)
     try:
         page = doc.load_page(page_index)
         zoom = dpi / 72.0
+        r = page.rect
+        mp = (r.width * zoom) * (r.height * zoom) / 1e6
+        if mp > max_megapixels:
+            zoom *= (max_megapixels / mp) ** 0.5
         pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
         pix.save(out_path)
     finally:
