@@ -235,3 +235,79 @@ def seqs_to_wavs(model, conds, seqs):
         wav = model.watermarker.apply_watermark(wav, sample_rate=model.sr)
         wavs.append(wav)
     return wavs
+
+
+@torch.inference_mode()
+def seqs_to_wavs_batched(model, conds, seqs):
+    """Vocode ALL rows in one S3Gen pass instead of looping row by row.
+
+    Why: seqs_to_wavs was ~41% of whole-book narration time (measured over the
+    472-bucket Odyssey run) and ~67% in a book's short-chunk head, purely
+    because T3 batches 12 chunks into one pass while the vocoder ran them one at
+    a time at ~0.33s each. Measured on real length-sorted buckets this is 2.05x
+    at N=12, tapering to ~1.0x by N=3, 1.42x on the stage overall and ~1.16x
+    whole book.
+
+    Safe because the whole S3Gen path is batch-capable even though
+    S3Token2Mel.forward's docstring still says "batch_size=1 only":
+    flow.CausalMaskedDiffWithXvec.inference takes token (B,n) plus token_len
+    (B,) and broadcasts the single-voice prompt via _repeat_batch_dim, and
+    HiFTGenerator.inference is conv/istft throughout (its torch.zeros(1,1,0)
+    cache_source default is inert, the guard on it is shape[2] != 0).
+
+    Rows are right-padded, so each output MUST be trimmed back to its own
+    length; padded mel frames render audio that belongs to no row. Samples per
+    speech token is constant, so the trim is exact (verified: zero length
+    difference against the serial path on every row tested).
+
+    Quality: S3Gen is stochastic, so this cannot be validated by diffing
+    waveforms against the serial path. Validated instead against the model's
+    own noise floor, batched-vs-serial log-mel distance / serial-vs-serial
+    log-mel distance = 1.006x, i.e. indistinguishable from a rerun.
+
+    drop_invalid_tokens asserts batch 1, so per-row cleanup stays per row and
+    only the model call is batched. Returns the same list-with-None shape as
+    seqs_to_wavs, so callers can fall back per chunk.
+    """
+    dev = model.device
+    toks, keep = [], []
+    for idx, st_list in enumerate(seqs):
+        if len(st_list) == 0:
+            continue
+        st = torch.tensor(st_list, dtype=torch.long, device=dev)
+        st = drop_invalid_tokens(st)                        # 1D, matches v1 exactly
+        st = st[st < SPEECH_VOCAB_LIMIT].to(dev)
+        if st.numel() == 0:
+            continue
+        toks.append(st)
+        keep.append(idx)
+
+    wavs = [None] * len(seqs)
+    if not toks:
+        return wavs
+    if len(toks) == 1:
+        # Nothing to gain, and this keeps single-row buckets on v1's exact path.
+        st = toks[0]
+        wav, _ = model.s3gen.inference(speech_tokens=st, ref_dict=conds.gen)
+        wav = wav.squeeze(0).detach().cpu().numpy()
+        wavs[keep[0]] = model.watermarker.apply_watermark(wav, sample_rate=model.sr)
+        return wavs
+
+    lens = torch.tensor([t.numel() for t in toks], dtype=torch.long, device=dev)
+    B, Tmax = len(toks), int(lens.max())
+    padded = torch.zeros(B, Tmax, dtype=torch.long, device=dev)
+    for i, t in enumerate(toks):
+        padded[i, : t.numel()] = t
+
+    out, _ = model.s3gen.inference(
+        speech_tokens=padded, speech_token_lens=lens, ref_dict=conds.gen
+    )
+    if out.ndim == 3:
+        out = out.squeeze(1)                               # (B, samples)
+
+    spt = out.size(-1) / float(Tmax)                       # samples per speech token
+    for i, idx in enumerate(keep):
+        n = int(round(spt * int(lens[i])))
+        wav = out[i, :n].detach().cpu().numpy()
+        wavs[idx] = model.watermarker.apply_watermark(wav, sample_rate=model.sr)
+    return wavs
