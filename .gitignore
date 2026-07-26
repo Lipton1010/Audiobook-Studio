@@ -19,3 +19,7 @@ app/config.json
 
 # Local A/B listen-test material (regenerable, not part of the app).
 ab_samples/
+
+# Server console output. The launcher can redirect the server's stdout/stderr
+# here; it is machine-local noise, never part of the app.
+app/*.log
