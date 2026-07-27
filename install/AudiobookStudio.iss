@@ -161,6 +161,10 @@ var
   CacheRoot: string;
   MinicondaRoot: string;
 begin
+  // Do not call this before Miniconda's own installer has finished. The
+  // installer invokes `conda constructor` internally; CONDA_NO_PLUGINS=true
+  // removes that command and makes the pinned installer abort with code 2.
+  // These settings are for Audiobook Studio's later conda/setup processes.
   RuntimeRoot := ExpandConstant('{app}\runtime');
   CacheRoot := RuntimeRoot + '\cache';
   MinicondaRoot := RuntimeRoot + '\miniconda3';
@@ -296,28 +300,35 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
-  SetManagedRuntimeEnvironment();
-  CondaPythonPath := FindPrivateCondaPython();
-  if CondaPythonPath <> '' then
-    exit;
-
-  if not InstallMinicondaViaInno() then
-  begin
-    Result := 'Audiobook Studio''s private Miniconda runtime could not be installed. ' +
-              'Setup stopped before copying the app files.' + #13#10#13#10 +
-              'Do not install Miniconda manually: this installer deliberately uses ' +
-              'its own isolated copy. Send the error-code screenshot to whoever gave ' +
-              'you this installer.';
-    exit;
-  end;
-
   CondaPythonPath := FindPrivateCondaPython();
   if CondaPythonPath = '' then
-    Result := 'Miniconda reported a successful install but python.exe is not at the ' +
-              'expected private runtime location:' + #13#10 +
-              ExpandConstant('{app}\runtime\miniconda3\python.exe') + #13#10#13#10 +
-              'Run this installer again. If it repeats, send install_log.txt to ' +
-              'whoever gave you the installer.';
+  begin
+    if not InstallMinicondaViaInno() then
+    begin
+      Result := 'Audiobook Studio''s private Miniconda runtime could not be installed. ' +
+                'Setup stopped before copying the app files.' + #13#10#13#10 +
+                'Do not install Miniconda manually: this installer deliberately uses ' +
+                'its own isolated copy. Send the error-code screenshot to whoever gave ' +
+                'you this installer.';
+      exit;
+    end;
+
+    CondaPythonPath := FindPrivateCondaPython();
+    if CondaPythonPath = '' then
+    begin
+      Result := 'Miniconda reported a successful install but python.exe is not at the ' +
+                'expected private runtime location:' + #13#10 +
+                ExpandConstant('{app}\runtime\miniconda3\python.exe') + #13#10#13#10 +
+                'Run this installer again. If it repeats, send install_log.txt to ' +
+                'whoever gave you the installer.';
+      exit;
+    end;
+  end;
+
+  // Miniconda is now complete. Its internal constructor command is no longer
+  // needed, so subsequent setup.py and conda children can use the isolated,
+  // plugin-free managed environment.
+  SetManagedRuntimeEnvironment();
 end;
 
 // Everything is piped through cmd /C so stdout+stderr land in install_log.txt,
