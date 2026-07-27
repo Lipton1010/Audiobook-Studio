@@ -202,6 +202,21 @@ STILL UNVERIFIED after this round, and the list has barely shrunk:
 - findstr /R end-of-word anchoring, cmd quoting in the rewritten build script, and the certutil hash line are all untested cmd behaviour.
 - Everything in the previous section's list stands: no end to end run on a machine missing conda and ffmpeg, no NVIDIA-less machine, no non-default conda root.
 
+### Distribution: GitHub Releases (decided 2026-07-26, nothing published yet)
+
+The compiled installer is NOT in the repo and must never be. Output/ is gitignored, so a visitor to github.com/Lipton1010/Audiobook-Studio sees source only. Verified 2026-07-26 that the Releases page reads "There aren't any releases here", while the README's Install section led with "Easiest: Setup_AudiobookStudio.exe" and gave no way to obtain it. That was a dead end for anyone who was not the author; the README now links to the Releases page and says outright that the .exe is a release asset rather than a tracked file.
+
+The decision is to publish the .exe as a GitHub Release asset. It is small (an auditor's test build was 2,189,267 bytes) because it downloads Miniconda, torch and the weights instead of bundling them, so release size limits are not a consideration.
+
+RELEASE ORDER, and it is not negotiable in the other direction:
+1. install\build_installer.bat. It stages HEAD with git archive, compiles, then greps Inno's OutputManifestFile and FAILS the build on a leak. Do not compile the .iss directly from the working tree.
+2. Run the built .exe in Windows Sandbox. That is a clean machine with no conda, no ffmpeg and no NVIDIA GPU, which covers three untested conditions in one pass. Confirm install_log.txt exists and has content, the pinned Miniconda downloads and passes its hash check, the warnings message box appears, and the Finished page shows the custom text.
+3. Only then tag and publish:
+   gh release create v1.0.0 .\Output\Setup_AudiobookStudio.exe --title "Audiobook Studio 1.0.0" --notes "..."
+   The permanent link is then /releases/latest/download/Setup_AudiobookStudio.exe and the README badge resolves.
+
+Never publish a release of a build that has not completed step 2. The installer is unsigned, so a published asset carries the author's name on a binary that SmartScreen will flag; shipping one that was never run is strictly worse than having no release at all. Note also that the repo is PUBLIC, so a release is visible to anyone, not just the intended recipient.
+
 ## Portable configuration
 
 app/config.py resolves every machine-specific value as env var > config.json > auto-detection > built-in default, so the app runs on someone else's Windows box without editing source. Defaults are relative to the repo root, so a clone anywhere works. app/config.example.json is committed; app/config.json is gitignored. CFG.warnings() prints actionable startup warnings (missing chatterbox python, missing voice clip, missing ffmpeg, no library folders).

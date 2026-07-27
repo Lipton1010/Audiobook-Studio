@@ -1,5 +1,7 @@
 # Audiobook Pipeline
 
+[![Latest release](https://img.shields.io/github/v/release/Lipton1010/Audiobook-Studio?label=download&color=blue)](https://github.com/Lipton1010/Audiobook-Studio/releases/latest)
+
 Local PDF to audiobook pipeline for legally purchased books, personal use only. Runs entirely on my own hardware (RTX 4090, Windows): OCR and text extraction feed a tagging stage, then Chatterbox TTS narrates with a cloned voice.
 
 ## What's here
@@ -32,7 +34,9 @@ You provide these; the installer sets up everything else, including Miniconda an
 
 ## Install
 
-**Easiest: `Setup_AudiobookStudio.exe`.** One installer, no terminal. It silently installs Miniconda and ffmpeg if you don't already have them, builds the app's Python environment, and pre-downloads the ~3 GB of TTS model weights so the first narration doesn't have to. Double-click it, click through the wizard, and it's done — a shortcut is added to your Start Menu (and Desktop, if you check that box). This installer is built from source with Inno Setup (see `install/AudiobookStudio.iss`) rather than distributed as a signed release, so Windows SmartScreen will probably warn that it's from an unknown publisher the first time. That's expected for an unsigned personal-project installer, not a sign anything is wrong. If you see a blue **"Windows protected your PC"** box, click **More info**, then **Run anyway**. If you were sent a SHA-256 alongside the file, you can confirm it first by running this in PowerShell:
+**[Download the latest `Setup_AudiobookStudio.exe`](https://github.com/Lipton1010/Audiobook-Studio/releases/latest)** from the Releases page. The installer is published as a release asset, not committed to the repo, so it will not appear in the file list above. If the Releases page is empty, no build has been published yet; build it yourself with `install\build_installer.bat`, or use the from-source route below.
+
+**Why the .exe is easiest.** One installer, no terminal. It silently installs Miniconda and ffmpeg if you don't already have them, builds the app's Python environment, and pre-downloads the ~3 GB of TTS model weights so the first narration doesn't have to. Double-click it, click through the wizard, and it's done — a shortcut is added to your Start Menu (and Desktop, if you check that box). This installer is built from source with Inno Setup (see `install/AudiobookStudio.iss`) rather than distributed as a signed release, so Windows SmartScreen will probably warn that it's from an unknown publisher the first time. That's expected for an unsigned personal-project installer, not a sign anything is wrong. If you see a blue **"Windows protected your PC"** box, click **More info**, then **Run anyway**. If you were sent a SHA-256 alongside the file, you can confirm it first by running this in PowerShell:
 
 ```
 Get-FileHash .\Setup_AudiobookStudio.exe -Algorithm SHA256
