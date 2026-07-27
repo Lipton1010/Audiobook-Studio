@@ -50,6 +50,7 @@ REPO = Path(__file__).resolve().parent
 INSTALL = REPO / "install"
 CHATTERBOX_ENV = "chatterbox"
 PY_VERSION = "3.11"
+CONDA_ENV_CHANNEL = "conda-forge"
 CU_INDEX = "https://download.pytorch.org/whl/cu124"
 # numpy is pinned alongside torch on purpose: torch does not pin it, so step 1
 # would pull numpy 2.x and step 2 would immediately downgrade it. chatterbox-tts
@@ -279,7 +280,15 @@ def setup_chatterbox_env(conda, assume_yes=False):
                 print("    Skipping chatterbox env package install.")
                 return True
     else:
-        r = run([conda, "create", "-n", CHATTERBOX_ENV, f"python={PY_VERSION}", "-y"])
+        # Current Miniconda refuses non-interactive use of its default Anaconda
+        # channels until their Terms of Service have been accepted. The
+        # one-click installer must not accept legal terms on the recipient's
+        # behalf, and only Python itself is obtained through conda here. Use
+        # conda-forge explicitly and ignore configured/default channels so a
+        # clean unattended install does not touch the gated Anaconda channels.
+        r = run([conda, "create", "-n", CHATTERBOX_ENV,
+                 f"python={PY_VERSION}", "--override-channels", "--channel",
+                 CONDA_ENV_CHANNEL, "-y"])
         if r.returncode != 0:
             err("conda create failed")
             return False
