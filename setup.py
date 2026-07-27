@@ -60,6 +60,38 @@ TORCH_PINS = ["torch==2.6.0+cu124", "torchaudio==2.6.0+cu124", "torchvision==0.2
               "numpy==1.26.4"]
 
 
+def configure_managed_runtime(runtime_root):
+    """Keep installer-owned environments and caches under one app folder.
+
+    This is opt-in because a source checkout deliberately uses the developer's
+    existing conda/cache layout. The one-click installer always enables it.
+    """
+    root = Path(runtime_root).resolve()
+    cache = root / "cache"
+    miniconda = root / "miniconda3"
+    for folder in (cache, miniconda / "envs", miniconda / "pkgs"):
+        folder.mkdir(parents=True, exist_ok=True)
+    managed = {
+        "HF_HOME": cache / "huggingface",
+        "TORCH_HOME": cache / "torch",
+        "PIP_CACHE_DIR": cache / "pip",
+        "XDG_CACHE_HOME": cache,
+        "XDG_CONFIG_HOME": root / "config",
+        "CONDA_ENVS_PATH": miniconda / "envs",
+        "CONDA_PKGS_DIRS": miniconda / "pkgs",
+    }
+    for name, value in managed.items():
+        os.environ[name] = str(value)
+    # Conda otherwise creates ~/.conda/environments.txt, and current Miniconda
+    # enables Anaconda's anonymous-usage token by default under ~/.conda.
+    os.environ["CONDA_REGISTER_ENVS"] = "false"
+    os.environ["CONDA_NO_PLUGINS"] = "true"
+    os.environ["CONDA_SOLVER"] = "classic"
+    os.environ["CONDA_ANACONDA_ANON_USAGE"] = "false"
+    os.environ["ANACONDA_ANON_USAGE"] = "false"
+    return root
+
+
 # ---------- pretty output ----------
 
 # Warnings a non-technical user actually needs to see. When the one-click
@@ -208,7 +240,7 @@ def check_prereqs(auto_conda=False, auto_ffmpeg=False):
         testing that a file exists.
 
         The existence-only version had a hole: a failed fetch used to leave a
-        broken ffmpeg.exe in tools\, which this function then reported as
+        broken ffmpeg.exe in the tools directory, which this function then reported as
         success, with no warning written. bootstrap_ffmpeg now stages the
         binary under a candidate name and only promotes it after it runs, and
         this check runs it again."""
@@ -317,8 +349,8 @@ def pin_chatterbox_python(conda):
     """Write the REAL chatterbox interpreter path into app/config.json.
 
     setup.py creates and verifies the env BY NAME ("-n chatterbox"), while
-    app/config.py has to GUESS a path (<some conda root>\envs\chatterbox\
-    python.exe) and falls back to the original author's path when it cannot
+    app/config.py has to GUESS a path below a conda root's envs/chatterbox
+    directory and falls back to the original author's path when it cannot
     find one. Those two can disagree: conda honours envs_dirs, so an env can be
     created somewhere this guess will never look. The result is the worst kind
     of failure, a setup that reports success followed by an app that cannot
@@ -413,7 +445,13 @@ def main():
                      help="fetch a static ffmpeg build into tools/ if not found")
     ap.add_argument("--prefetch-weights", action="store_true",
                      help="download Chatterbox's ~3 GB of TTS weights now instead of on first narration")
+    ap.add_argument("--runtime-root", type=Path,
+                     help="keep installer-owned conda environments and caches under this folder")
     args = ap.parse_args()
+
+    if args.runtime_root:
+        runtime_root = configure_managed_runtime(args.runtime_root)
+        print(f"  Managed runtime: {runtime_root}")
 
     hr()
     print("  Audiobook Studio - setup")

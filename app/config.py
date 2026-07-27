@@ -182,13 +182,6 @@ class Config:
                 "Use the 'Install ffmpeg' button in the app, or install it yourself "
                 "and restart."
             )
-        existing_roots = [r for r in self.library_roots if r.exists()]
-        if not existing_roots:
-            out.append(
-                "no library folders exist yet; drop PDFs into "
-                + " or ".join(str(r) for r in self.library_roots)
-                + " (or set library_roots in config.json)."
-            )
         return out
 
     def ffmpeg_path(self, refresh=False):
@@ -196,7 +189,7 @@ class Config:
 
         EXECUTES the binary instead of testing that a file exists. That
         distinction is load-bearing: a failed auto-install used to leave a
-        broken ffmpeg.exe in tools\, and an existence check reported it as
+        broken ffmpeg.exe in the tools directory, and an existence check reported it as
         available, so the problem only surfaced at the end of a narration when
         the m4b encode failed.
 

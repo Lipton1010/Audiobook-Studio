@@ -30,6 +30,7 @@
            border-radius: 7px; padding: 7px 14px; font-size: 14px; cursor: pointer; }
   button:hover { border-color: var(--accent); }
   button.primary { background: var(--accent); border-color: var(--accent); color: #1a1408; font-weight: 600; }
+  button:disabled { cursor: wait; opacity: .65; }
   button.danger:hover { border-color: var(--bad); color: var(--bad); }
   .job { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
          padding: 16px 18px; margin-bottom: 14px; }
@@ -83,6 +84,14 @@
   <h2>Jobs</h2>
   <div id="jobs"></div>
   <h2>Library</h2>
+  <div class="card" style="max-width:620px; margin-bottom:14px">
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+      <input type="file" id="pdf-file" accept=".pdf,application/pdf" style="color:var(--dim); font-size:13px; flex:1; min-width:240px">
+      <button class="primary" id="pdf-upload-btn" onclick="uploadPdf()">Add PDF to library</button>
+    </div>
+    <div class="meta" style="margin-top:10px">Choose a PDF you legally own. Audiobook Studio copies it into its managed library and checks that it can be opened.</div>
+    <div class="err" id="pdf-err"></div>
+  </div>
   <div id="library" class="grid"></div>
   <h2>Voices</h2>
   <div class="card" style="max-width:560px">
@@ -156,16 +165,39 @@ function fmtEta(s) {
 }
 
 async function loadLibrary() {
-  const r = await fetch('/api/library');
-  library = (await r.json()).items;
   const el = document.getElementById('library');
   el.innerHTML = '';
+  let r;
+  try {
+    r = await fetch('/api/library');
+    const response = await r.json();
+    if (!r.ok) throw new Error(response.error || 'Could not load the library.');
+    library = response.items;
+  } catch (e) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = e.message || 'Could not load the library.';
+    el.appendChild(empty);
+    return;
+  }
+  if (!library.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'No books yet. Use Add PDF to library above.';
+    el.appendChild(empty);
+    return;
+  }
   for (const b of library) {
     const card = document.createElement('div');
     card.className = 'card';
-    card.innerHTML = `
-      <div class="name">${b.name}</div>
-      <div class="meta">${b.pages ?? '?'} pages · suggested: Path ${b.suggested_path}</div>`;
+    const name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = b.name;
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    const pageText = b.pages == null ? '? pages' : `${b.pages} ${b.pages === 1 ? 'page' : 'pages'}`;
+    meta.textContent = `${pageText} · suggested: Path ${b.suggested_path}`;
+    card.append(name, meta);
     const btn = document.createElement('button');
     btn.className = 'primary';
     btn.textContent = 'New audiobook';
@@ -178,7 +210,8 @@ async function loadLibrary() {
 function openDlg(book) {
   dlgBook = book;
   document.getElementById('dlg-title').textContent = book.name;
-  document.getElementById('dlg-meta').textContent = `${book.pages} pages · ${book.path}`;
+  const pageText = `${book.pages} ${book.pages === 1 ? 'page' : 'pages'}`;
+  document.getElementById('dlg-meta').textContent = `${pageText} · suggested: Path ${book.suggested_path}`;
   document.getElementById('f-title').value = book.name;
   document.getElementById('f-from').value = 1;
   document.getElementById('f-to').value = book.pages;
@@ -313,6 +346,36 @@ async function uploadVoice() {
   loadVoices();
 }
 
+async function uploadPdf() {
+  const inp = document.getElementById('pdf-file');
+  const err = document.getElementById('pdf-err');
+  const uploadBtn = document.getElementById('pdf-upload-btn');
+  err.textContent = '';
+  if (!inp.files.length) { err.textContent = 'Choose a PDF first.'; return; }
+  const f = inp.files[0];
+  if (!f.name.toLowerCase().endsWith('.pdf')) {
+    err.textContent = 'Choose a PDF file.';
+    return;
+  }
+  uploadBtn.disabled = true;
+  uploadBtn.textContent = 'Adding PDF...';
+  try {
+    const r = await fetch(`/api/library/import?name=${encodeURIComponent(f.name)}`,
+      {method: 'POST', body: f});
+    let response;
+    try { response = await r.json(); }
+    catch (e) { response = {}; }
+    if (!r.ok) throw new Error(response.error || 'The PDF could not be added.');
+    inp.value = '';
+    await loadLibrary();
+  } catch (e) {
+    err.textContent = e.message || 'The PDF could not be added.';
+  } finally {
+    uploadBtn.disabled = false;
+    uploadBtn.textContent = 'Add PDF to library';
+  }
+}
+
 async function createJob() {
   const body = {
     pdf_path: dlgBook.path,
@@ -345,7 +408,7 @@ async function refreshJobs() {
   const jobs = (await r.json()).jobs;
   const el = document.getElementById('jobs');
   if (!jobs.length) {
-    el.innerHTML = '<div class="empty">No jobs yet. Pick a book from the library below.</div>';
+    el.innerHTML = '<div class="empty">No jobs yet. Add a PDF to the library, then select New audiobook.</div>';
     return;
   }
   const details = await Promise.all(jobs.map(j =>

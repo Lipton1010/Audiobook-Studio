@@ -1,7 +1,26 @@
 @echo off
 title Audiobook Studio - Setup
-setlocal enabledelayedexpansion
+setlocal DisableDelayedExpansion
 cd /d "%~dp0"
+
+rem A one-click installation owns a private runtime. Keep repairs and retries
+rem in that same folder rather than falling back to a machine-wide conda.
+set "RUNTIME_ROOT=%~dp0runtime"
+if exist "%RUNTIME_ROOT%\miniconda3\python.exe" (
+    set "AUDIOBOOK_BASE_PY=%RUNTIME_ROOT%\miniconda3\python.exe"
+    set "HF_HOME=%RUNTIME_ROOT%\cache\huggingface"
+    set "TORCH_HOME=%RUNTIME_ROOT%\cache\torch"
+    set "PIP_CACHE_DIR=%RUNTIME_ROOT%\cache\pip"
+    set "XDG_CACHE_HOME=%RUNTIME_ROOT%\cache"
+    set "XDG_CONFIG_HOME=%RUNTIME_ROOT%\config"
+    set "CONDA_ENVS_PATH=%RUNTIME_ROOT%\miniconda3\envs"
+    set "CONDA_PKGS_DIRS=%RUNTIME_ROOT%\miniconda3\pkgs"
+    set "CONDA_REGISTER_ENVS=false"
+    set "CONDA_NO_PLUGINS=true"
+    set "CONDA_SOLVER=classic"
+    set "CONDA_ANACONDA_ANON_USAGE=false"
+    set "ANACONDA_ANON_USAGE=false"
+)
 
 rem Find a Python to bootstrap setup.py with. Prefer conda's base python; fall
 rem back to any python on PATH. setup.py itself only uses the standard library.
@@ -10,10 +29,9 @@ if defined AUDIOBOOK_BASE_PY (
     if exist "%AUDIOBOOK_BASE_PY%" set "BOOTPY=%AUDIOBOOK_BASE_PY%"
 )
 if not defined BOOTPY (
-    rem This list must stay in sync with Start_Audiobook_Studio.bat, setup.py's
-    rem find_conda(), and the Pascal search in install\AudiobookStudio.iss. When
-    rem they disagree, the installer can succeed against one conda while the
-    rem launcher looks for another and reports a broken install.
+    rem Source installs share this fallback list with Start_Audiobook_Studio.bat
+    rem and setup.py's find_conda(). The one-click installer does not reach this
+    rem branch because it always uses its app-owned runtime.
     for %%D in (
         "%USERPROFILE%\miniconda3"
         "%USERPROFILE%\anaconda3"
@@ -37,6 +55,10 @@ if not defined BOOTPY (
     exit /b 1
 )
 
-"%BOOTPY%" setup.py %*
+if exist "%RUNTIME_ROOT%\miniconda3\python.exe" (
+    "%BOOTPY%" setup.py --runtime-root "%RUNTIME_ROOT%" %*
+) else (
+    "%BOOTPY%" setup.py %*
+)
 echo.
 pause

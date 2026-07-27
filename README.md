@@ -11,7 +11,7 @@ Local PDF to audiobook pipeline for legally purchased books, personal use only. 
   - `pipeline_text.py` — extraction and tagging. Path A: text-layer PDFs (prose via x-indent paragraphing, verse via sentence-run grouping, auto-detected). Path B: PyMuPDF rasterize, GLM-OCR via Ollama, block tagging (headings, dialogue, tables and data lists become short spoken omission markers).
   - `narrate_worker.py` — Chatterbox narration subprocess (chatterbox conda env). Per-chunk WAV checkpoints make multi-hour narrations resumable; output is a single file, default **m4b with navigable chapters** (one per top-level heading), or mp3 / lossless wav. m4b/mp3 are encoded straight from the segments via ffmpeg.
   - `convert_voice.py` — converts an uploaded voice sample (wav/mp3/flac/ogg) to a mono reference WAV for cloning.
-  - `static/index.html` — the UI: library, jobs with live progress, voice upload and per-job voice selection.
+  - `static/index.html` — the UI: PDF import and library, jobs with live progress, voice upload and per-job voice selection.
 - `samples/` — the validated standalone scripts the app grew out of (`path_a.py`, `stage_two.py`, `harvest_lazy_dm.py`, `chunk_and_narrate.py`, `narrate_tagged.py`) and the Ollama `Modelfile` for the tuned `glm-ocr-doc` model.
 - `CLAUDE.md` — standing rules and current validated state of the project.
 - `Start_Audiobook_Studio.bat` — one-click launcher; opens the app in its own window (falls back to your browser if that fails).
@@ -36,7 +36,7 @@ You provide these; the installer sets up everything else, including Miniconda an
 
 **[Download the latest `Setup_AudiobookStudio.exe`](https://github.com/Lipton1010/Audiobook-Studio/releases/latest)** from the Releases page. The installer is published as a release asset, not committed to the repo, so it will not appear in the file list above. If the Releases page is empty, no build has been published yet; build it yourself with `install\build_installer.bat`, or use the from-source route below.
 
-**Why the .exe is easiest.** One installer, no terminal. It silently installs Miniconda and ffmpeg if you don't already have them, builds the app's Python environment, and pre-downloads the ~3 GB of TTS model weights so the first narration doesn't have to. Double-click it, click through the wizard, and it's done — a shortcut is added to your Start Menu (and Desktop, if you check that box). This installer is built from source with Inno Setup (see `install/AudiobookStudio.iss`) rather than distributed as a signed release, so Windows SmartScreen will probably warn that it's from an unknown publisher the first time. That's expected for an unsigned personal-project installer, not a sign anything is wrong. If you see a blue **"Windows protected your PC"** box, click **More info**, then **Run anyway**. If you were sent a SHA-256 alongside the file, you can confirm it first by running this in PowerShell:
+**Why the .exe is easiest.** One installer, no terminal. It installs a private Miniconda and ffmpeg, builds the app's Python environment, and pre-downloads the ~3 GB of TTS model weights so the first narration doesn't have to. The complete setup downloads several gigabytes and uses roughly 10 GB on disk, so have at least 15 GB free before starting. All large app-owned pieces are kept below the single Audiobook Studio installation folder instead of creating Miniconda and model-cache folders across your user profile. Double-click it, click through the wizard, and it's done — a shortcut is added to your Start Menu (and Desktop, if you check that box). Those shortcuts launch the app without showing a Command Prompt window. This installer is built from source with Inno Setup (see `install/AudiobookStudio.iss`) rather than distributed as a signed release, so Windows SmartScreen will probably warn that it's from an unknown publisher the first time. That's expected for an unsigned personal-project installer, not a sign anything is wrong. If you see a blue **"Windows protected your PC"** box, click **More info**, then **Run anyway**. If you were sent a SHA-256 alongside the file, you can confirm it first by running this in PowerShell:
 
 ```
 Get-FileHash .\Setup_AudiobookStudio.exe -Algorithm SHA256
@@ -45,6 +45,8 @@ Get-FileHash .\Setup_AudiobookStudio.exe -Algorithm SHA256
 If the wizard warns that **ffmpeg** could not be installed, the install is still fine: the app opens, WAV narration works, and the job dialog has an **Install ffmpeg** button that fetches it in one click and then re-enables the m4b and mp3 options. Only m4b and mp3 need it.
 
 If the install fails or the wizard shows a warning box, everything it did is logged to `install_log.txt` in the install folder (usually `%LOCALAPPDATA%\Programs\Audiobook Studio`). Send that file. You can retry the environment build without reinstalling by running `setup.bat` from that same folder.
+
+The one-click folder layout is intentionally self-contained: `runtime/` holds private Miniconda, the Chatterbox environment, package caches, and model weights; `source_pdfs/` holds PDFs added through the UI; `app/jobs/`, `app/voices/`, and `audiobooks/` hold user data. Windows still keeps the normal Start Menu shortcut and uninstall registration in its own system-managed locations. A source checkout continues to use the developer's existing conda installation unless `--runtime-root` is supplied explicitly.
 
 **From source, for development or if you'd rather see what's happening:**
 
@@ -63,11 +65,11 @@ The app auto-detects your conda env and defaults every path relative to the repo
 ## Provide a voice and books
 
 - **Voice:** the default narrator clip is not distributed. Upload your own in the UI (wav/mp3/flac/ogg), or drop a clip at `samples/Voice_Sample/male_ref.wav`. Per the project rule, a cloned voice must be **licensed, synthetic, or royalty-free** — not a real identifiable person without rights.
-- **Books:** put PDFs of books you legally own under `samples/` or `source_pdfs/` (or set your own `library_roots` in config).
+- **Books:** click **Add PDF to library** in the app and choose a PDF you legally own. The app copies it into its managed `source_pdfs/` library. Advanced users can also put PDFs under `samples/` or another configured `library_roots` folder.
 
 ## Run
 
-Double-click `Start_Audiobook_Studio.bat` (or the Start Menu / Desktop shortcut if you used the installer). It opens Audiobook Studio in its own window — no browser tab, no address bar. Pick a PDF, choose pipeline/voice/page range, and start the job.
+Double-click `Start_Audiobook_Studio.bat` (or the Start Menu / Desktop shortcut if you used the installer). It opens Audiobook Studio in its own window — no browser tab, no address bar. Click **Add PDF to library**, choose pipeline/voice/page range, and start the job.
 
 **First narration only, if you skipped the pre-fetch step above:** Chatterbox downloads about 3 GB of model weights with no progress bar. It can look frozen for several minutes; let it run. Later runs are fast, since the weights are cached.
 

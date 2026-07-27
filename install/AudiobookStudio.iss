@@ -10,13 +10,13 @@
 ; Manual build, if you really want it:
 ;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" install\AudiobookStudio.iss
 ;   -> Output\Setup_AudiobookStudio.exe
-; Then open the resulting .exe with 7-Zip and LIST ITS CONTENTS before sending
-; it to anyone. This has never been verified on a real machine.
+; The canonical build script checks Inno's output manifest before handing over
+; the executable. 7-Zip cannot inspect an Inno-compiled installer.
 ;
 ; What this does, in order:
-;   1. PrepareToInstall (before any file is copied): looks for an existing
-;      conda base python; if none, downloads and silently installs Miniconda
-;      with Inno's built-in downloader (current user only, no admin:
+;   1. PrepareToInstall (before any file is copied): looks for the app's own
+;      private conda base python; if absent, downloads and silently installs
+;      Miniconda under {app}\runtime with Inno's built-in downloader (current user only, no admin:
 ;      /InstallationType=JustMe /RegisterPython=0 /S /D=path). This has to be
 ;      Pascal Script, not install\bootstrap_conda.py, because on a truly clean
 ;      machine there is no Python yet to run that script with. If it fails,
@@ -27,9 +27,8 @@
 ;      --prefetch-weights with the conda python from step 1, redirecting all
 ;      output to install_log.txt, and CHECKS ITS EXIT CODE. setup.py in turn
 ;      calls install\bootstrap_ffmpeg.py and install\bootstrap_weights.py.
-;   4. Creates Start Menu + Desktop shortcuts pointing at
-;      Start_Audiobook_Studio.bat, which opens a native app window (pywebview)
-;      instead of a browser tab.
+;   4. Creates Start Menu + Desktop shortcuts that launch launcher.py through
+;      the private pythonw.exe, so the native app window has no console behind it.
 ;
 ; Why setup.py is NOT a [Run] entry: Inno processes [Run] as the LAST part of
 ; the actual installation, and fires ssPostInstall AFTER that. The first
@@ -43,13 +42,12 @@
 ;   - Touch Ollama in any way. It is optional (scanned-image books / Path B
 ;     only) and is commonly shared with other things on a user's machine, so
 ;     installing or upgrading it is not this installer's business.
-;   - Install a bundled Python. It relies on the Miniconda it just installed
-;     (or found) to run setup.py itself, since setup.py is stdlib-only.
+;   - Reuse a machine-wide Python. The one-click install owns a private
+;     Miniconda under {app}\runtime so its 10 GB footprint stays together.
 
 #define MyAppName "Audiobook Studio"
 #define MyAppVersion "1.0.0"
 #define MyAppPublisher "Audiobook Studio"
-#define MyAppExeName "Start_Audiobook_Studio.bat"
 
 [Setup]
 ; Real GUID (generated once for this project) so Windows recognizes upgrades
@@ -64,6 +62,10 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={userpf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 PrivilegesRequired=lowest
+; The embedded source is tiny, but Miniconda, the conda environment, pip cache,
+; torch and model weights use roughly 10 GB after setup. Require 12 GiB beyond
+; the installer payload so the environment build does not fail near the end.
+ExtraDiskSpaceRequired=12884901888
 OutputDir=..\Output
 OutputBaseFilename=Setup_AudiobookStudio
 ; Emit the list of every file actually embedded in the .exe. This is the ONLY
@@ -77,13 +79,8 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 DisableProgramGroupPage=yes
-; Uninstall removes the files this installer copied plus its own byproducts
-; (see [UninstallDelete]). It does NOT remove Miniconda, the conda envs, the
-; Hugging Face weight cache, or any book/audio the user produced. Those are
-; either shared with other software or are the user's own data; deleting them
-; on uninstall would be worse than leaving them. Removing them by hand:
-;   conda env remove -n chatterbox
-;   rmdir /s "%USERPROFILE%\.cache\huggingface"
+; The private runtime is app-owned and is removed on uninstall. User data
+; (books, voices, jobs, and generated audiobooks) is deliberately retained.
 UninstallDisplayIcon={app}\app\icon.ico
 
 [Languages]
@@ -107,8 +104,11 @@ Source: "..\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createalls
     Excludes: "*.pdf,*.wav,*.mp3,*.flac,*.ogg,*.m4a,*.m4b,*.aac,*.jpg,*.jpeg,*.pyc,__pycache__,.git,.claude,\app\jobs\*,\app\voices\*,\app\config.json,\app\*.log,\audiobooks\*,\ab_samples\*,\source_pdfs\*,\samples\Voice_Sample\*,\tools\*,\Output\*,\install\*.exe,\install_log.txt,\install_warnings.txt,\launcher_log.txt,\AUDIT_HANDOFF.md,\AUDIT_TRIAGE_HANDOFF.md"
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\app\icon.ico"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon; IconFilename: "{app}\app\icon.ico"
+; pythonw.exe keeps the normal installed launch completely console-free.
+; launcher.py redirects detached stdout/stderr to launcher_log.txt, and still
+; uses MessageBoxW for a failure the user needs to see.
+Name: "{group}\{#MyAppName}"; Filename: "{app}\runtime\miniconda3\pythonw.exe"; Parameters: """{app}\app\launcher.py"""; WorkingDir: "{app}\app"; IconFilename: "{app}\app\icon.ico"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\runtime\miniconda3\pythonw.exe"; Parameters: """{app}\app\launcher.py"""; WorkingDir: "{app}\app"; Tasks: desktopicon; IconFilename: "{app}\app\icon.ico"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 
 [UninstallDelete]
@@ -117,6 +117,7 @@ Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 ; app\voices, audiobooks) is deliberately NOT listed.
 Type: files; Name: "{app}\install_log.txt"
 Type: files; Name: "{app}\install_warnings.txt"
+Type: filesandordirs; Name: "{app}\runtime"
 Type: filesandordirs; Name: "{app}\tools"
 Type: filesandordirs; Name: "{app}\app\__pycache__"
 Type: filesandordirs; Name: "{app}\install\__pycache__"
@@ -125,13 +126,17 @@ Type: filesandordirs; Name: "{app}\install\__pycache__"
 ; setup.py is NOT here on purpose -- see the ordering note in the header. The
 ; only [Run] entry is the optional launch, and it is suppressed if setup.py
 ; failed, so nobody is invited to start an app whose env was never built.
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName} now"; \
-    Flags: postinstall skipifsilent shellexec; Check: SetupPySucceeded
+Filename: "{app}\runtime\miniconda3\pythonw.exe"; Parameters: """{app}\app\launcher.py"""; \
+    WorkingDir: "{app}\app"; Description: "Launch {#MyAppName} now"; \
+    Flags: postinstall skipifsilent nowait; Check: SetupPySucceeded
 
 [Code]
 var
   CondaPythonPath: string;
   SetupPyOk: Boolean;
+
+function SetEnvironmentVariableW(lpName, lpValue: string): Boolean;
+  external 'SetEnvironmentVariableW@kernel32.dll stdcall';
 
 const
   // PINNED, and kept in sync with install/bootstrap_conda.py's MINICONDA_FILE
@@ -146,6 +151,29 @@ const
   MinicondaUrl = 'https://repo.anaconda.com/miniconda/Miniconda3-py313_26.5.3-1-Windows-x86_64.exe';
   MinicondaSha256 = 'c229a161e9fad48fd7d2c701da363e6a307b233eba379cd967bc26aa2cb3fa68';
 
+procedure SetManagedRuntimeEnvironment();
+var
+  RuntimeRoot: string;
+  CacheRoot: string;
+  MinicondaRoot: string;
+begin
+  RuntimeRoot := ExpandConstant('{app}\runtime');
+  CacheRoot := RuntimeRoot + '\cache';
+  MinicondaRoot := RuntimeRoot + '\miniconda3';
+  SetEnvironmentVariableW('HF_HOME', CacheRoot + '\huggingface');
+  SetEnvironmentVariableW('TORCH_HOME', CacheRoot + '\torch');
+  SetEnvironmentVariableW('PIP_CACHE_DIR', CacheRoot + '\pip');
+  SetEnvironmentVariableW('XDG_CACHE_HOME', CacheRoot);
+  SetEnvironmentVariableW('XDG_CONFIG_HOME', RuntimeRoot + '\config');
+  SetEnvironmentVariableW('CONDA_ENVS_PATH', MinicondaRoot + '\envs');
+  SetEnvironmentVariableW('CONDA_PKGS_DIRS', MinicondaRoot + '\pkgs');
+  SetEnvironmentVariableW('CONDA_REGISTER_ENVS', 'false');
+  SetEnvironmentVariableW('CONDA_NO_PLUGINS', 'true');
+  SetEnvironmentVariableW('CONDA_SOLVER', 'classic');
+  SetEnvironmentVariableW('CONDA_ANACONDA_ANON_USAGE', 'false');
+  SetEnvironmentVariableW('ANACONDA_ANON_USAGE', 'false');
+end;
+
 function InitializeSetup: Boolean;
 begin
   // Default to True so the "Launch now" checkbox behaves normally; only an
@@ -154,33 +182,18 @@ begin
   Result := True;
 end;
 
-// Finds an already-installed conda's base python.exe at the usual locations.
-// Kept in sync with setup.py's find_conda() and Start_Audiobook_Studio.bat's
-// own search list, so the three cannot disagree about what counts as "conda is
-// present". KNOWN LIMITATION: this cannot see a conda that is only reachable
-// via PATH at a nonstandard root (setup.py checks shutil.which("conda") first
-// and this cannot). Worst case that installs a second, unused Miniconda.
-function FindExistingCondaPython(): string;
+// The one-click install deliberately does not reuse a machine-wide conda. Its
+// Python, narrator environment, package cache and model weights belong under
+// one {app}\runtime tree. Source installs still use normal conda discovery.
+function FindPrivateCondaPython(): string;
 var
-  Candidates: array[0..6] of string;
-  I: Integer;
+  Candidate: string;
 begin
-  Candidates[0] := ExpandConstant('{%USERPROFILE}\miniconda3\python.exe');
-  Candidates[1] := ExpandConstant('{%USERPROFILE}\anaconda3\python.exe');
-  Candidates[2] := ExpandConstant('{%USERPROFILE}\miniforge3\python.exe');
-  Candidates[3] := 'C:\ProgramData\miniconda3\python.exe';
-  Candidates[4] := 'C:\ProgramData\anaconda3\python.exe';
-  Candidates[5] := 'C:\miniconda3\python.exe';
-  Candidates[6] := 'C:\anaconda3\python.exe';
-  Result := '';
-  for I := 0 to 6 do
-  begin
-    if FileExists(Candidates[I]) then
-    begin
-      Result := Candidates[I];
-      exit;
-    end;
-  end;
+  Candidate := ExpandConstant('{app}\runtime\miniconda3\python.exe');
+  if FileExists(Candidate) then
+    Result := Candidate
+  else
+    Result := '';
 end;
 
 function OnMinicondaDownloadProgress(const Url, FileName: String; const Progress, ProgressMax: Int64): Boolean;
@@ -213,7 +226,7 @@ var
 begin
   Result := False;
   InstallerPath := ExpandConstant('{tmp}\') + MinicondaFile;
-  InstallDir := ExpandConstant('{%USERPROFILE}\miniconda3');
+  InstallDir := ExpandConstant('{app}\runtime\miniconda3');
 
   WizardForm.PreparingLabel.Caption := 'Downloading Miniconda (first-time setup)...';
   try
@@ -268,7 +281,8 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
-  CondaPythonPath := FindExistingCondaPython();
+  SetManagedRuntimeEnvironment();
+  CondaPythonPath := FindPrivateCondaPython();
   if CondaPythonPath <> '' then
     exit;
 
@@ -281,13 +295,13 @@ begin
     exit;
   end;
 
-  CondaPythonPath := FindExistingCondaPython();
+  CondaPythonPath := FindPrivateCondaPython();
   if CondaPythonPath = '' then
     Result := 'Miniconda reported a successful install but python.exe is not at the ' +
-              'expected location (%USERPROFILE%\miniconda3\python.exe). Install ' +
-              'Miniconda manually from ' +
-              'https://www.anaconda.com/docs/getting-started/miniconda/install ' +
-              'and run this installer again.';
+              'expected private runtime location:' + #13#10 +
+              ExpandConstant('{app}\runtime\miniconda3\python.exe') + #13#10#13#10 +
+              'Run this installer again. If it repeats, send install_log.txt to ' +
+              'whoever gave you the installer.';
 end;
 
 // Everything is piped through cmd /C so stdout+stderr land in install_log.txt,
@@ -313,11 +327,12 @@ begin
   LogPath := ExpandConstant('{app}\install_log.txt');
   WarnPath := ExpandConstant('{app}\install_warnings.txt');
   Params := '/C ""' + CondaPythonPath + '" "' + ExpandConstant('{app}\setup.py') +
-            '" --yes --auto-install-ffmpeg --prefetch-weights > "' + LogPath + '" 2>&1"';
+            '" --yes --auto-install-ffmpeg --prefetch-weights --runtime-root "' +
+            ExpandConstant('{app}\runtime') + '" > "' + LogPath + '" 2>&1"';
 
   WizardForm.StatusLabel.Caption :=
-    'Setting up Audiobook Studio. This downloads about 3-4 GB (PyTorch and the ' +
-    'voice model) and can take 15-30 minutes. It is not frozen.';
+    'Setting up Audiobook Studio. This downloads several gigabytes and uses ' +
+    'about 10 GB of disk space. It can take 15-30 minutes. It is not frozen.';
   WizardForm.ProgressGauge.Style := npbstMarquee;
 
   if not Exec(ExpandConstant('{cmd}'), Params, ExpandConstant('{app}'),

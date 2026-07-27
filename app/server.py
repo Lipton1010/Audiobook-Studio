@@ -40,6 +40,10 @@ VOICES_DIR = APP_DIR / "voices"
 # auto-detect > original default), so the app is portable across machines
 # without editing source. See config.example.json.
 LIBRARY_ROOTS = CFG.library_roots
+# PDFs chosen in the UI are copied here. Keep this deterministic and app-owned:
+# browser file inputs intentionally do not reveal the source path, and an
+# installed copy must not depend on the user finding its hidden install folder.
+PDF_IMPORT_DIR = CFG.base_dir / "source_pdfs"
 # Default voice: converted from "Voice Sample Male.mp3" via convert_voice.py;
 # the old ref_15s.wav default was judged bad on listening (2026-07-21).
 REFERENCE_WAV = CFG.reference_wav
@@ -53,6 +57,7 @@ PORT = CFG.port
 
 AUDIO_EXTS = {".m4b", ".mp3", ".wav"}
 AUDIO_MIME = {".m4b": "audio/mp4", ".mp3": "audio/mpeg", ".wav": "audio/wav"}
+MAX_PDF_BYTES = 2 * 1024 * 1024 * 1024
 
 # Bumping the number of narration processes to fit the GPU. Each Chatterbox
 # worker loads its own model copy and, measured on this stack, holds ~9-10 GB
@@ -321,6 +326,81 @@ def page_count(pdf_path):
     return _page_count_cache[key]
 
 
+def _library_item(pdf_path):
+    pdf_path = Path(pdf_path)
+    pages = page_count(pdf_path)
+    return {
+        "path": str(pdf_path),
+        "name": pdf_path.stem,
+        "folder": str(pdf_path.parent),
+        "pages": pages,
+        "suggested_path": suggest_path(pdf_path, pages) if pages else "B",
+    }
+
+
+_pdf_import_lock = threading.Lock()
+
+
+def import_pdf(stream, length, original_name, import_dir=None):
+    """Stream, validate, and atomically add one PDF to the managed library."""
+    if length <= 0:
+        raise ValueError("The selected PDF is empty.")
+    if length > MAX_PDF_BYTES:
+        raise ValueError("The selected PDF is larger than the 2 GB import limit.")
+
+    # The browser supplies only a basename, but sanitize again because this is
+    # also an HTTP endpoint. Windows-invalid characters cannot reach the disk.
+    filename = Path(str(original_name or "book.pdf")).name
+    filename = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", filename).strip(" .")
+    if not filename.lower().endswith(".pdf"):
+        raise ValueError("Choose a PDF file.")
+    stem = filename[:-4].strip(" .") or "book"
+    filename = stem + ".pdf"
+
+    destination_dir = Path(import_dir or PDF_IMPORT_DIR)
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    temp_path = destination_dir / ("._pdf_import_" + uuid.uuid4().hex + ".tmp")
+    remaining = length
+    header = b""
+    try:
+        with temp_path.open("wb") as out:
+            while remaining:
+                chunk = stream.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    raise ValueError("The PDF upload ended before the whole file arrived.")
+                if len(header) < 1024:
+                    header += chunk[:1024 - len(header)]
+                out.write(chunk)
+                remaining -= len(chunk)
+
+        if b"%PDF-" not in header:
+            raise ValueError("That file does not contain a valid PDF header.")
+        try:
+            with fitz.open(temp_path) as doc:
+                if doc.needs_pass:
+                    raise ValueError("Password-protected PDFs are not supported.")
+                if doc.page_count < 1:
+                    raise ValueError("That PDF has no readable pages.")
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError("That PDF could not be opened. It may be damaged.") from exc
+
+        with _pdf_import_lock:
+            target = destination_dir / filename
+            suffix = 2
+            while target.exists():
+                target = destination_dir / f"{stem} ({suffix}).pdf"
+                suffix += 1
+            os.replace(temp_path, target)
+        return _library_item(target)
+    finally:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def suggest_path(pdf_path, pages):
     """
     A needs a healthy text layer AND a single-column layout. Multi-column
@@ -399,7 +479,10 @@ def extract_book_meta(pdf_path, title, job_dir):
 def scan_library():
     seen = set()
     items = []
-    for root in LIBRARY_ROOTS:
+    roots = list(LIBRARY_ROOTS)
+    if not any(Path(root).resolve() == PDF_IMPORT_DIR.resolve() for root in roots):
+        roots.append(PDF_IMPORT_DIR)
+    for root in roots:
         if not root.exists():
             continue
         for p in sorted(root.rglob("*.pdf")):
@@ -407,16 +490,7 @@ def scan_library():
             if key in seen:
                 continue
             seen.add(key)
-            n = page_count(p)
-            items.append(
-                {
-                    "path": str(p),
-                    "name": p.stem,
-                    "folder": str(p.parent),
-                    "pages": n,
-                    "suggested_path": suggest_path(p, n) if n else "B",
-                }
-            )
+            items.append(_library_item(p))
     return items
 
 
@@ -899,6 +973,17 @@ class Handler(BaseHTTPRequestHandler):
                 st = ffmpeg_status()
                 st["started"] = started
                 _json_response(self, st)
+            elif path == "/api/library/import":
+                from urllib.parse import parse_qs
+
+                q = parse_qs(urlparse(self.path).query)
+                name = (q.get("name") or ["book.pdf"])[0]
+                try:
+                    length = int(self.headers.get("Content-Length", 0))
+                    item = import_pdf(self.rfile, length, name)
+                    _json_response(self, {"ok": True, "item": item})
+                except (TypeError, ValueError) as exc:
+                    _json_response(self, {"error": str(exc)}, 400)
             elif path == "/api/voices":
                 from urllib.parse import parse_qs
 
