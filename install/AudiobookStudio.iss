@@ -46,6 +46,7 @@
 ;     Miniconda under {app}\runtime so its 10 GB footprint stays together.
 
 #define MyAppName "Audiobook Studio"
+#define MyAppDirName "AudiobookStudio"
 #define MyAppVersion "1.0.0"
 #define MyAppPublisher "Audiobook Studio"
 
@@ -59,7 +60,10 @@ AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 ; Per-user install, no admin required -- matches the "JustMe" Miniconda
 ; install and keeps this usable on a locked-down work laptop.
-DefaultDirName={userpf}\{#MyAppName}
+; Miniconda's Windows installer rejects or misbehaves with some destinations
+; containing spaces. Keep the physical folder space-free while retaining the
+; normal spaced product name everywhere the user sees it.
+DefaultDirName={userpf}\{#MyAppDirName}
 DefaultGroupName={#MyAppName}
 PrivilegesRequired=lowest
 ; The embedded source is tiny, but Miniconda, the conda environment, pip cache,
@@ -228,6 +232,16 @@ begin
   InstallerPath := ExpandConstant('{tmp}\') + MinicondaFile;
   InstallDir := ExpandConstant('{app}\runtime\miniconda3');
 
+  // PrepareToInstall runs before [Files], so {app}\runtime does not exist yet.
+  // Create the parent explicitly rather than relying on Miniconda's NSIS
+  // wrapper to create multiple missing levels from its /D argument.
+  if not ForceDirectories(ExpandConstant('{app}\runtime')) then
+  begin
+    MsgBox('Could not create Audiobook Studio''s private runtime folder at:' + #13#10 +
+           ExpandConstant('{app}\runtime'), mbError, MB_OK);
+    exit;
+  end;
+
   WizardForm.PreparingLabel.Caption := 'Downloading Miniconda (first-time setup)...';
   try
     // BaseName is written under {tmp}; that is what InstallerPath points at.
@@ -267,7 +281,8 @@ begin
   end;
   if ResultCode <> 0 then
   begin
-    MsgBox('The Miniconda installer exited with error code ' + IntToStr(ResultCode) + '.',
+    MsgBox('The Miniconda installer exited with error code ' + IntToStr(ResultCode) +
+           '.' + #13#10#13#10 + 'Target folder:' + #13#10 + InstallDir,
            mbError, MB_OK);
     exit;
   end;
@@ -288,10 +303,11 @@ begin
 
   if not InstallMinicondaViaInno() then
   begin
-    Result := 'Miniconda could not be installed automatically, and Audiobook Studio ' +
-              'needs it. Install Miniconda yourself from ' +
-              'https://www.anaconda.com/docs/getting-started/miniconda/install ' +
-              '(the default options are fine), then run this installer again.';
+    Result := 'Audiobook Studio''s private Miniconda runtime could not be installed. ' +
+              'Setup stopped before copying the app files.' + #13#10#13#10 +
+              'Do not install Miniconda manually: this installer deliberately uses ' +
+              'its own isolated copy. Send the error-code screenshot to whoever gave ' +
+              'you this installer.';
     exit;
   end;
 

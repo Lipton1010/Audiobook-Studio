@@ -277,6 +277,12 @@ The one-click install layout was also changed in response to the fresh-account f
 
 Release status: the previous visible-run blocker is resolved for `bdd68e15...`, but that build is now superseded by these UX fixes. No release should be published until the revised canonical build is installed on the clean physical test account and the PDF button, single-folder runtime, console-free shortcut, install log and Finished page are observed there.
 
+### First centralized-runtime install failed before file copy (2026-07-27)
+
+(V, user executed) Canonical build `71607f1794e5fb231b8b1c4b73351c990a44d5ec705db2999e24d6f32f7f5005` failed in `PrepareToInstall`: the pinned Miniconda child exited with code 2, then the wizard stopped before copying app files. This did not happen in the previous physical run. The meaningful command-line delta was the destination: the successful build used `%USERPROFILE%\miniconda3`, while the centralized build used `{userpf}\Audiobook Studio\runtime\miniconda3`. The latter contains a space and its parent tree did not yet exist because `PrepareToInstall` precedes `[Files]`. Anaconda's current Windows documentation recommends a Miniconda directory with no spaces or special characters; do not treat this as an app/Python failure.
+
+Fix: the displayed product name remains "Audiobook Studio", but `DefaultDirName` is now the space-free `{userpf}\AudiobookStudio`; `InstallMinicondaViaInno` explicitly creates `{app}\runtime` before launching the child; and the error path now prints the attempted target. The secondary wizard message no longer tells the user to install Miniconda manually, advice that could never work because the centralized one-click installer deliberately ignores machine-wide conda. This is reasoned from the executed regression plus official path guidance until the replacement build runs on the clean physical account.
+
 ## Portable configuration
 
 app/config.py resolves every machine-specific value as env var > config.json > auto-detection > built-in default, so the app runs on someone else's Windows box without editing source. Defaults are relative to the repo root, so a clone anywhere works. app/config.example.json is committed; app/config.json is gitignored. CFG.warnings() prints actionable startup warnings (missing chatterbox python, missing voice clip, missing ffmpeg, no library folders).

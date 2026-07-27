@@ -44,7 +44,7 @@ Get-FileHash .\Setup_AudiobookStudio.exe -Algorithm SHA256
 
 If the wizard warns that **ffmpeg** could not be installed, the install is still fine: the app opens, WAV narration works, and the job dialog has an **Install ffmpeg** button that fetches it in one click and then re-enables the m4b and mp3 options. Only m4b and mp3 need it.
 
-If the install fails or the wizard shows a warning box, everything it did is logged to `install_log.txt` in the install folder (usually `%LOCALAPPDATA%\Programs\Audiobook Studio`). Send that file. You can retry the environment build without reinstalling by running `setup.bat` from that same folder.
+If the Python environment build fails or the wizard shows a warning box, everything after Miniconda is logged to `install_log.txt` in the install folder (usually `%LOCALAPPDATA%\Programs\AudiobookStudio`). Send that file. A Miniconda failure happens before that log exists, so send the error-code screenshot instead. You can retry the environment build without reinstalling by running `setup.bat` from that same folder.
 
 The one-click folder layout is intentionally self-contained: `runtime/` holds private Miniconda, the Chatterbox environment, package caches, and model weights; `source_pdfs/` holds PDFs added through the UI; `app/jobs/`, `app/voices/`, and `audiobooks/` hold user data. Windows still keeps the normal Start Menu shortcut and uninstall registration in its own system-managed locations. A source checkout continues to use the developer's existing conda installation unless `--runtime-root` is supplied explicitly.
 
