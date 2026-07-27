@@ -121,6 +121,7 @@ Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 ; app\voices, audiobooks) is deliberately NOT listed.
 Type: files; Name: "{app}\install_log.txt"
 Type: files; Name: "{app}\install_warnings.txt"
+Type: files; Name: "{app}\miniconda_install_log.txt"
 Type: filesandordirs; Name: "{app}\runtime"
 Type: filesandordirs; Name: "{app}\tools"
 Type: filesandordirs; Name: "{app}\app\__pycache__"
@@ -137,6 +138,7 @@ Filename: "{app}\runtime\miniconda3\pythonw.exe"; Parameters: """{app}\app\launc
 [Code]
 var
   CondaPythonPath: string;
+  MinicondaFailureLogPath: string;
   SetupPyOk: Boolean;
 
 function SetEnvironmentVariableW(lpName, lpValue: string): Boolean;
@@ -215,6 +217,24 @@ begin
   Result := True;
 end;
 
+procedure AppendMinicondaInstallerLog(const S: String);
+var
+  Lines: TArrayOfString;
+begin
+  SetArrayLength(Lines, 1);
+  Lines[0] := S;
+  if not SaveStringsToUTF8FileWithoutBOM(MinicondaFailureLogPath, Lines, True) then
+    Log('Could not append to Miniconda diagnostic log: ' + MinicondaFailureLogPath);
+end;
+
+procedure OnMinicondaInstallerOutput(const S: String; const Error, FirstLine: Boolean);
+begin
+  if Error then
+    AppendMinicondaInstallerLog('[output capture error] ' + S)
+  else
+    AppendMinicondaInstallerLog(S);
+end;
+
 // Downloads and silently runs the official Miniconda installer using Inno's
 // built-in downloader (no Python needed). Same silent flags as
 // install/bootstrap_conda.py, kept in sync deliberately.
@@ -230,6 +250,8 @@ function InstallMinicondaViaInno(): Boolean;
 var
   InstallerPath: string;
   InstallDir: string;
+  InstallLogPath: string;
+  Params: string;
   ResultCode: Integer;
 begin
   Result := False;
@@ -276,20 +298,58 @@ begin
   WizardForm.PreparingLabel.Caption := 'Installing Miniconda (this can take a few minutes)...';
   // /D must be LAST and must not be quoted, per Anaconda's own silent-install
   // docs. Do not add arguments after it.
-  if not Exec(InstallerPath,
-      '/InstallationType=JustMe /RegisterPython=0 /S /D=' + InstallDir,
-      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-  begin
-    MsgBox('The Miniconda installer failed to launch.', mbError, MB_OK);
+  Params := '/InstallationType=JustMe /RegisterPython=0 /S /D=' + InstallDir;
+  MinicondaFailureLogPath := ExpandConstant('{userpf}\AudiobookStudio_Miniconda_Install.log');
+  DeleteFile(MinicondaFailureLogPath);
+  AppendMinicondaInstallerLog('Audiobook Studio Miniconda child-process log');
+  AppendMinicondaInstallerLog('Executable: ' + InstallerPath);
+  AppendMinicondaInstallerLog('Working directory: ' + ExpandConstant('{userpf}'));
+  AppendMinicondaInstallerLog('Arguments: ' + Params);
+
+  // Empty WorkingDir made Inno use the downloaded executable's private {tmp}
+  // directory, unlike both successful physical command-line runs. Give the
+  // child the stable, user-writable {userpf} directory explicitly.
+  // ExecAndLogOutput also supplies real stdout/stderr handles; constructor's
+  // silent NSIS installer prints its transient .step.log there and then deletes
+  // that file. Persist
+  // every line so another child failure cannot collapse to an opaque code 2.
+  try
+    if not ExecAndLogOutput(InstallerPath, Params,
+        ExpandConstant('{userpf}'), SW_SHOWNORMAL, ewWaitUntilTerminated,
+        ResultCode, @OnMinicondaInstallerOutput) then
+    begin
+      AppendMinicondaInstallerLog('Failed to launch: ' + SysErrorMessage(ResultCode));
+      MsgBox('The Miniconda installer failed to launch.' + #13#10#13#10 +
+             'Diagnostic log:' + #13#10 + MinicondaFailureLogPath,
+             mbError, MB_OK);
+      exit;
+    end;
+  except
+    AppendMinicondaInstallerLog('Output-capture exception: ' + GetExceptionMessage);
+    MsgBox('The Miniconda installer could not be launched with output capture:' + #13#10#13#10 +
+           GetExceptionMessage + #13#10#13#10 + 'Diagnostic log:' + #13#10 +
+           MinicondaFailureLogPath, mbError, MB_OK);
     exit;
   end;
+  AppendMinicondaInstallerLog('Exit code: ' + IntToStr(ResultCode));
+
   if ResultCode <> 0 then
   begin
     MsgBox('The Miniconda installer exited with error code ' + IntToStr(ResultCode) +
-           '.' + #13#10#13#10 + 'Target folder:' + #13#10 + InstallDir,
+           '.' + #13#10#13#10 + 'Target folder:' + #13#10 + InstallDir + #13#10#13#10 +
+           'Diagnostic log:' + #13#10 + MinicondaFailureLogPath,
            mbError, MB_OK);
     exit;
   end;
+
+  // On success keep the same evidence inside the application tree. On failure
+  // the copy beside {app} under the user's Programs directory survives Inno
+  // rolling back {app}.
+  InstallLogPath := ExpandConstant('{app}\miniconda_install_log.txt');
+  if FileExists(InstallLogPath) then
+    DeleteFile(InstallLogPath);
+  if not RenameFile(MinicondaFailureLogPath, InstallLogPath) then
+    Log('Could not move Miniconda diagnostic log into the application folder.');
   Result := True;
 end;
 
