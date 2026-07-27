@@ -39,11 +39,17 @@ Output/
 # Written by setup.py / the one-click installer on the target machine.
 install_log.txt
 install_warnings.txt
+# Written by app/launcher.py when the server fails to start. Under the
+# installer there is no console, so this is the only debugging channel.
+launcher_log.txt
 
 # Scratch working notes (audit briefs, handoffs). CLAUDE.md is the authoritative
 # running log and already carries everything durable from these; keeping the raw
-# handoffs too would just be a second copy to go stale and contradict it.
+# handoffs too would just be a second copy to go stale and contradict it. These
+# got committed and pushed once already before this rule existed; keep the
+# pattern broad so the next one does not repeat it.
 AUDIT_*.md
+HANDOFF_*.md
 
 # Local Claude Code session state and settings, machine-specific.
 .claude/

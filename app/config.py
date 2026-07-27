@@ -20,6 +20,7 @@ config.json is gitignored; only config.example.json is committed.
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -175,15 +176,11 @@ class Config:
                 f"default voice sample not found at {self.reference_wav}. "
                 f"Upload a voice in the UI, or set reference_wav in config.json."
             )
-        bundled_ffmpeg = self.base_dir / "tools" / "ffmpeg.exe"
-        if (
-            shutil.which("ffmpeg") is None
-            and not bundled_ffmpeg.exists()
-            and not Path(r"C:\ProgramData\chocolatey\bin\ffmpeg.exe").exists()
-        ):
+        if self.ffmpeg_path() is None:
             out.append(
-                "ffmpeg not found on PATH; m4b/mp3 output will fail (wav still works). "
-                "Install ffmpeg and reopen the launcher."
+                "ffmpeg not found; m4b/mp3 output is unavailable (wav still works). "
+                "Use the 'Install ffmpeg' button in the app, or install it yourself "
+                "and restart."
             )
         existing_roots = [r for r in self.library_roots if r.exists()]
         if not existing_roots:
@@ -193,6 +190,42 @@ class Config:
                 + " (or set library_roots in config.json)."
             )
         return out
+
+    def ffmpeg_path(self, refresh=False):
+        """Path to a WORKING ffmpeg, or None.
+
+        EXECUTES the binary instead of testing that a file exists. That
+        distinction is load-bearing: a failed auto-install used to leave a
+        broken ffmpeg.exe in tools\, and an existence check reported it as
+        available, so the problem only surfaced at the end of a narration when
+        the m4b encode failed.
+
+        Cached, because the UI asks on every poll and spawning ffmpeg each time
+        would be silly. Pass refresh=True after installing one."""
+        if refresh:
+            self._ffmpeg_cache = None
+        cached = getattr(self, "_ffmpeg_cache", None)
+        if cached is not None:
+            return cached[0]
+        candidates = [
+            shutil.which("ffmpeg"),
+            self.base_dir / "tools" / "ffmpeg.exe",
+            Path(r"C:\ProgramData\chocolatey\bin\ffmpeg.exe"),
+        ]
+        found = None
+        for cand in candidates:
+            if not cand or not Path(cand).exists():
+                continue
+            try:
+                r = subprocess.run([str(cand), "-version"], capture_output=True,
+                                   text=True, timeout=30)
+            except Exception:
+                continue
+            if r.returncode == 0:
+                found = str(cand)
+                break
+        self._ffmpeg_cache = (found,)
+        return found
 
     def summary(self):
         return {

@@ -13,7 +13,7 @@ Local PDF to audiobook pipeline for legally purchased books, personal use only. 
 - `samples/` — the validated standalone scripts the app grew out of (`path_a.py`, `stage_two.py`, `harvest_lazy_dm.py`, `chunk_and_narrate.py`, `narrate_tagged.py`) and the Ollama `Modelfile` for the tuned `glm-ocr-doc` model.
 - `CLAUDE.md` — standing rules and current validated state of the project.
 - `Start_Audiobook_Studio.bat` — one-click launcher; opens the app in its own window (falls back to your browser if that fails).
-- `install/AudiobookStudio.iss` — Inno Setup script that builds a single `Setup_AudiobookStudio.exe` (see Install below). Build it with `install\build_installer.bat`, which stages a clean copy of the repo with `git archive` first so only tracked files can be packaged.
+- `install/AudiobookStudio.iss` — Inno Setup script that builds a single `Setup_AudiobookStudio.exe` (see Install below). Build it with `install\build_installer.bat`, which stages a clean copy of the repo with `git archive` first so only tracked files can be packaged, then verifies the compiled installer against Inno's own `OutputManifestFile` and fails the build if any book, audio file, voice clip or local config got embedded. (Do not try to audit the .exe with 7-Zip; it cannot open an Inno-compiled installer.)
 
 Books (PDFs), audio, and generated jobs are gitignored; only code and docs are tracked.
 
@@ -32,7 +32,13 @@ You provide these; the installer sets up everything else, including Miniconda an
 
 ## Install
 
-**Easiest: `Setup_AudiobookStudio.exe`.** One installer, no terminal. It silently installs Miniconda and ffmpeg if you don't already have them, builds the app's Python environment, and pre-downloads the ~3 GB of TTS model weights so the first narration doesn't have to. Double-click it, click through the wizard, and it's done — a shortcut is added to your Start Menu (and Desktop, if you check that box). This installer is built from source with Inno Setup (see `install/AudiobookStudio.iss`) rather than distributed as a signed release, so Windows SmartScreen may warn that it's from an unknown publisher the first time; that's expected for an unsigned personal-project installer, not a sign anything is wrong.
+**Easiest: `Setup_AudiobookStudio.exe`.** One installer, no terminal. It silently installs Miniconda and ffmpeg if you don't already have them, builds the app's Python environment, and pre-downloads the ~3 GB of TTS model weights so the first narration doesn't have to. Double-click it, click through the wizard, and it's done — a shortcut is added to your Start Menu (and Desktop, if you check that box). This installer is built from source with Inno Setup (see `install/AudiobookStudio.iss`) rather than distributed as a signed release, so Windows SmartScreen will probably warn that it's from an unknown publisher the first time. That's expected for an unsigned personal-project installer, not a sign anything is wrong. If you see a blue **"Windows protected your PC"** box, click **More info**, then **Run anyway**. If you were sent a SHA-256 alongside the file, you can confirm it first by running this in PowerShell:
+
+```
+Get-FileHash .\Setup_AudiobookStudio.exe -Algorithm SHA256
+```
+
+If the wizard warns that **ffmpeg** could not be installed, the install is still fine: the app opens, WAV narration works, and the job dialog has an **Install ffmpeg** button that fetches it in one click and then re-enables the m4b and mp3 options. Only m4b and mp3 need it.
 
 If the install fails or the wizard shows a warning box, everything it did is logged to `install_log.txt` in the install folder (usually `%LOCALAPPDATA%\Programs\Audiobook Studio`). Send that file. You can retry the environment build without reinstalling by running `setup.bat` from that same folder.
 

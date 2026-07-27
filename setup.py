@@ -39,6 +39,7 @@ without it, the ~3 GB download happens silently on first narration instead,
 which is the single most common thing that makes a fresh install look broken.
 """
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -201,32 +202,50 @@ def check_prereqs(auto_conda=False, auto_ffmpeg=False):
     # Auto-install BEFORE reporting, so the user is not shown a scary "ffmpeg
     # not found" warning immediately followed by it being installed.
     def _find_ffmpeg():
-        if shutil.which("ffmpeg"):
-            return "ffmpeg on PATH"
-        if (REPO / "tools" / "ffmpeg.exe").exists():
-            return f"ffmpeg found ({REPO / 'tools' / 'ffmpeg.exe'})"
-        if Path(r"C:\ProgramData\chocolatey\bin\ffmpeg.exe").exists():
-            return "ffmpeg found (chocolatey)"
-        return None
+        """Delegate to bootstrap_ffmpeg so there is exactly ONE definition of
+        "ffmpeg is available", and so this EXECUTES the binary rather than
+        testing that a file exists.
+
+        The existence-only version had a hole: a failed fetch used to leave a
+        broken ffmpeg.exe in tools\, which this function then reported as
+        success, with no warning written. bootstrap_ffmpeg now stages the
+        binary under a candidate name and only promotes it after it runs, and
+        this check runs it again."""
+        try:
+            if str(INSTALL) not in sys.path:
+                sys.path.insert(0, str(INSTALL))
+            from bootstrap_ffmpeg import ffmpeg_already_available
+        except Exception:
+            return None
+        found_path = ffmpeg_already_available()
+        return f"ffmpeg found and runs ({found_path})" if found_path else None
 
     found = _find_ffmpeg()
     if not found and auto_ffmpeg:
-        auto_install_ffmpeg()
+        reported_ok = auto_install_ffmpeg()
         found = _find_ffmpeg()
+        if reported_ok and not found:
+            err("bootstrap_ffmpeg.py exited 0 but no runnable ffmpeg can be found. "
+                "Treating ffmpeg as missing.")
     if found:
         ok(found)
     else:
-        # The previous version discarded auto_install_ffmpeg()'s return value
-        # entirely, so a failed fetch was invisible. It is now reported and
-        # surfaced to the user, but deliberately does NOT fail the install:
-        # WAV output still works, and the app repeats the warning at launch via
-        # CFG.warnings(). Judgement call -- the cost of being wrong is that a
-        # friend narrates a whole book and the m4b encode fails at the very end.
+        # Reported, and deliberately NOT fatal to the install. Two reasons, and
+        # the second is the one that actually decides it:
+        #   1. WAV output still works, so the install is reduced, not broken.
+        #   2. Install time is the wrong layer to enforce this anyway. ffmpeg can
+        #      be removed or moved AFTER setup runs, so a pass here would prove
+        #      nothing later. The real guard is at job creation: the app now
+        #      refuses to accept an m4b/mp3 job when ffmpeg is absent and offers
+        #      a one-click install, the same shape as the missing-voice fix.
+        # This warning still goes to install_warnings.txt and the installer's
+        # message box, so a friend is told at the earliest useful moment.
         ffmpeg_ok = False
-        user_warn("ffmpeg could not be installed. Without it, .m4b and .mp3 output "
-                  "WILL FAIL at the end of a narration (choose WAV output instead, "
-                  "or install ffmpeg from https://www.gyan.dev/ffmpeg/builds/ or with "
-                  "'choco install ffmpeg' and re-run setup).")
+        user_warn("ffmpeg is not installed, so .m4b and .mp3 output are unavailable "
+                  "for now. This is NOT fatal: the app will start, will offer WAV "
+                  "output, and has an 'Install ffmpeg' button that fixes this in one "
+                  "click. You can also run 'choco install ffmpeg' or download it from "
+                  "https://www.gyan.dev/ffmpeg/builds/.")
 
     if shutil.which("ollama"):
         ok("Ollama present (optional, for scanned-image books). NOTE: this installer never changes it.")
@@ -280,6 +299,60 @@ def setup_chatterbox_env(conda, assume_yes=False):
         err("chatterbox requirements install failed (see output above)")
         return False
     ok("chatterbox env dependencies installed")
+    return True
+
+
+# ---------- pinning the resolved interpreter ----------
+
+def pin_chatterbox_python(conda):
+    """Write the REAL chatterbox interpreter path into app/config.json.
+
+    setup.py creates and verifies the env BY NAME ("-n chatterbox"), while
+    app/config.py has to GUESS a path (<some conda root>\envs\chatterbox\
+    python.exe) and falls back to the original author's path when it cannot
+    find one. Those two can disagree: conda honours envs_dirs, so an env can be
+    created somewhere this guess will never look. The result is the worst kind
+    of failure, a setup that reports success followed by an app that cannot
+    narrate.
+
+    Asking the env itself for sys.executable removes the guess. config.json is
+    gitignored and is read at a higher precedence than auto-detection, so this
+    is exactly the hook it exists for."""
+    step("Recording the chatterbox interpreter path")
+    r = run([conda, "run", "-n", CHATTERBOX_ENV, "python", "-c",
+             "import sys; print(sys.executable)"],
+            capture_output=True, text=True)
+    exe = (r.stdout or "").strip().splitlines()[-1].strip() if r.returncode == 0 and (r.stdout or "").strip() else ""
+    if r.returncode != 0 or not exe or not Path(exe).exists():
+        err("could not resolve the chatterbox env's python. The app may not find "
+            "it either; set chatterbox_python in app/config.json by hand.")
+        return False
+
+    cfg_path = REPO / "app" / "config.json"
+    try:
+        data = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
+        if not isinstance(data, dict):
+            data = {}
+    except Exception:
+        # A corrupt config.json should not take the install down, but do not
+        # silently overwrite it either.
+        warn(f"{cfg_path} is not valid JSON; leaving it alone. "
+             f"Set chatterbox_python to {exe} by hand.")
+        return False
+
+    if data.get("chatterbox_python") == exe:
+        ok(f"chatterbox python already recorded: {exe}")
+        return True
+    data["chatterbox_python"] = exe
+    try:
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cfg_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, cfg_path)
+    except Exception as e:
+        err(f"could not write {cfg_path}: {e}")
+        return False
+    ok(f"chatterbox python recorded in app/config.json: {exe}")
     return True
 
 
@@ -359,6 +432,11 @@ def main():
     # output, not the install. The exit code means "the Python environments are
     # broken", which is the only condition where launching is pointless.
     all_ok = verify(conda) and base_ok and cb_ok
+    # Only meaningful once the env exists; a failure here is reported but does
+    # not by itself mean the environments are broken, so it does not flip
+    # all_ok. config.py's own detection still gets a chance.
+    if cb_ok:
+        pin_chatterbox_python(conda)
 
     write_warnings_file()
     hr()

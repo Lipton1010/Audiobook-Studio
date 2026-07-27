@@ -22,6 +22,7 @@ the extracted binary is run once with -version before this reports success.
 Safe to re-run.
 """
 import hashlib
+import os
 import shutil
 import subprocess
 import sys
@@ -32,6 +33,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 TOOLS_DIR = REPO / "tools"
 FFMPEG_EXE = TOOLS_DIR / "ffmpeg.exe"
+# The binary is extracted under this name and only renamed to ffmpeg.exe once it
+# has been executed successfully. See install_ffmpeg() for why that matters.
+FFMPEG_CANDIDATE = TOOLS_DIR / "_ffmpeg_candidate.exe"
 
 # gyan.dev publishes a stable "release essentials" zip alias at this URL,
 # alongside a matching .sha256 of the same name.
@@ -39,14 +43,28 @@ FFMPEG_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 FFMPEG_SHA_URL = FFMPEG_URL + ".sha256"
 
 
+def runs_ok(exe):
+    """Execute the binary rather than trusting that it exists.
+
+    Existence is not evidence of a working ffmpeg. A truncated download, a file
+    quarantined mid-write by antivirus, or a binary for the wrong architecture
+    all leave a plausible-looking ffmpeg.exe on disk. Each of those otherwise
+    surfaces at the END of a multi-hour narration, when the m4b encode fails."""
+    try:
+        r = subprocess.run([str(exe), "-version"], capture_output=True,
+                           text=True, timeout=60)
+    except Exception:
+        return False
+    return r.returncode == 0
+
+
 def ffmpeg_already_available():
-    if shutil.which("ffmpeg"):
-        return shutil.which("ffmpeg")
-    if FFMPEG_EXE.exists():
-        return str(FFMPEG_EXE)
-    choco_path = Path(r"C:\ProgramData\chocolatey\bin\ffmpeg.exe")
-    if choco_path.exists():
-        return str(choco_path)
+    """Path to a WORKING ffmpeg, or None. Order: PATH, our tools\ copy, choco."""
+    candidates = [shutil.which("ffmpeg"), FFMPEG_EXE,
+                  Path(r"C:\ProgramData\chocolatey\bin\ffmpeg.exe")]
+    for cand in candidates:
+        if cand and Path(cand).exists() and runs_ok(cand):
+            return str(cand)
     return None
 
 
@@ -90,6 +108,7 @@ def verify_hash(zip_path):
 
 def install_ffmpeg():
     TOOLS_DIR.mkdir(parents=True, exist_ok=True)
+    FFMPEG_CANDIDATE.unlink(missing_ok=True)
     zip_path = TOOLS_DIR / "_ffmpeg_download.zip"
     download(FFMPEG_URL, zip_path)
 
@@ -115,7 +134,7 @@ def install_ffmpeg():
             print("  [FAIL] Could not find ffmpeg.exe inside the downloaded archive.")
             print(f"         archive contained {len(names)} entries, e.g. {names[:3]}")
             return False
-        with z.open(exe_member) as src, open(FFMPEG_EXE, "wb") as dst:
+        with z.open(exe_member) as src, open(FFMPEG_CANDIDATE, "wb") as dst:
             shutil.copyfileobj(src, dst)
         if license_member:
             with z.open(license_member) as src, open(TOOLS_DIR / "FFMPEG_LICENSE.txt", "wb") as dst:
@@ -126,22 +145,40 @@ def install_ffmpeg():
 
     zip_path.unlink(missing_ok=True)
 
-    if not FFMPEG_EXE.exists():
+    if not FFMPEG_CANDIDATE.exists():
         print("  [FAIL] ffmpeg.exe was not extracted.")
         return False
 
-    # Actually run it. Extracting bytes that turn out to be a truncated
-    # download would otherwise only surface at the end of a multi-hour
-    # narration, when the m4b encode fails.
+    # Validate BEFORE the binary takes its final name.
+    #
+    # Extracting straight to tools\ffmpeg.exe and validating in place was a real
+    # bug: a failed check returned False but LEFT THE BROKEN BINARY ON DISK, and
+    # every later check tested existence only (setup.py's _find_ffmpeg, this
+    # module's own ffmpeg_already_available, config.warnings). A corrupt fetch
+    # therefore reported overall success, wrote no warning, and surfaced hours
+    # later as a failed m4b encode. The file only gets its real name once it has
+    # actually run.
     try:
-        r = subprocess.run([str(FFMPEG_EXE), "-version"], capture_output=True,
-                           text=True, timeout=60)
+        r = subprocess.run([str(FFMPEG_CANDIDATE), "-version"],
+                           capture_output=True, text=True, timeout=60)
     except Exception as e:
         print(f"  [FAIL] extracted ffmpeg.exe but could not run it: {e}")
+        FFMPEG_CANDIDATE.unlink(missing_ok=True)
         return False
     if r.returncode != 0:
         print(f"  [FAIL] extracted ffmpeg.exe exited {r.returncode} on -version")
+        FFMPEG_CANDIDATE.unlink(missing_ok=True)
         return False
+
+    # Atomic on Windows when both paths are on the same volume, so a crash here
+    # cannot leave a half-written ffmpeg.exe behind.
+    try:
+        os.replace(FFMPEG_CANDIDATE, FFMPEG_EXE)
+    except Exception as e:
+        print(f"  [FAIL] could not move the verified binary into place: {e}")
+        FFMPEG_CANDIDATE.unlink(missing_ok=True)
+        return False
+
     first = (r.stdout or "").splitlines()[:1]
     print(f"  [ OK ] {first[0] if first else 'ffmpeg runs'}")
     print(f"  [ OK ] ffmpeg.exe ready at {FFMPEG_EXE}")

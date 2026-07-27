@@ -12,10 +12,13 @@ installer's webview step failed) rather than dying with no way to use the
 app at all.
 """
 import atexit
+import json
 import socket
 import sys
 import threading
 import time
+import traceback
+import urllib.request
 import webbrowser
 from pathlib import Path
 
@@ -27,6 +30,31 @@ import server  # noqa: E402
 
 WINDOW_TITLE = "Audiobook Studio"
 ICON_PATH = APP_DIR / "icon.ico"
+# Under the installer there is no console to read, so anything worth debugging
+# has to land in a file the user can be asked for by name.
+LOG_PATH = APP_DIR.parent / "launcher_log.txt"
+
+_server_error = {"trace": None}
+
+
+def _log(msg):
+    print(msg)
+    try:
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + msg + "\n")
+    except Exception:
+        pass
+
+
+def _show_error(title, msg):
+    """Put a failure in front of the user instead of leaving them with a blank
+    window. Falls back to stdout where MessageBox is unavailable."""
+    _log(f"[launcher] {title}: {msg}")
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None, msg, title, 0x10)
+    except Exception:
+        print(f"\n*** {title} ***\n{msg}\n")
 
 
 def _kill_orphan_workers():
@@ -66,8 +94,33 @@ def _port_in_use(port):
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
+def _is_our_app(url, timeout=1.0):
+    """True only if AUDIOBOOK STUDIO is answering on this port.
+
+    A successful TCP connect proves something is listening, not that it is us.
+    Any unrelated dev server, printer utility or corporate agent can hold 8765,
+    and the old check accepted all of them: the window then opened onto a
+    stranger's page, or a blank one, with no explanation. Ask for an endpoint
+    only this app serves and check the shape of the reply."""
+    try:
+        with urllib.request.urlopen(url + "/api/jobs", timeout=timeout) as r:
+            body = json.loads(r.read().decode("utf-8", "replace"))
+        return isinstance(body, dict) and "jobs" in body
+    except Exception:
+        return False
+
+
 def _start_server_thread():
-    t = threading.Thread(target=server.main, name="audiobook-server", daemon=True)
+    def _run():
+        try:
+            server.main()
+        except Exception:
+            # Previously this died silently inside the thread and the launcher
+            # went on to open a URL that would never answer.
+            _server_error["trace"] = traceback.format_exc()
+            _log("[launcher] SERVER THREAD DIED:\n" + _server_error["trace"])
+
+    t = threading.Thread(target=_run, name="audiobook-server", daemon=True)
     t.start()
     return t
 
@@ -75,33 +128,51 @@ def _start_server_thread():
 def _wait_for_server(url, timeout=20.0):
     """Poll the server instead of a fixed sleep, so a slow machine (or a first
     run that's importing torch for the first time) doesn't race the window
-    opening before anything is listening."""
-    import urllib.request
+    opening before anything is listening. Gives up early if the server thread
+    has already crashed, rather than burning the full timeout."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        try:
-            urllib.request.urlopen(url, timeout=1)
+        if _server_error["trace"]:
+            return False
+        if _is_our_app(url):
             return True
-        except Exception:
-            time.sleep(0.25)
+        time.sleep(0.25)
     return False
 
 
 def main():
     url = f"http://127.0.0.1:{CFG.port}"
 
-    already_running = _port_in_use(CFG.port)
-    if already_running:
-        # Don't start a second server or reap the first one's workers; just
-        # surface the instance that's already there.
-        print(f"[launcher] Audiobook Studio is already running at {url}; "
-              "opening a window onto the existing instance.")
+    if _port_in_use(CFG.port):
+        if _is_our_app(url):
+            # Don't start a second server or reap the first one's workers; just
+            # surface the instance that's already there.
+            print(f"[launcher] Audiobook Studio is already running at {url}; "
+                  "opening a window onto the existing instance.")
+        else:
+            _show_error(
+                "Audiobook Studio could not start",
+                f"Another program is already using port {CFG.port} on this "
+                f"computer, so Audiobook Studio cannot start.\n\n"
+                f"Close whatever else is using it and try again, or pick a "
+                f"different port by setting \"port\" in app\\config.json.\n\n"
+                f"Details were written to:\n{LOG_PATH}")
+            return
     else:
         # server.main() prints these itself; don't double up.
         atexit.register(_kill_orphan_workers)
         _start_server_thread()
         if not _wait_for_server(url):
-            print(f"[launcher] Server did not come up within timeout; opening {url} anyway.")
+            detail = _server_error["trace"] or (
+                "The server did not respond within 20 seconds and did not "
+                "report an error.")
+            _show_error(
+                "Audiobook Studio could not start",
+                "The app's server did not start.\n\n"
+                "Please send this file to whoever set this up for you:\n"
+                f"{LOG_PATH}\n\n"
+                + detail.strip().splitlines()[-1][:300])
+            return
 
     try:
         import webview

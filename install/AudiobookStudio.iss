@@ -66,6 +66,13 @@ DefaultGroupName={#MyAppName}
 PrivilegesRequired=lowest
 OutputDir=..\Output
 OutputBaseFilename=Setup_AudiobookStudio
+; Emit the list of every file actually embedded in the .exe. This is the ONLY
+; reliable way to audit what shipped: 7-Zip cannot open an Inno-compiled
+; installer at all (it reports "Cannot open the file as archive"), so the
+; old advice to inspect the .exe with 7-Zip could never have worked.
+; build_installer.bat greps this manifest and refuses to hand over a build
+; that contains a book, an audio file, or the voice clip.
+OutputManifestFile=Setup_AudiobookStudio-manifest.txt
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -97,7 +104,7 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 ; it would have packaged every purchased book under source_pdfs\ and samples\
 ; plus the voice clip that CLAUDE.md says must never be distributed.
 Source: "..\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; \
-    Excludes: "*.pdf,*.wav,*.mp3,*.flac,*.ogg,*.m4a,*.m4b,*.aac,*.jpg,*.jpeg,*.pyc,__pycache__,.git,.claude,\app\jobs\*,\app\voices\*,\app\config.json,\app\*.log,\audiobooks\*,\ab_samples\*,\source_pdfs\*,\samples\Voice_Sample\*,\tools\*,\Output\*,\install\*.exe,\install_log.txt,\install_warnings.txt,\AUDIT_HANDOFF.md,\AUDIT_TRIAGE_HANDOFF.md"
+    Excludes: "*.pdf,*.wav,*.mp3,*.flac,*.ogg,*.m4a,*.m4b,*.aac,*.jpg,*.jpeg,*.pyc,__pycache__,.git,.claude,\app\jobs\*,\app\voices\*,\app\config.json,\app\*.log,\audiobooks\*,\ab_samples\*,\source_pdfs\*,\samples\Voice_Sample\*,\tools\*,\Output\*,\install\*.exe,\install_log.txt,\install_warnings.txt,\launcher_log.txt,\AUDIT_HANDOFF.md,\AUDIT_TRIAGE_HANDOFF.md"
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\app\icon.ico"
@@ -216,8 +223,12 @@ begin
     // download and a corrupted or substituted one.
     DownloadTemporaryFile(MinicondaUrl, MinicondaFile, MinicondaSha256, @OnMinicondaDownloadProgress);
   except
-    MsgBox('Could not download Miniconda:' + #13#10#13#10 + GetExceptionMessage +
-           #13#10#13#10 + 'Check your internet connection and run this installer again. ' +
+    // NOTE: no continuation line may start with '#'. ISPP treats a line whose
+    // first non-blank character is '#' as a preprocessor directive, so a wrapped
+    // '#13#10' at the start of a line aborts the compile with 'Unknown
+    // preprocessor directive'. Keep the newline constants mid-line.
+    MsgBox('Could not download Miniconda:' + #13#10#13#10 + GetExceptionMessage + #13#10#13#10 +
+           'Check your internet connection and run this installer again. ' +
            'If the message mentions a hash or checksum, the pinned Miniconda build ' +
            'has been replaced upstream and this installer needs rebuilding.',
            mbError, MB_OK);

@@ -117,6 +117,13 @@
     <option value="mp3">mp3 — universal, plays anywhere</option>
     <option value="wav">wav — lossless master, large</option>
   </select>
+  <div id="ffmpeg-warn" style="display:none; margin-top:8px; padding:10px 12px; border:1px solid var(--line); border-radius:7px; background:var(--panel2); font-size:13px; line-height:1.5">
+    <div id="ffmpeg-warn-text"></div>
+    <div style="margin-top:8px; display:flex; align-items:center; gap:10px">
+      <button class="primary" id="ffmpeg-install-btn" onclick="installFfmpeg()">Install ffmpeg</button>
+      <span id="ffmpeg-warn-status" style="color:var(--dim)"></span>
+    </div>
+  </div>
   <label>Page range</label>
   <div class="pagerow">
     <span>from <input type="number" id="f-from" min="1"></span>
@@ -219,6 +226,77 @@ async function loadVoices() {
   }
 }
 
+// ---- ffmpeg availability ----
+// m4b and mp3 both need ffmpeg. Rather than let someone pick m4b, wait hours
+// for a narration and then have the encode fail, the options are disabled up
+// front and a one-click install is offered. The server enforces the same rule
+// at job creation, so this is convenience, not the actual guard.
+let ffmpeg = {available: true, installing: false, error: null};
+let ffmpegPoll = null;
+
+function renderFfmpeg() {
+  const sel = document.getElementById('f-format');
+  const warn = document.getElementById('ffmpeg-warn');
+  const text = document.getElementById('ffmpeg-warn-text');
+  const status = document.getElementById('ffmpeg-warn-status');
+  const btnEl = document.getElementById('ffmpeg-install-btn');
+  const needs = ffmpeg.formats_needing_ffmpeg || ['m4b', 'mp3'];
+
+  for (const opt of sel.options) {
+    const blocked = !ffmpeg.available && needs.includes(opt.value);
+    opt.disabled = blocked;
+    const base = opt.textContent.replace(/ \u2014 needs ffmpeg$/, '');
+    opt.textContent = blocked ? base + ' \u2014 needs ffmpeg' : base;
+  }
+  // Never leave a disabled option selected.
+  if (sel.selectedOptions.length && sel.selectedOptions[0].disabled) sel.value = 'wav';
+
+  if (ffmpeg.available) { warn.style.display = 'none'; return; }
+  warn.style.display = '';
+  text.innerHTML = 'Audiobook files (<b>m4b</b>) and <b>mp3</b> need a free helper program called '
+    + '<b>ffmpeg</b>, which is not installed yet. <b>wav</b> still works without it. '
+    + 'Installing takes a minute or two and needs an internet connection.';
+  btnEl.disabled = ffmpeg.installing;
+  btnEl.textContent = ffmpeg.installing ? 'Installing...' : 'Install ffmpeg';
+  status.textContent = ffmpeg.installing
+    ? 'Downloading about 110 MB, please wait. You can keep using the app.'
+    : (ffmpeg.error ? '' : '');
+  if (ffmpeg.error) {
+    status.textContent = '';
+    text.innerHTML += '<div style="margin-top:8px; color:var(--bad, #f88); white-space:pre-wrap">'
+      + String(ffmpeg.error).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))
+      + '</div>';
+  }
+}
+
+async function loadFfmpeg() {
+  try {
+    const r = await fetch('/api/ffmpeg');
+    ffmpeg = await r.json();
+  } catch (e) { return; }
+  renderFfmpeg();
+  // Poll only while an install is actually running.
+  if (ffmpeg.installing && !ffmpegPoll) {
+    ffmpegPoll = setInterval(loadFfmpeg, 2000);
+  } else if (!ffmpeg.installing && ffmpegPoll) {
+    clearInterval(ffmpegPoll); ffmpegPoll = null;
+  }
+}
+
+async function installFfmpeg() {
+  ffmpeg.installing = true; ffmpeg.error = null;
+  renderFfmpeg();
+  try {
+    const r = await fetch('/api/ffmpeg/install', {method: 'POST'});
+    ffmpeg = await r.json();
+  } catch (e) {
+    ffmpeg.installing = false;
+    ffmpeg.error = 'Could not reach the app server to start the install.';
+  }
+  renderFfmpeg();
+  if (!ffmpegPoll) ffmpegPoll = setInterval(loadFfmpeg, 2000);
+}
+
 async function uploadVoice() {
   const inp = document.getElementById('voice-file');
   const err = document.getElementById('voice-err');
@@ -248,7 +326,12 @@ async function createJob() {
   const r = await fetch('/api/jobs', {method: 'POST',
     headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
   if (!r.ok) {
-    document.getElementById('dlg-err').textContent = 'Failed: ' + (await r.text());
+    // The server sends {"error": "..."} as JSON; showing the raw body made a
+    // clear message look like a crash.
+    let msg;
+    try { const j = await r.json(); msg = j.error || JSON.stringify(j); if (j.ffmpeg_missing) loadFfmpeg(); }
+    catch (e) { msg = await r.text(); }
+    document.getElementById('dlg-err').textContent = msg;
     return;
   }
   dlg.close();
@@ -368,6 +451,7 @@ function btn(label, cls, fn) {
 
 loadLibrary();
 loadVoices();
+loadFfmpeg();
 refreshJobs();
 setInterval(refreshJobs, 2500);
 </script>

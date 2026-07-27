@@ -10,12 +10,18 @@ if defined AUDIOBOOK_BASE_PY (
     if exist "%AUDIOBOOK_BASE_PY%" set "BOOTPY=%AUDIOBOOK_BASE_PY%"
 )
 if not defined BOOTPY (
+    rem This list must stay in sync with Start_Audiobook_Studio.bat, setup.py's
+    rem find_conda(), and the Pascal search in install\AudiobookStudio.iss. When
+    rem they disagree, the installer can succeed against one conda while the
+    rem launcher looks for another and reports a broken install.
     for %%D in (
         "%USERPROFILE%\miniconda3"
         "%USERPROFILE%\anaconda3"
         "%USERPROFILE%\miniforge3"
         "C:\ProgramData\miniconda3"
         "C:\ProgramData\anaconda3"
+        "C:\miniconda3"
+        "C:\anaconda3"
     ) do (
         if not defined BOOTPY if exist "%%~D\python.exe" set "BOOTPY=%%~D\python.exe"
     )

@@ -106,12 +106,23 @@ def install_miniconda(install_dir=DEFAULT_INSTALL_DIR):
     print("  [ OK ] installer checksum matches Anaconda's published SHA-256")
 
     print(f"  Installing Miniconda to {install_dir} (silent, current user only)...")
-    # /D must be unquoted and must be the final argument per Anaconda's own
-    # NSIS-installer documentation; do not add anything after it.
-    cmd = (
-        f'"{tmp}" /InstallationType=JustMe /RegisterPython=0 /S /D={install_dir}'
-    )
-    r = subprocess.run(cmd, shell=True)
+    # shell=False and an argument LIST. With shell=True this went through cmd,
+    # which splits on its own metacharacters: an install path containing '&'
+    # (legal in a Windows username, e.g. "C:\Users\A&B\miniconda3") was being
+    # torn in half before the installer ever saw it. The list form hands the
+    # arguments to CreateProcess unmodified.
+    #
+    # /D must still be LAST and must still be unquoted, per Anaconda's own
+    # silent-install docs; that is a property of the NSIS installer, not of how
+    # the process is spawned.
+    cmd = [
+        str(tmp),
+        "/InstallationType=JustMe",
+        "/RegisterPython=0",
+        "/S",
+        f"/D={install_dir}",
+    ]
+    r = subprocess.run(cmd)
     tmp.unlink(missing_ok=True)
     if r.returncode != 0:
         print(f"  [FAIL] Miniconda installer exited with code {r.returncode}")

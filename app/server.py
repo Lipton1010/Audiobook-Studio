@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -113,6 +114,92 @@ def missing_voice_error(name):
                 f"set reference_wav in app/config.json.")
     return (f"Voice '{name}' not found, and the default clip at {vp} is missing too. "
             f"Upload a voice in the Voices panel.")
+
+
+# ---------- ffmpeg ----------
+#
+# Same shape as the missing-voice guard above, and for the same reason. m4b is
+# the default output format, but m4b and mp3 both need ffmpeg. Discovering that
+# ffmpeg is missing inside the worker means discovering it AFTER a multi-hour
+# narration, which is the most expensive possible moment.
+#
+# Note this is deliberately NOT enforced at install time. ffmpeg can be removed
+# or moved after setup runs, so a check there proves nothing here.
+
+FFMPEG_FORMATS = ("m4b", "mp3")
+_ffmpeg_install = {"running": False, "error": None, "log": ""}
+_ffmpeg_lock = threading.Lock()
+
+
+def ffmpeg_status(refresh=False):
+    path = CFG.ffmpeg_path(refresh=refresh)
+    with _ffmpeg_lock:
+        return {
+            "available": path is not None,
+            "path": path,
+            "installing": _ffmpeg_install["running"],
+            "error": _ffmpeg_install["error"],
+            "formats_needing_ffmpeg": list(FFMPEG_FORMATS),
+        }
+
+
+def missing_ffmpeg_error(fmt):
+    """None if `fmt` can actually be produced on this machine, else a message."""
+    if fmt not in FFMPEG_FORMATS:
+        return None
+    if CFG.ffmpeg_path() is not None:
+        return None
+    return (f"{fmt} output needs ffmpeg, which is not installed on this machine. "
+            f"Click 'Install ffmpeg' in the app to fix this automatically, or "
+            f"choose WAV output instead.")
+
+
+def _run_ffmpeg_install():
+    """Fetch ffmpeg in the background. ~110 MB, so this cannot be done inside
+    the POST: the UI polls /api/ffmpeg for the result instead."""
+    # APP_DIR is Path(__file__).parent, deliberately NOT resolved elsewhere in
+    # this file; resolve here so .parent is the repo root even when the server
+    # was started via a relative path.
+    script = Path(__file__).resolve().parent.parent / "install" / "bootstrap_ffmpeg.py"
+    try:
+        if not script.exists():
+            raise RuntimeError(f"{script} is missing from this install")
+        # bootstrap_ffmpeg is stdlib-only, so the base env python running this
+        # server can execute it directly; no conda env needed.
+        r = subprocess.run([sys.executable, str(script)], capture_output=True,
+                           text=True, timeout=1800)
+        log = (r.stdout or "") + (r.stderr or "")
+        # Trust the re-check, not the exit code: CFG.ffmpeg_path actually runs
+        # the binary.
+        available = CFG.ffmpeg_path(refresh=True) is not None
+        with _ffmpeg_lock:
+            _ffmpeg_install["log"] = log[-4000:]
+            _ffmpeg_install["error"] = None if available else (
+                "The download finished but ffmpeg still does not run. This is "
+                "usually antivirus quarantining the file, or no internet access. "
+                "You can still narrate to WAV. Details:\n" + log[-1500:])
+    except Exception as e:
+        CFG.ffmpeg_path(refresh=True)
+        with _ffmpeg_lock:
+            _ffmpeg_install["error"] = (
+                f"Could not install ffmpeg automatically: {e}. You can still "
+                f"narrate to WAV, or install ffmpeg yourself from "
+                f"https://www.gyan.dev/ffmpeg/builds/ and restart the app.")
+    finally:
+        with _ffmpeg_lock:
+            _ffmpeg_install["running"] = False
+
+
+def start_ffmpeg_install():
+    with _ffmpeg_lock:
+        if _ffmpeg_install["running"]:
+            return False
+        _ffmpeg_install["running"] = True
+        _ffmpeg_install["error"] = None
+        _ffmpeg_install["log"] = ""
+    threading.Thread(target=_run_ffmpeg_install, name="ffmpeg-install",
+                     daemon=True).start()
+    return True
 
 
 def voice_wav_path(name):
@@ -771,6 +858,8 @@ class Handler(BaseHTTPRequestHandler):
                 _json_response(self, {"items": scan_library()})
             elif path == "/api/voices":
                 _json_response(self, {"voices": list_voices()})
+            elif path == "/api/ffmpeg":
+                _json_response(self, ffmpeg_status())
             elif path == "/api/jobs":
                 _json_response(self, {"jobs": list_jobs()})
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+", path):
@@ -805,7 +894,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         try:
-            if path == "/api/voices":
+            if path == "/api/ffmpeg/install":
+                started = start_ffmpeg_install()
+                st = ffmpeg_status()
+                st["started"] = started
+                _json_response(self, st)
+            elif path == "/api/voices":
                 from urllib.parse import parse_qs
 
                 q = parse_qs(urlparse(self.path).query)
@@ -836,6 +930,13 @@ class Handler(BaseHTTPRequestHandler):
                 verr = missing_voice_error(body.get("voice") or DEFAULT_VOICE)
                 if verr:
                     _json_response(self, {"error": verr}, 400)
+                    return
+                # Same preflight for ffmpeg: refuse an m4b/mp3 job now rather
+                # than failing the encode after the narration has finished.
+                req_fmt = body.get("format") if body.get("format") in ("m4b", "mp3", "wav") else "m4b"
+                ferr = missing_ffmpeg_error(req_fmt)
+                if ferr:
+                    _json_response(self, {"error": ferr, "ffmpeg_missing": True}, 400)
                     return
                 job_id = str(uuid.uuid4())
                 job_dir = JOBS_DIR / job_id
