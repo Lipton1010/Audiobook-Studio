@@ -64,6 +64,11 @@ AppPublisher={#MyAppPublisher}
 ; containing spaces. Keep the physical folder space-free while retaining the
 ; normal spaced product name everywhere the user sees it.
 DefaultDirName={userpf}\{#MyAppDirName}
+; Inno normally remembers the previous directory for the same AppId and lets it
+; override DefaultDirName. Pre-release builds used "Audiobook Studio" with a
+; space, so a retry could silently return to that obsolete path. Keep this
+; unpublished 1.0 installer on the current space-free application root.
+UsePreviousAppDir=no
 DefaultGroupName={#MyAppName}
 PrivilegesRequired=lowest
 ; The embedded source is tiny, but Miniconda, the conda environment, pip cache,
@@ -257,6 +262,50 @@ begin
   Result := False;
   InstallerPath := ExpandConstant('{tmp}\') + MinicondaFile;
   InstallDir := ExpandConstant('{app}\runtime\miniconda3');
+  Params := '/InstallationType=JustMe /RegisterPython=0 /S /D=' + InstallDir;
+  MinicondaFailureLogPath := ExpandConstant('{userpf}\AudiobookStudio_Miniconda_Install.log');
+  DeleteFile(MinicondaFailureLogPath);
+  AppendMinicondaInstallerLog('Audiobook Studio Miniconda child-process log');
+  AppendMinicondaInstallerLog('Executable: ' + InstallerPath);
+  AppendMinicondaInstallerLog('Resolved application directory: ' + ExpandConstant('{app}'));
+  AppendMinicondaInstallerLog('Working directory: ' + ExpandConstant('{userpf}'));
+  AppendMinicondaInstallerLog('Arguments: ' + Params);
+
+  // This function is called only when the private python.exe was not found.
+  // Miniconda refuses to install into any non-empty target, so remove an
+  // incomplete app-owned target left by an interrupted or rolled-back attempt.
+  // A complete private runtime is never removed here, and user data lives
+  // outside runtime\miniconda3.
+  if FileExists(InstallDir + '\python.exe') then
+  begin
+    AppendMinicondaInstallerLog('A complete private Miniconda appeared before installation; reusing it.');
+    Result := True;
+    exit;
+  end;
+  if DirExists(InstallDir) then
+  begin
+    AppendMinicondaInstallerLog('Removing incomplete private Miniconda target before retry: ' + InstallDir);
+    if not DelTree(InstallDir, True, True, True) then
+    begin
+      AppendMinicondaInstallerLog('Could not remove the incomplete private Miniconda target.');
+      MsgBox('Setup found an incomplete private Miniconda installation but could not remove it:' + #13#10#13#10 +
+             InstallDir + #13#10#13#10 +
+             'Close programs using that folder and run Setup again.' + #13#10#13#10 +
+             'Diagnostic log:' + #13#10 + MinicondaFailureLogPath,
+             mbError, MB_OK);
+      exit;
+    end;
+    if DirExists(InstallDir) then
+    begin
+      AppendMinicondaInstallerLog('The incomplete private Miniconda target still exists after cleanup.');
+      MsgBox('Setup could not completely remove an earlier partial Miniconda installation:' + #13#10#13#10 +
+             InstallDir + #13#10#13#10 +
+             'Diagnostic log:' + #13#10 + MinicondaFailureLogPath,
+             mbError, MB_OK);
+      exit;
+    end;
+    AppendMinicondaInstallerLog('Incomplete private Miniconda target removed successfully.');
+  end;
 
   // PrepareToInstall runs before [Files], so {app}\runtime does not exist yet.
   // Create the parent explicitly rather than relying on Miniconda's NSIS
@@ -298,14 +347,6 @@ begin
   WizardForm.PreparingLabel.Caption := 'Installing Miniconda (this can take a few minutes)...';
   // /D must be LAST and must not be quoted, per Anaconda's own silent-install
   // docs. Do not add arguments after it.
-  Params := '/InstallationType=JustMe /RegisterPython=0 /S /D=' + InstallDir;
-  MinicondaFailureLogPath := ExpandConstant('{userpf}\AudiobookStudio_Miniconda_Install.log');
-  DeleteFile(MinicondaFailureLogPath);
-  AppendMinicondaInstallerLog('Audiobook Studio Miniconda child-process log');
-  AppendMinicondaInstallerLog('Executable: ' + InstallerPath);
-  AppendMinicondaInstallerLog('Working directory: ' + ExpandConstant('{userpf}'));
-  AppendMinicondaInstallerLog('Arguments: ' + Params);
-
   // Empty WorkingDir made Inno use the downloaded executable's private {tmp}
   // directory, unlike both successful physical command-line runs. Give the
   // child the stable, user-writable {userpf} directory explicitly.
