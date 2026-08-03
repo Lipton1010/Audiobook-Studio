@@ -29,6 +29,11 @@
   button { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
            border-radius: 7px; padding: 7px 14px; font-size: 14px; cursor: pointer; }
   button:hover { border-color: var(--accent); }
+  a.button-link { display: inline-flex; align-items: center; background: var(--panel2);
+           color: var(--text); border: 1px solid var(--line); border-radius: 7px;
+           padding: 7px 14px; font-size: 14px; line-height: normal;
+           text-decoration: none; cursor: pointer; }
+  a.button-link:hover { border-color: var(--accent); }
   button.primary { background: var(--accent); border-color: var(--accent); color: #1a1408; font-weight: 600; }
   button:disabled { cursor: wait; opacity: .65; }
   button.danger:hover { border-color: var(--bad); color: var(--bad); }
@@ -90,6 +95,7 @@
       <button class="primary" id="pdf-upload-btn" onclick="uploadPdf()">Add PDF to library</button>
     </div>
     <div class="meta" style="margin-top:10px">Choose a PDF you legally own. Audiobook Studio copies it into its managed library and checks that it can be opened.</div>
+    <div class="meta">After a job completes, its imported PDF moves to the Processed PDFs folder and leaves this active library.</div>
     <div class="err" id="pdf-err"></div>
   </div>
   <div id="library" class="grid"></div>
@@ -141,7 +147,7 @@
   <div class="err" id="dlg-err"></div>
   <div class="dlg-actions">
     <button onclick="dlg.close()">Cancel</button>
-    <button class="primary" onclick="createJob()">Start job</button>
+    <button class="primary" onclick="createJob()">Create Audiobook</button>
   </div>
 </dialog>
 
@@ -162,6 +168,20 @@ function fmtEta(s) {
   if (h) return `about ${h}h ${m}m left`;
   if (m) return `about ${m}m left`;
   return 'under a minute left';
+}
+function fmtDuration(s) {
+  s = Math.max(0, Math.round(Number(s) || 0));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  if (h) return `${h}h ${m}m`;
+  if (m) return `${m}m`;
+  return `${s}s`;
+}
+
+function bookMeta(b) {
+  const pageText = b.pages == null ? '? pages' : `${b.pages} ${b.pages === 1 ? 'page' : 'pages'}`;
+  const start = Number(b.suggested_page_from) || 1;
+  const startText = start > 1 ? ` · recommended start: page ${start}` : '';
+  return `${pageText} · suggested: Path ${b.suggested_path}${startText}`;
 }
 
 async function loadLibrary() {
@@ -195,12 +215,11 @@ async function loadLibrary() {
     name.textContent = b.name;
     const meta = document.createElement('div');
     meta.className = 'meta';
-    const pageText = b.pages == null ? '? pages' : `${b.pages} ${b.pages === 1 ? 'page' : 'pages'}`;
-    meta.textContent = `${pageText} · suggested: Path ${b.suggested_path}`;
+    meta.textContent = bookMeta(b);
     card.append(name, meta);
     const btn = document.createElement('button');
     btn.className = 'primary';
-    btn.textContent = 'New audiobook';
+    btn.textContent = 'Create Audiobook';
     btn.onclick = () => openDlg(b);
     card.appendChild(btn);
     el.appendChild(card);
@@ -210,11 +229,13 @@ async function loadLibrary() {
 function openDlg(book) {
   dlgBook = book;
   document.getElementById('dlg-title').textContent = book.name;
-  const pageText = `${book.pages} ${book.pages === 1 ? 'page' : 'pages'}`;
-  document.getElementById('dlg-meta').textContent = `${pageText} · suggested: Path ${book.suggested_path}`;
+  const reason = book.suggested_start_reason ? ` · ${book.suggested_start_reason}` : '';
+  document.getElementById('dlg-meta').textContent = `${bookMeta(book)}${reason}`;
   document.getElementById('f-title').value = book.name;
-  document.getElementById('f-from').value = 1;
+  document.getElementById('f-from').value = Number(book.suggested_page_from) || 1;
+  document.getElementById('f-from').max = book.pages;
   document.getElementById('f-to').value = book.pages;
+  document.getElementById('f-to').max = book.pages;
   document.getElementById('dlg-err').textContent = '';
   document.querySelector(`input[name=path][value=${book.suggested_path}]`).checked = true;
   markPath();
@@ -402,26 +423,104 @@ async function createJob() {
 }
 
 const openLogs = new Set();
+const jobNodes = new Map();
+let knownJobStatuses = new Map();
+let refreshInFlight = false;
+let refreshAgain = false;
+
+function captureViewState() {
+  const logs = new Map();
+  document.querySelectorAll('pre.log[data-job-id]').forEach(pre => {
+    logs.set(pre.dataset.jobId, {
+      top: pre.scrollTop,
+      left: pre.scrollLeft,
+      atBottom: pre.scrollHeight - pre.scrollTop - pre.clientHeight < 8,
+    });
+  });
+  return {x: window.scrollX, y: window.scrollY, logs};
+}
+
+function restoreViewState(state) {
+  requestAnimationFrame(() => {
+    document.querySelectorAll('pre.log[data-job-id]').forEach(pre => {
+      const saved = state.logs.get(pre.dataset.jobId);
+      if (!saved) return;
+      pre.scrollTop = saved.atBottom ? pre.scrollHeight : saved.top;
+      pre.scrollLeft = saved.left;
+    });
+    window.scrollTo(state.x, state.y);
+  });
+}
 
 async function refreshJobs() {
-  const r = await fetch('/api/jobs');
-  const jobs = (await r.json()).jobs;
-  const el = document.getElementById('jobs');
-  if (!jobs.length) {
-    el.innerHTML = '<div class="empty">No jobs yet. Add a PDF to the library, then select New audiobook.</div>';
-    return;
-  }
-  const details = await Promise.all(jobs.map(j =>
-    fetch('/api/jobs/' + j.id).then(r => r.json())));
-  el.innerHTML = '';
-  for (const j of details) {
-    el.appendChild(renderJob(j));
+  if (refreshInFlight) { refreshAgain = true; return; }
+  refreshInFlight = true;
+  const view = captureViewState();
+  try {
+    const r = await fetch('/api/jobs');
+    const response = await r.json();
+    if (!r.ok) throw new Error(response.error || 'Could not load jobs.');
+    const jobs = response.jobs;
+    const el = document.getElementById('jobs');
+    if (!jobs.length) {
+      if (!el.querySelector('[data-jobs-empty]')) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.dataset.jobsEmpty = 'true';
+        empty.textContent = 'No jobs yet. Add a PDF to the library, then select Create Audiobook.';
+        el.replaceChildren(empty);
+      }
+      jobNodes.clear();
+      knownJobStatuses = new Map();
+      return;
+    }
+    const details = await Promise.all(jobs.map(j =>
+      fetch('/api/jobs/' + j.id).then(async r => {
+        const detail = await r.json();
+        if (!r.ok) throw new Error(detail.error || 'Could not load a job.');
+        return detail;
+      })));
+
+    const newlyDone = details.some(j =>
+      knownJobStatuses.has(j.id) && knownJobStatuses.get(j.id) !== 'done' && j.status === 'done');
+    knownJobStatuses = new Map(details.map(j => [j.id, j.status]));
+
+    const wanted = new Set(details.map(j => j.id));
+    details.forEach((j, index) => {
+      const renderKey = JSON.stringify(j) + `|log=${openLogs.has(j.id)}`;
+      let entry = jobNodes.get(j.id);
+      if (!entry || entry.key !== renderKey) {
+        const replacement = renderJob(j);
+        if (entry && entry.node.isConnected) entry.node.replaceWith(replacement);
+        entry = {key: renderKey, node: replacement};
+        jobNodes.set(j.id, entry);
+      }
+      const current = el.children[index] || null;
+      if (current !== entry.node) el.insertBefore(entry.node, current);
+    });
+    for (const child of Array.from(el.children)) {
+      if (!child.dataset.jobId || !wanted.has(child.dataset.jobId)) child.remove();
+    }
+    for (const id of Array.from(jobNodes.keys())) {
+      if (!wanted.has(id)) jobNodes.delete(id);
+    }
+    if (newlyDone) await loadLibrary();
+  } catch (e) {
+    console.error(e);
+  } finally {
+    restoreViewState(view);
+    refreshInFlight = false;
+    if (refreshAgain) {
+      refreshAgain = false;
+      queueMicrotask(refreshJobs);
+    }
   }
 }
 
 function renderJob(j) {
   const div = document.createElement('div');
   div.className = 'job';
+  div.dataset.jobId = j.id;
   const running = ['queued','extracting','tagging','narrating'].includes(j.status);
   const badgeCls = running ? 'running' : (j.status === 'done' ? 'done' : j.status);
 
@@ -441,19 +540,23 @@ function renderJob(j) {
   } else if (j.status === 'failed') {
     detail = 'Error: ' + (j.error || 'see log');
   } else if (j.status === 'done' && j.block_counts) {
-    detail = 'Blocks: ' + Object.entries(j.block_counts).map(([k,v]) => `${k} ${v}`).join(', ');
+    const wallTime = j.finished_at && j.created_at
+      ? `Elapsed from creation to completion: ${fmtDuration(j.finished_at - j.created_at)} · ` : '';
+    detail = wallTime + 'Blocks: ' + Object.entries(j.block_counts).map(([k,v]) => `${k} ${v}`).join(', ');
+    if (j.processed_pdf_path) detail += ' · Source PDF moved to Processed PDFs';
+    if (j.pdf_archive_error) detail += ` · Source PDF move warning: ${j.pdf_archive_error}`;
   }
 
   const pages = `pages ${j.page_from}–${j.page_to}`;
   div.innerHTML = `
     <div class="row1">
-      <span class="title">${j.title}</span>
-      <span class="badge ${badgeCls}">${j.status}</span>
-      <span class="detail">Path ${j.path} · ${pages}${j.voice ? ' · ' + j.voice : ''}${j.format ? ' · ' + j.format : ''}</span>
+      <span class="title">${esc(j.title)}</span>
+      <span class="badge ${badgeCls}">${esc(j.status)}</span>
+      <span class="detail">Path ${esc(j.path)} · ${esc(pages)}${j.voice ? ' · ' + esc(j.voice) : ''}${j.format ? ' · ' + esc(j.format) : ''}</span>
       <span class="spacer"></span>
     </div>
     ${progressHtml}
-    <div class="detail">${detail}</div>`;
+    <div class="detail">${esc(detail)}</div>`;
 
   const row = div.querySelector('.row1');
   if (running) row.appendChild(btn('Cancel', 'danger', async () => {
@@ -470,13 +573,22 @@ function renderJob(j) {
     }));
   }
   if (j.status === 'done') {
+    if (j.audiobook_dir) {
+      row.appendChild(btn('Open output folder', 'primary', () => openOutputFolder(j.id)));
+    }
     row.appendChild(btn('Delete', 'danger', async () => {
-      if (confirm('Delete this job and its audio files?')) {
+      if (confirm('Delete this job record and its temporary files? The copied audiobook in the output library will stay.')) {
         await fetch(`/api/jobs/${j.id}/delete`, {method: 'POST'}); refreshJobs();
       }
     }));
   }
-  row.appendChild(btn(openLogs.has(j.id) ? 'Hide log' : 'Log', '', () => {
+  const betaLog = document.createElement('a');
+  betaLog.className = 'button-link';
+  betaLog.href = `/api/jobs/${j.id}/beta-log`;
+  betaLog.download = '';
+  betaLog.textContent = 'Download beta report';
+  row.appendChild(betaLog);
+  row.appendChild(btn(openLogs.has(j.id) ? 'Hide log' : 'Show log', '', () => {
     openLogs.has(j.id) ? openLogs.delete(j.id) : openLogs.add(j.id);
     refreshJobs();
   }));
@@ -487,20 +599,43 @@ function renderJob(j) {
     for (const o of j.outputs) {
       const p = document.createElement('div');
       p.className = 'p';
-      p.innerHTML = `<audio controls preload="none" src="/api/jobs/${j.id}/audio/${o.name}"></audio>
-        <a href="/api/jobs/${j.id}/audio/${o.name}" download>${o.name} (${fmtBytes(o.bytes)})</a>`;
+      const audio = document.createElement('audio');
+      audio.controls = true;
+      audio.preload = 'none';
+      audio.src = `/api/jobs/${j.id}/audio/${encodeURIComponent(o.name)}`;
+      const download = document.createElement('a');
+      download.href = audio.src;
+      download.download = o.name;
+      download.textContent = `Download ${o.name} (${fmtBytes(o.bytes)})`;
+      p.append(audio, download);
       players.appendChild(p);
     }
     div.appendChild(players);
   }
 
   if (openLogs.has(j.id) && j.log_tail) {
+    const durationNote = document.createElement('div');
+    durationNote.className = 'detail';
+    durationNote.style.marginTop = '10px';
+    durationNote.textContent = 'In the assembly log, “hours total” means audiobook playback length, not generation time.';
+    div.appendChild(durationNote);
     const pre = document.createElement('pre');
     pre.className = 'log';
+    pre.dataset.jobId = j.id;
     pre.textContent = j.log_tail.join('\n');
     div.appendChild(pre);
   }
   return div;
+}
+
+async function openOutputFolder(jobId) {
+  try {
+    const r = await fetch(`/api/jobs/${jobId}/open-output`, {method: 'POST'});
+    const response = await r.json();
+    if (!r.ok) throw new Error(response.error || 'Could not open the output folder.');
+  } catch (e) {
+    alert(e.message || 'Could not open the output folder.');
+  }
 }
 
 function bar(frac) {
@@ -510,6 +645,11 @@ function btn(label, cls, fn) {
   const b = document.createElement('button');
   b.textContent = label; b.className = cls; b.onclick = fn;
   return b;
+}
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
 }
 
 loadLibrary();

@@ -11,7 +11,7 @@ Local PDF to audiobook pipeline for legally purchased books, personal use only. 
   - `pipeline_text.py` — extraction and tagging. Path A: text-layer PDFs (prose via x-indent paragraphing, verse via sentence-run grouping, auto-detected). Path B: PyMuPDF rasterize, GLM-OCR via Ollama, block tagging (headings, dialogue, tables and data lists become short spoken omission markers).
   - `narrate_worker.py` — Chatterbox narration subprocess (chatterbox conda env). Per-chunk WAV checkpoints make multi-hour narrations resumable; output is a single file, default **m4b with navigable chapters** (one per top-level heading), or mp3 / lossless wav. m4b/mp3 are encoded straight from the segments via ffmpeg.
   - `convert_voice.py` — converts an uploaded voice sample (wav/mp3/flac/ogg) to a mono reference WAV for cloning.
-  - `static/index.html` — the UI: PDF import and library, jobs with live progress, voice upload and per-job voice selection.
+  - `static/index.html` — the UI: PDF import and library, jobs with live progress, voice upload and per-job voice selection. Completed jobs have an explicit audio download, an **Open output folder** button, and a compressed beta-test report containing the job and available setup logs.
 - `samples/` — the validated standalone scripts the app grew out of (`path_a.py`, `stage_two.py`, `harvest_lazy_dm.py`, `chunk_and_narrate.py`, `narrate_tagged.py`) and the Ollama `Modelfile` for the tuned `glm-ocr-doc` model.
 - `CLAUDE.md` — standing rules and current validated state of the project.
 - `Start_Audiobook_Studio.bat` — one-click launcher; opens the app in its own window (falls back to your browser if that fails).
@@ -46,7 +46,7 @@ If the wizard warns that **ffmpeg** could not be installed, the install is still
 
 If the Python environment build fails or the wizard shows a warning box, everything after Miniconda is logged to `install_log.txt` in the install folder (usually `%LOCALAPPDATA%\Programs\AudiobookStudio`). Send that file. A Miniconda failure happens before that log exists, so send the error-code screenshot instead. You can retry the environment build without reinstalling by running `setup.bat` from that same folder.
 
-The one-click folder layout is intentionally self-contained: `runtime/` holds private Miniconda, the Chatterbox environment, package caches, and model weights; `source_pdfs/` holds PDFs added through the UI; `app/jobs/`, `app/voices/`, and `audiobooks/` hold user data. Windows still keeps the normal Start Menu shortcut and uninstall registration in its own system-managed locations. A source checkout continues to use the developer's existing conda installation unless `--runtime-root` is supplied explicitly.
+The one-click folder layout is intentionally self-contained: `runtime/` holds private Miniconda, the Chatterbox environment, package caches, and model weights; `source_pdfs/` holds PDFs waiting to be processed; `processed_pdfs/` keeps app-imported sources after their audiobook completes; and `app/jobs/`, `app/voices/`, and `audiobooks/` hold user data. Windows still keeps the normal Start Menu shortcut and uninstall registration in its own system-managed locations. A source checkout continues to use the developer's existing conda installation unless `--runtime-root` is supplied explicitly.
 
 **From source, for development or if you'd rather see what's happening:**
 
@@ -65,11 +65,11 @@ The app auto-detects your conda env and defaults every path relative to the repo
 ## Provide a voice and books
 
 - **Voice:** the default narrator clip is not distributed. Upload your own in the UI (wav/mp3/flac/ogg), or drop a clip at `samples/Voice_Sample/male_ref.wav`. Per the project rule, a cloned voice must be **licensed, synthetic, or royalty-free** — not a real identifiable person without rights.
-- **Books:** click **Add PDF to library** in the app and choose a PDF you legally own. The app copies it into its managed `source_pdfs/` library. Advanced users can also put PDFs under `samples/` or another configured `library_roots` folder.
+- **Books:** click **Add PDF to library** in the app and choose a PDF you legally own. The app copies it into its managed `source_pdfs/` library. After the audiobook completes, that imported source moves to `processed_pdfs/` and leaves the active library; it is retained, not deleted. PDFs from `samples/` or another configured external `library_roots` folder are never moved.
 
 ## Run
 
-Double-click `Start_Audiobook_Studio.bat` (or the Start Menu / Desktop shortcut if you used the installer). It opens Audiobook Studio in its own window — no browser tab, no address bar. Click **Add PDF to library**, choose pipeline/voice/page range, and start the job.
+Double-click `Start_Audiobook_Studio.bat` (or the Start Menu / Desktop shortcut if you used the installer). It opens Audiobook Studio in its own window — no browser tab, no address bar. Click **Add PDF to library**, choose **Create Audiobook**, review the recommended pipeline and starting page, then choose the voice, output format and page range.
 
 **First narration only, if you skipped the pre-fetch step above:** Chatterbox downloads about 3 GB of model weights with no progress bar. It can look frozen for several minutes; let it run. Later runs are fast, since the weights are cached.
 

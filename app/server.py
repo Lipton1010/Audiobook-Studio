@@ -12,8 +12,10 @@ imports torch or chatterbox.
 """
 
 import hashlib
+import io
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -21,6 +23,7 @@ import sys
 import threading
 import time
 import uuid
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -44,6 +47,11 @@ LIBRARY_ROOTS = CFG.library_roots
 # browser file inputs intentionally do not reveal the source path, and an
 # installed copy must not depend on the user finding its hidden install folder.
 PDF_IMPORT_DIR = CFG.base_dir / "source_pdfs"
+# Imported PDFs leave the active library only after their audiobook is safely
+# copied to the output library. Keep them instead of deleting them: beta users
+# can still recover the source without the completed book continuing to look
+# like unprocessed work.
+PROCESSED_PDF_DIR = CFG.base_dir / "processed_pdfs"
 # Default voice: converted from "Voice Sample Male.mp3" via convert_voice.py;
 # the old ref_15s.wav default was judged bad on listening (2026-07-21).
 REFERENCE_WAV = CFG.reference_wav
@@ -58,6 +66,7 @@ PORT = CFG.port
 AUDIO_EXTS = {".m4b", ".mp3", ".wav"}
 AUDIO_MIME = {".m4b": "audio/mp4", ".mp3": "audio/mpeg", ".wav": "audio/wav"}
 MAX_PDF_BYTES = 2 * 1024 * 1024 * 1024
+WINDOWS_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 
 # Bumping the number of narration processes to fit the GPU. Each Chatterbox
 # worker loads its own model copy and, measured on this stack, holds ~9-10 GB
@@ -172,7 +181,8 @@ def _run_ffmpeg_install():
         # bootstrap_ffmpeg is stdlib-only, so the base env python running this
         # server can execute it directly; no conda env needed.
         r = subprocess.run([sys.executable, str(script)], capture_output=True,
-                           text=True, timeout=1800)
+                           text=True, timeout=1800,
+                           creationflags=WINDOWS_NO_WINDOW)
         log = (r.stdout or "") + (r.stderr or "")
         # Trust the re-check, not the exit code: CFG.ffmpeg_path actually runs
         # the binary.
@@ -223,6 +233,7 @@ def save_voice(name, raw_bytes, ext):
         r = subprocess.run(
             [CHATTERBOX_PY, str(APP_DIR / "convert_voice.py"), str(tmp_in), str(out)],
             capture_output=True, text=True, timeout=120,
+            creationflags=WINDOWS_NO_WINDOW,
         )
         if r.returncode != 0:
             msg = (r.stdout + r.stderr).strip()
@@ -233,6 +244,7 @@ def save_voice(name, raw_bytes, ext):
 
 _jobs_lock = threading.Lock()
 _page_count_cache = {}
+_start_page_cache = {}
 
 
 # ---------- job state helpers ----------
@@ -326,15 +338,104 @@ def page_count(pdf_path):
     return _page_count_cache[key]
 
 
+_START_HEADING_RE = re.compile(
+    r"^(?:prologue|chapter\s+(?:0*1|one|i)|book\s+(?:0*1|one|i)|"
+    r"part\s+(?:0*1|one|i)|canto\s+(?:0*1|one|i))(?:\b|\s*[:.\-])",
+    re.IGNORECASE,
+)
+
+
+def _start_heading(text):
+    """Return a cleaned first-content heading, or None.
+
+    This deliberately recognizes only explicit opening divisions. Generic
+    words such as Introduction and Preface may be material the owner wants in
+    the audiobook, so silently skipping them would be a bad recommendation.
+    """
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+    return cleaned if _START_HEADING_RE.match(cleaned) else None
+
+
+def suggest_start_page(pdf_path, pages):
+    """Return (1-based page, reason) using PDF structure when it is credible.
+
+    Prefer the PDF outline because its destinations point at the real chapter
+    pages rather than the printed page numbers in a contents table. If there is
+    no useful outline, scan only the opening portion for a standalone Prologue,
+    Chapter One, Book One, Part One or Canto One heading. The UI still lets the
+    user override this recommendation before creating the job.
+    """
+    pdf_path = Path(pdf_path)
+    try:
+        stat = pdf_path.stat()
+        key = (str(pdf_path.resolve()).lower(), stat.st_size, stat.st_mtime_ns)
+    except OSError:
+        return 1, None
+    if key in _start_page_cache:
+        return _start_page_cache[key]
+
+    result = (1, None)
+    try:
+        with fitz.open(pdf_path) as doc:
+            outline_candidates = []
+            for entry in doc.get_toc(simple=True) or []:
+                if len(entry) < 3:
+                    continue
+                heading = _start_heading(entry[1])
+                try:
+                    page = int(entry[2])
+                except (TypeError, ValueError):
+                    continue
+                if heading and 1 <= page <= pages:
+                    outline_candidates.append((page, heading))
+            if outline_candidates:
+                page, heading = min(outline_candidates, key=lambda item: item[0])
+                result = (page, f'PDF outline: "{heading}"')
+            else:
+                # Eighty pages reaches unusually long front matter such as The
+                # Odyssey without turning every library refresh into a scan of
+                # the entire book.
+                found = False
+                for pno in range(min(pages, 80)):
+                    text = doc.load_page(pno).get_text("text")
+                    lines = [re.sub(r"\s+", " ", line).strip()
+                             for line in text.splitlines() if line.strip()]
+                    if not lines:
+                        continue
+                    # Do not mistake a contents page full of chapter links for
+                    # the start of the book.
+                    markers = [heading for line in lines
+                               if (heading := _start_heading(line))]
+                    head_text = " ".join(lines[:10]).lower()
+                    if "contents" in head_text or len(markers) >= 3:
+                        continue
+                    for line in lines[:20]:
+                        heading = _start_heading(line)
+                        if heading:
+                            result = (pno + 1, f'page heading: "{heading}"')
+                            found = True
+                            break
+                    if found:
+                        break
+    except Exception:
+        result = (1, None)
+
+    _start_page_cache[key] = result
+    return result
+
+
 def _library_item(pdf_path):
     pdf_path = Path(pdf_path)
     pages = page_count(pdf_path)
+    suggested_start, start_reason = suggest_start_page(pdf_path, pages) if pages else (1, None)
     return {
         "path": str(pdf_path),
         "name": pdf_path.stem,
         "folder": str(pdf_path.parent),
         "pages": pages,
         "suggested_path": suggest_path(pdf_path, pages) if pages else "B",
+        "suggested_page_from": suggested_start,
+        "suggested_start_reason": start_reason,
     }
 
 
@@ -486,12 +587,70 @@ def scan_library():
         if not root.exists():
             continue
         for p in sorted(root.rglob("*.pdf")):
+            if _path_is_within(p, PROCESSED_PDF_DIR):
+                continue
             key = str(p).lower()
             if key in seen:
                 continue
             seen.add(key)
             items.append(_library_item(p))
     return items
+
+
+def _path_is_within(path, root):
+    try:
+        Path(path).resolve().relative_to(Path(root).resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _unique_path(directory, filename):
+    target = directory / filename
+    stem, suffix = target.stem, target.suffix
+    number = 2
+    while target.exists():
+        target = directory / f"{stem} ({number}){suffix}"
+        number += 1
+    return target
+
+
+def archive_completed_pdf(st):
+    """Move a completed job's app-managed PDF out of the active library.
+
+    Never move a PDF from a configured external library such as samples or a
+    user's own folder. Also leave it in place while another unfinished job
+    still refers to the same source, because that job may need extraction on a
+    later resume. Returns (new_path, error_message); archiving failure is a
+    completion warning, not a reason to discard an already-built audiobook.
+    """
+    source = Path(st.get("pdf_path") or "")
+    if not source.exists() or not source.is_file():
+        return None, None
+    if not _path_is_within(source, PDF_IMPORT_DIR):
+        return None, None
+
+    source_resolved = source.resolve()
+    active_statuses = {
+        "queued", "extracting", "tagging", "narrating",
+        "interrupted", "failed", "canceled",
+    }
+    for other in list_jobs():
+        if other.get("id") == st.get("id") or other.get("status") not in active_statuses:
+            continue
+        try:
+            if Path(other.get("pdf_path") or "").resolve() == source_resolved:
+                return None, "another unfinished job still uses this source PDF"
+        except OSError:
+            continue
+
+    try:
+        PROCESSED_PDF_DIR.mkdir(parents=True, exist_ok=True)
+        target = _unique_path(PROCESSED_PDF_DIR, source.name)
+        shutil.move(str(source), str(target))
+        return str(target), None
+    except Exception as exc:
+        return None, str(exc)
 
 
 # ---------- pipeline worker ----------
@@ -610,6 +769,7 @@ def gpu_total_vram_gb():
         out = subprocess.run(
             ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=15,
+            creationflags=WINDOWS_NO_WINDOW,
         )
         if out.returncode != 0:
             return None
@@ -707,7 +867,8 @@ def _reap_worker_pids(job_dir):
             continue
         try:
             subprocess.run(["taskkill", "/F", "/PID", line],
-                           capture_output=True, timeout=10)
+                           capture_output=True, timeout=10,
+                           creationflags=WINDOWS_NO_WINDOW)
         except Exception:
             pass
     pf.unlink(missing_ok=True)
@@ -717,6 +878,7 @@ def _spawn_worker(job_dir, logf, extra_args):
     return subprocess.Popen(
         [CHATTERBOX_PY, str(APP_DIR / "narrate_worker.py"), str(job_dir), *extra_args],
         stdout=logf, stderr=subprocess.STDOUT, cwd=str(APP_DIR),
+        creationflags=WINDOWS_NO_WINDOW,
     )
 
 
@@ -824,6 +986,19 @@ def worker_loop():
                 if f.suffix.lower() in AUDIO_EXTS:
                     shutil.copy2(f, book_dir / f.name)
             st["audiobook_dir"] = str(book_dir)
+
+            original_pdf = st.get("pdf_path")
+            processed_pdf, archive_error = archive_completed_pdf(st)
+            if processed_pdf:
+                st["source_pdf_original_path"] = original_pdf
+                st["pdf_path"] = processed_pdf
+                st["processed_pdf_path"] = processed_pdf
+                save_state(st)
+                log_line(job_id, f"source PDF moved to processed library: {processed_pdf}")
+            elif archive_error:
+                st["pdf_archive_error"] = archive_error
+                log_line(job_id, f"WARNING: source PDF was not moved: {archive_error}")
+
             st["status"] = "done"
             st["finished_at"] = time.time()
             save_state(st)
@@ -887,6 +1062,25 @@ def _json_response(handler, obj, code=200):
     handler.wfile.write(body)
 
 
+def _tail_text_lines(path, count=30, chunk_bytes=65536):
+    """Read only enough of a potentially huge UTF-8 log to return its tail."""
+    path = Path(path)
+    with path.open("rb") as stream:
+        stream.seek(0, os.SEEK_END)
+        position = stream.tell()
+        chunks = []
+        newline_count = 0
+        while position > 0 and newline_count <= count:
+            size = min(chunk_bytes, position)
+            position -= size
+            stream.seek(position)
+            chunk = stream.read(size)
+            chunks.append(chunk)
+            newline_count += chunk.count(b"\n")
+    text = b"".join(reversed(chunks)).decode("utf-8", errors="replace")
+    return text.splitlines()[-count:]
+
+
 def job_detail(job_id):
     st = load_state(job_id)
     if not st:
@@ -896,8 +1090,7 @@ def job_detail(job_id):
         st["narrate_progress"] = _narration_progress(job_dir, st)
     log_path = job_dir / "log.txt"
     if log_path.exists():
-        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        st["log_tail"] = lines[-30:]
+        st["log_tail"] = _tail_text_lines(log_path, 30)
     out_dir = job_dir / "output"
     if out_dir.exists():
         st["outputs"] = sorted(
@@ -913,6 +1106,98 @@ def job_detail(job_id):
             counts[b["type"]] = counts.get(b["type"], 0) + 1
         st["block_counts"] = counts
     return st
+
+
+def beta_test_report(job_id):
+    """Build a compact summary for the downloadable beta-test bundle."""
+    st = load_state(job_id)
+    if not st:
+        return None
+    job_dir = JOBS_DIR / job_id
+    created = st.get("created_at")
+    finished = st.get("finished_at")
+    wall_time = None
+    if isinstance(created, (int, float)) and isinstance(finished, (int, float)):
+        wall_time = max(0, finished - created)
+
+    gpu = "unavailable"
+    try:
+        r = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.total,driver_version",
+             "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=15,
+            creationflags=WINDOWS_NO_WINDOW,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            gpu = r.stdout.strip()
+    except Exception as exc:
+        gpu = f"unavailable ({exc})"
+
+    log_path = job_dir / "log.txt"
+    log_bytes = log_path.stat().st_size if log_path.exists() else 0
+    report = [
+        "Audiobook Studio beta test report",
+        f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S %Z')}",
+        f"Computer: {platform.node() or '(unknown)'}",
+        f"Windows/platform: {platform.platform()}",
+        f"Python: {sys.version.replace(chr(10), ' ')}",
+        f"Python executable: {sys.executable}",
+        f"GPU: {gpu}",
+        f"App directory: {CFG.base_dir}",
+        f"Audiobook output library: {AUDIOBOOKS_DIR}",
+        f"Complete job log bytes: {log_bytes}",
+    ]
+    if wall_time is not None:
+        report.append(
+            "Job wall time from creation through completion: "
+            f"{wall_time:.1f} seconds ({wall_time / 3600:.2f} hours)"
+        )
+    report.extend([
+        "",
+        "JOB STATE",
+        json.dumps(st, ensure_ascii=False, indent=2),
+    ])
+    return "\n".join(report).rstrip() + "\n"
+
+
+def beta_test_bundle(job_id):
+    """Return a ZIP containing complete logs but never book, voice or audio data."""
+    summary = beta_test_report(job_id)
+    if summary is None:
+        return None
+    job_dir = JOBS_DIR / job_id
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED,
+                         compresslevel=6) as bundle:
+        bundle.writestr("beta_summary.txt", summary.encode("utf-8"))
+        candidates = [
+            (job_dir / "log.txt", "job_log.txt"),
+            (APP_DIR.parent / "launcher_log.txt", "launcher_log.txt"),
+            (APP_DIR.parent / "install_log.txt", "install_log.txt"),
+            (APP_DIR.parent / "miniconda_install_log.txt", "miniconda_install_log.txt"),
+            (APP_DIR.parent / "install_warnings.txt", "install_warnings.txt"),
+        ]
+        for path, archive_name in candidates:
+            if path.exists() and path.is_file():
+                bundle.write(path, archive_name)
+    return buffer.getvalue()
+
+
+def open_job_output_folder(job_id):
+    """Open a completed job's final output folder in Windows Explorer."""
+    st = load_state(job_id)
+    if not st:
+        raise ValueError("Job not found.")
+    raw = st.get("audiobook_dir")
+    if not raw:
+        raise ValueError("This job does not have a completed output folder yet.")
+    target = Path(raw).resolve()
+    root = AUDIOBOOKS_DIR.resolve()
+    if not _path_is_within(target, root) or not target.is_dir():
+        raise ValueError("The completed output folder is missing or outside the output library.")
+    if not hasattr(os, "startfile"):
+        raise ValueError("Opening folders is available only in the Windows app.")
+    os.startfile(str(target))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -946,6 +1231,19 @@ class Handler(BaseHTTPRequestHandler):
                     self._serve_file(bl, "application/json; charset=utf-8")
                 else:
                     _json_response(self, {"error": "no blocks yet"}, 404)
+            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/beta-log", path):
+                job_id = path.split("/")[3]
+                bundle = beta_test_bundle(job_id)
+                if bundle is None:
+                    _json_response(self, {"error": "not found"}, 404)
+                else:
+                    st = load_state(job_id) or {}
+                    safe_title = re.sub(r"[^\w \-]", "", st.get("title", "audiobook")).strip()
+                    self._serve_download(
+                        bundle,
+                        (safe_title or "audiobook") + " - beta test report.zip",
+                        "application/zip",
+                    )
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/audio/.+\.(wav|m4b|mp3)", path):
                 job_id = path.split("/")[3]
                 fname = unquote(path.split("/audio/", 1)[1])
@@ -1068,6 +1366,13 @@ class Handler(BaseHTTPRequestHandler):
                     _json_response(self, {"ok": True})
                 else:
                     _json_response(self, {"error": "stop the job first"}, 400)
+            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/open-output", path):
+                job_id = path.split("/")[3]
+                try:
+                    open_job_output_folder(job_id)
+                    _json_response(self, {"ok": True})
+                except ValueError as exc:
+                    _json_response(self, {"error": str(exc)}, 400)
             else:
                 self.send_error(404)
         except (ConnectionAbortedError, BrokenPipeError):
@@ -1082,6 +1387,15 @@ class Handler(BaseHTTPRequestHandler):
         data = Path(fpath).read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _serve_download(self, data, filename, ctype):
+        safe_name = re.sub(r'[^A-Za-z0-9 .()_\-]', '_', filename).strip() or "download.txt"
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Disposition", f'attachment; filename="{safe_name}"')
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)

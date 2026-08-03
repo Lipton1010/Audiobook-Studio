@@ -306,10 +306,11 @@ def normalize_ligatures(text):
     return text
 
 
-def _page_lines_with_x(page):
-    """[(x0, text)] for every nonempty, non-page-number line, reading order.
-    A drop-cap (single letter rendered much larger than body text) is merged
-    into the following line with no space."""
+def _page_lines_with_geom(page):
+    """[(x0, y0, text)] for every nonempty, non-page-number line, reading
+    order. A drop-cap (single letter rendered much larger than body text) is
+    merged into the following line with no space; the merged line keeps the
+    drop cap's geometry, as it always has."""
     d = page.get_text("dict")
     raw = []
     for block in d["blocks"]:
@@ -325,18 +326,18 @@ def _page_lines_with_x(page):
             if text.isdigit() and len(text) <= 4:
                 continue  # page numbers and verse line numbers
             size = max(s.get("size", 0) for s in spans)
-            raw.append((line["bbox"][0], text, size))
+            raw.append((line["bbox"][0], line["bbox"][1], text, size))
     if not raw:
         return []
-    sizes = sorted(s for _, _, s in raw)
+    sizes = sorted(s for _, _, _, s in raw)
     body_size = sizes[len(sizes) // 2]
     out = []
     skip_next_join = False
-    for i, (x0, text, size) in enumerate(raw):
+    for i, (x0, y0, text, size) in enumerate(raw):
         if skip_next_join:
             skip_next_join = False
-            prev_x0, prev_text = out.pop()
-            out.append((prev_x0, prev_text + text))
+            prev_x0, prev_y0, prev_text = out.pop()
+            out.append((prev_x0, prev_y0, prev_text + text))
             continue
         if (
             re.fullmatch(r"[“”\"'‘’]?[A-Z]", text)
@@ -344,11 +345,17 @@ def _page_lines_with_x(page):
             and size >= body_size * 1.4
             and i + 1 < len(raw)
         ):
-            out.append((x0, text))
+            out.append((x0, y0, text))
             skip_next_join = True
             continue
-        out.append((x0, text))
+        out.append((x0, y0, text))
     return out
+
+
+def _page_lines_with_x(page):
+    """[(x0, text)], the geometry-free view. Verse mode and mode detection
+    read this and are unaffected by the paragraph-gap work below."""
+    return [(x0, text) for x0, _, text in _page_lines_with_geom(page)]
 
 
 def detect_text_mode(pdf_path, page_from, page_to):
@@ -371,30 +378,144 @@ def detect_text_mode(pdf_path, page_from, page_to):
         doc.close()
 
 
-def _prose_page_paragraphs(lines_with_x):
+# ---------- Path A paragraph style ----------
+#
+# The x-indent rule is primary and stays primary. But some books are typeset
+# with no first-line indent at all and separate paragraphs with a blank line
+# instead. On those the indent rule finds no boundary anywhere and degenerates
+# to exactly one paragraph per page, which is what destroyed the paragraph
+# structure of The Power of the Dog (726 blocks for 814 pages).
+#
+# Measured indent fractions over the narrated page ranges:
+#   Power of the Dog 0.005   PHM 0.355   The Odyssey 0.422
+# so the two populations are three orders apart and any low-percent threshold
+# separates them. The fallback fires only when the indent signal is absent.
+
+PARAGRAPH_INDENT_PT = 6.0          # the validated x-indent tolerance
+PARAGRAPH_INDENT_MIN_FRACTION = 0.05
+PARAGRAPH_GAP_RATIO = 1.5          # gap wider than this * leading = new para
+PARAGRAPH_PROBE_PAGES = 24
+
+
+def _sample_page_numbers(page_from, page_to, want):
+    """Up to `want` 0-based page numbers spread evenly across a 1-based
+    inclusive range."""
+    total = page_to - page_from + 1
+    if total <= want:
+        return list(range(page_from - 1, page_to))
+    step = total / float(want)
+    return [page_from - 1 + int(i * step) for i in range(want)]
+
+
+def _modal_leading(gaps):
+    """Line-to-line spacing of body text, in points, from a list of observed
+    top-to-top gaps.
+
+    Not simply the most common gap. A book whose paragraphs are mostly one
+    line long has MORE blank-line gaps than single-line gaps, so the raw mode
+    would be twice the real leading, the threshold would land above every
+    real gap, and no paragraph would ever be found. Instead take the smallest
+    gap size that forms a real cluster (>= 20% of the peak bucket), which is
+    the leading under either mix, then refine it to the median of the gaps in
+    that neighbourhood so the returned value is not quantised to whole points.
+    """
+    if not gaps:
+        return 0.0
+    counts = {}
+    for g in gaps:
+        b = round(g)
+        counts[b] = counts.get(b, 0) + 1
+    peak = max(counts.values())
+    clusters = sorted(b for b, c in counts.items() if c >= peak * 0.2 and b >= 4)
+    if not clusters:
+        return 0.0
+    chosen = clusters[0]
+    near = sorted(g for g in gaps if abs(g - chosen) <= 1.5)
+    return near[len(near) // 2] if near else float(chosen)
+
+
+def detect_paragraph_style(pdf_path, page_from, page_to):
+    """
+    Decide once, for the whole range, how prose paragraphs are marked.
+
+    Returns (style, leading). style is "indent" (the original rule alone) or
+    "gap" (indent rule plus a vertical-gap rule). leading is 0.0 for "indent"
+    and the measured body leading in points for "gap"; a 0.0 leading disables
+    the vertical rule, so an unreadable or ambiguous book falls back to
+    exactly the original behaviour.
+
+    The indent fraction is measured with the SAME definition the rule itself
+    uses (per page: min x0, plus PARAGRAPH_INDENT_PT), so this cannot decide
+    that the indent signal is present when the rule would not actually fire.
+    """
+    doc = fitz.open(pdf_path)
+    try:
+        indented = total_lines = 0
+        gaps = []
+        for pno in _sample_page_numbers(page_from, page_to, PARAGRAPH_PROBE_PAGES):
+            lines = _page_lines_with_geom(doc.load_page(pno))
+            if not lines:
+                continue
+            threshold = min(x0 for x0, _, _ in lines) + PARAGRAPH_INDENT_PT
+            for x0, _, _ in lines:
+                total_lines += 1
+                if x0 > threshold:
+                    indented += 1
+            for i in range(1, len(lines)):
+                gap = lines[i][1] - lines[i - 1][1]
+                if gap > 0:
+                    gaps.append(gap)
+    finally:
+        doc.close()
+    if not total_lines:
+        return "indent", 0.0
+    if indented / float(total_lines) >= PARAGRAPH_INDENT_MIN_FRACTION:
+        return "indent", 0.0
+    return "gap", _modal_leading(gaps)
+
+
+def _prose_page_paragraphs(lines_with_geom, leading=0.0):
     """path_a.py's validated x-indent rule: indented line = new paragraph.
     A chapter/division heading line is always split into its own paragraph,
-    even if its indentation would otherwise merge it."""
-    if not lines_with_x:
+    even if its indentation would otherwise merge it.
+
+    When `leading` is nonzero the caller has measured this book's body line
+    spacing (see detect_paragraph_style) and a vertical gap wider than
+    PARAGRAPH_GAP_RATIO times that spacing ALSO starts a paragraph. The
+    default leading=0.0 disables the vertical rule, which is the original
+    behaviour exactly.
+    """
+    if not lines_with_geom:
         return []
-    xs = sorted(x0 for x0, _ in lines_with_x)
+    xs = sorted(x0 for x0, _, _ in lines_with_geom)
     left_margin = xs[0]
-    indent_threshold = left_margin + 6
+    indent_threshold = left_margin + PARAGRAPH_INDENT_PT
+    gap_threshold = leading * PARAGRAPH_GAP_RATIO if leading > 0 else 0.0
     paras = []
     buf = ""
-    for x0, text in lines_with_x:
+    prev_y0 = None
+    for x0, y0, text in lines_with_geom:
         if HEADING_LINE_RE.match(text.strip()):
             if buf:
                 paras.append(buf)
                 buf = ""
             paras.append(text.strip())
+            prev_y0 = y0
             continue
-        if x0 > indent_threshold:
+        starts_para = x0 > indent_threshold
+        if not starts_para and gap_threshold and prev_y0 is not None:
+            gap = y0 - prev_y0
+            # A large negative gap is a jump back to the top of a new column,
+            # not a continuation. A gap near zero is same-row text and joins.
+            if gap > gap_threshold or gap < -gap_threshold:
+                starts_para = True
+        if starts_para:
             if buf:
                 paras.append(buf)
             buf = text
         else:
             buf = (buf + " " + text) if buf else text
+        prev_y0 = y0
     if buf:
         paras.append(buf)
     return paras
@@ -445,16 +566,21 @@ def extract_path_a(pdf_path, page_from, page_to, progress_cb=None):
     auto-detected once for the range.
     """
     mode = detect_text_mode(pdf_path, page_from, page_to)
+    # Verse groups by sentence runs and never consults indentation, so the
+    # paragraph-style probe is prose-only.
+    leading = 0.0
+    if mode != "verse":
+        _style, leading = detect_paragraph_style(pdf_path, page_from, page_to)
     doc = fitz.open(pdf_path)
     try:
         pages = []
         total = page_to - page_from + 1
         for idx, pno in enumerate(range(page_from - 1, page_to)):
-            lines = _page_lines_with_x(doc.load_page(pno))
+            lines = _page_lines_with_geom(doc.load_page(pno))
             if mode == "verse":
-                paras = _verse_page_paragraphs(lines)
+                paras = _verse_page_paragraphs([(x0, t) for x0, _, t in lines])
             else:
-                paras = _prose_page_paragraphs(lines)
+                paras = _prose_page_paragraphs(lines, leading)
             pages.append(paragraphs_to_blocks(paras))
             if progress_cb:
                 progress_cb(idx + 1, total)
