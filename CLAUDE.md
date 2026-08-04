@@ -520,5 +520,111 @@ COSTS AND TRAPS BEFORE ANYONE IMPLEMENTS THIS:
 - Re-extraction invalidates `blocks.json`, and the operational trap in the rulebook section applies: `worker_loop` SKIPS extraction whenever `blocks.json` exists, so the file must be DELETED, not merely resumed over. Changed blocks then change `plan_hash`, which wipes segments, which means a FULL re-narration. For Power of the Dog that is roughly 3 hours of 4090 time.
 - Chunk count will rise steeply, plausibly to the same ~2.9x estimated for turn splitting. Throughput under the new profile is unmeasured. Use `narrate_worker.build_plan`.
 - Mean paragraph 115 chars means many very short calls, and the short-call quality question raised in the previous section is still open and still untested.
-- Whether The Shining and Sphere share this typesetting is UNVERIFIED; their PDFs are on the HP Omen and were not inspected. It is a reasonable hypothesis given both are novels and both drew the same complaint, not a finding.
+- Whether The Shining and Sphere share this typesetting is UNVERIFIED; their PDFs are on the HP Omen and were not inspected. It is a reasonable hypothesis given both are novels and both drew the same complaint, not a finding. FALSIFIED for The Shining on 2026-08-03, see below; still open for Sphere.
 - Stage 0 and Stage 1 remain valid as narration findings. They are simply no longer the highest-leverage lever.
+
+### Adaptive paragraph detection: IMPLEMENTED and verified (2026-08-03)
+
+The previous section's fix is in. `app/pipeline_text.py` is the only file that changed for it, and `extract_path_a`'s signature is unchanged so `server.py` needed no edit.
+
+- `_page_lines_with_geom` is new and carries `y0`. `_page_lines_with_x` is now a thin wrapper over it keeping its original `[(x0, text)]` contract, so `detect_text_mode` and `_verse_page_paragraphs` cannot see the change AT ALL. That is deliberate: it makes "verse is untouched" a property of the code rather than a claim to be re-tested.
+- `detect_paragraph_style(pdf, page_from, page_to)` probes 24 evenly spread pages once per book and returns `("indent", 0.0)` or `("gap", leading)`. It measures the indent fraction with the SAME definition the rule itself uses (per page: min x0, plus 6 pt), so it cannot conclude the indent signal is present when the rule would not actually fire.
+- `_modal_leading` takes the smallest WELL POPULATED gap cluster (at least 20% of the peak bucket, at least 4 pt), not the raw mode. This guard is load-bearing and not decoration: a book whose paragraphs are mostly one line long has MORE blank-line gaps than single-line gaps, so the raw mode would be twice the real leading, the threshold would sit above every real gap, and the fallback would silently find nothing while looking like it worked.
+- `_prose_page_paragraphs(lines_with_geom, leading=0.0)`. A `leading` of 0.0 disables the vertical rule and is exactly the old behaviour. The indent rule stays active in gap mode as well, so a stray centred line still breaks a paragraph. A gap more negative than the threshold also breaks, which is a column jump rather than a continuation; a gap near zero joins, because that is same-row text.
+- Constants: `PARAGRAPH_INDENT_PT 6.0`, `PARAGRAPH_INDENT_MIN_FRACTION 0.05`, `PARAGRAPH_GAP_RATIO 1.5`, `PARAGRAPH_PROBE_PAGES 24`.
+
+(V) Verified by loading the ORIGINAL module out of `git show HEAD:app/pipeline_text.py` alongside the working tree and running BOTH over the real PDFs. The probe decides correctly with a wide margin: Power of the Dog prose/gap at leading 17.25 pt, PHM prose/indent, The Odyssey verse (the probe is not consulted for verse).
+
+Indent fractions measured with the rule's own definition over a 24 page sample: Power of the Dog 0.17%, PHM 38.93%, The Odyssey 46.74%. These differ slightly from the 0.48 / 35.52 / 42.23 recorded in the previous section because that probe scanned differently; the conclusion is identical and the separation against the 5% threshold is over 200x on the low side. Do not treat either set as canonical without re-measuring.
+
+- (V) PHM: BYTE FOR BYTE IDENTICAL, 6,219 blocks and 816,850 chars unchanged.
+- (V) The Odyssey: BYTE FOR BYTE IDENTICAL, 4,465 blocks and 752,771 chars unchanged.
+- (V) Power of the Dog: 726 blocks to 9,490. Body 707 to 9,461. Mean body block 1,562 to 115 chars, median 1,334 to 54, max 9,094 to 1,587. That is the 13.3x under-segmentation predicted in the previous section, landing at 13.4x.
+
+Two gates were added because the block counts alone are not proof:
+
+- (V) TEXT PRESERVATION. Non-whitespace characters are IDENTICAL, 905,525 in both. The apparent 8,935 char drop is entirely join spaces, and the accounting is exact: 8,764 extra blocks means 8,764 fewer line joins. Nothing was lost or reordered. Any future change to this rule should be checked the same way, since block counts can look right while text is being dropped.
+- (V) CHAPTER MARKS. 16 headings match `CHAPTER_RE` before and after, identical and in the same order (Prologue, Chapter One through Fourteen, Epilogue). The m4b table of contents is unaffected.
+
+(V) The old plan reproduces the stored job's 3,556 chunks EXACTLY through the real `narrate_worker.build_plan`, which validates the harness rather than just the fix. `CHAR_CEILING` was not touched, and both old and new have max chunk 531 with exactly one chunk over 400, so the fix does not create long chunks.
+
+KNOWN SIDE EFFECT, accepted and not fixed. Headings go 19 to 29 on Power of the Dog. All 10 additions are shouted all-caps dialogue lines. `is_heading` accepts any 2 to 60 char line whose letters are all uppercase and which does not end in `.:,;`, and a quoted shout passes it. These lines were ALWAYS eligible; they were previously buried inside page-sized blocks so `is_heading` never saw them standalone. None matches `CHAPTER_RE`, so the only consequence is a 200/150 ms heading pause instead of body pauses on 10 blocks out of 9,490. `is_heading` was deliberately NOT tightened: rejecting quote-initial lines would also change Path B rulebooks, and that is a separate decision rather than a side effect of this one.
+
+SHORT-CALL EXPOSURE, now quantified, and this was the open risk. Chunks go 3,556 to 10,042 (2.82x, matching the ~2.9x estimate) while the median chunk falls from 341 to 59 chars. Under 30 chars: 56 (1.6%) to 2,620 (26.1%). Under 10: 5 (0.1%) to 399 (4.0%). Under 5: 0 to 16.
+
+DIALOGUE BOUNDARY QUALITY, classified over every dialogue-touching chunk:
+
+| | old | new |
+|---|---|---|
+| one turn, nothing else | 5 (0.3%) | 1,317 (33.2%) |
+| one turn plus attribution | 7 (0.4%) | 914 (23.0%) |
+| turn blended into narration | 433 (25.0%) | 568 (14.3%) |
+| two or more turns in one call | 889 (51.4%) | 1,077 (27.1%) |
+| turn split across chunks | 397 (22.9%) | 96 (2.4%) |
+| ONE SPEAKER PER CALL | 0.7% | 56.2% |
+
+The previous section's 99.7% figure used a cruder classifier; the refined anatomy above gives 99.3% wrong falling to 43.8%. Real and large, and short of a cure. Note that "one turn plus attribution" counts `"Get out," he said.` as correct, which is a judgement call: that is a legitimate single beat, not a defect.
+
+THROUGHPUT IS STILL UNMEASURED. 2.82x more calls against a much shorter median could be neutral or better, because this file's own measurements put short chunks at the N=12 row cap where batching pays 3 to 4x. Could be. Measure it with `narrate_worker.build_plan` per the benchmarking rule, do not assume it.
+
+### The Shining: different typesetting, DIFFERENT EDITION, and it undercuts the boundary theory (2026-08-03)
+
+The owner uploaded a Shining PDF to `source_pdfs`, which made the previous section's "reasonable hypothesis" testable. It is wrong, twice over.
+
+(V) IT DOES NOT SHARE POWER OF THE DOG'S TYPESETTING. 31.45% of its lines are indented and its line-gap histogram is unimodal at 18 pt (704 occurrences, with the next bucket at 10). The probe returns `style=indent`, and extraction over pages 13 to 513 is BYTE FOR BYTE IDENTICAL between HEAD and the working tree. The adaptive fix is a deliberate no-op here. So the paragraph root cause does NOT explain the Shining complaint.
+
+(V) IT IS NOT THE EDITION THAT WAS NARRATED ON THE HP OMEN. This file is 520 pages with 71 outline entries, Part One on PDF page 13 and Chapter One on page 14, outline titles formatted `Chapter One: Job Interview`. The Omen job recorded earlier in this file had 63 outline entries, Part One on page 5, chapter 1 on page 7, chapter 58 on page 575, and titles formatted `1 - Job Interview`. Different book file, so nothing here retro-diagnoses that job.
+
+(V) CONSEQUENTLY THE ZERO-CHAPTERS DEFECT DOES NOT REPRODUCE. This edition renders its chapter openers as `CHAPTER ONE` and `JOB INTERVIEW` in caps at 21.2 and 16.9 pt, both of which survive extraction intact. Pages 13 to 513 give 5,058 blocks, 4,953 body, 105 headings and 65 `CHAPTER_RE` marks: `PART ONE`, `CHAPTER ONE` through `CHAPTER FIFTY-EIGHT`, `EPILOGUE / SUMMER`. Re-running The Shining from THIS PDF should produce a properly navigable m4b with no code change. The old job's missing marks were an edition property, not a pipeline defect.
+
+One wart before creating that job: the 65 includes a trailing `CHAPTER ONE` AFTER the epilogue, almost certainly a preview excerpt of another novel in the back matter. The 13 to 513 range was inferred from the outline, not validated. Pin the real end page first.
+
+THE UNCOMFORTABLE PART, and it is the reason Stage 2 was designed the way it was. The Shining is a book the owner HEARD and called phony, and its chunk profile is already close to what the fix achieves for Power of the Dog:
+
+| | Shining (heard) | PotD old (heard-equivalent) | PotD new (the fix) |
+|---|---|---|---|
+| one speaker per call | 51.3% | 0.7% | 56.2% |
+| split turns | 8.9% | 22.9% | 2.4% |
+| chunks under 30 chars | 15.9% | 1.6% | 26.1% |
+| median chunk | 113 | 341 | 59 |
+
+So a book that ALREADY had good boundaries still drew the complaint. That does not make the extraction fix wrong; Power of the Dog was genuinely discarding 92.5% of its paragraphs and its split-turn rate was 22.9%. But it does mean correct boundaries are a PREREQUISITE rather than a cure, and it is why Stage 2 tested the delivery parameters in the same run instead of boundaries alone.
+
+### Stage 2: recovered boundaries WIN on listening; the expressive profile does NOT transfer to short turns (2026-08-03)
+
+`app/stage2_boundary_audition.py` is a new prototype that runs in the BASE env (the chatterbox env has no PyMuPDF, so PDF selection cannot live in the Stage 0 harness). It writes only the private plan; the validated `stage0_narration_audition.py` renders and blinds it unchanged, so no existing narration code was touched.
+
+Run at `Output\Narration_Stage2\20260803_Stage2_v1`. Passage auto-selected from Power of the Dog: 579 chars, 16 recovered paragraphs (new body block indices 1151 to 1166), verified to sit inside a SINGLE old block so today's production genuinely fuses it. It contains 12 clean dialogue turns of lengths 7, 7, 9, 10, 11, 12, 15, 16, 17, 21, 28 and 55. That is deliberately the COMMON case; Stage 0 and Stage 1 both used a 480 char turn from the top 0.4% of this book.
+
+- Arm P: production today. The passage packed by the real `narrate_worker.pack_text`, giving 2 calls of 346 and 232 chars, neutral parameters, 150 ms gaps.
+- Arm B: the extraction fix only. 16 calls at the recovered paragraph boundaries, neutral parameters everywhere, 400 ms paragraph gaps.
+- Arm BD: Arm B plus Stage 1's finding. Identical segmentation, seeds, spoken text, pauses and spans, asserted in code; the ONLY difference is `exaggeration` 0.7 and `cfg_weight` 0.35 on the 12 dialogue turns.
+
+No pronunciation alias in any arm, so an alias cannot confound this the way it did Stage 0's A against C.
+
+(V) Rendered on the 4090, chatterbox-tts 0.1.7, torch 2.6.0+cu124, CUDA 12.4, all three through the same fade and loudness path to -21.0 LUFS. Durations P 32.270 s, B 39.800 s, BD 41.400 s. The reference hash guard passed, so all three used the approved `male_ref.wav`.
+
+(V) Owner blind listening 2026-08-03, mapping opened only after the verdict, every blind copy hash-verified against both the mapping and the rendered arm. Ranking best to worst was `Stage0_Blind_02`, then `Stage0_Blind_03`, then `Stage0_Blind_01`, which decodes to **B best, BD second, P worst**.
+
+WHAT THIS SETTLES.
+
+- THE EXTRACTION FIX IS VALIDATED BY LISTENING. P is exactly what production does today and it came last. P versus B is a clean isolation: same text, same neutral parameters, only segmentation and the pauses it implies differ. Both arms carrying recovered boundaries beat P, and they did so under DIFFERENT parameter settings, which makes the boundary result robust rather than a lucky pairing. This is the first listening evidence for the change, and unlike Stage 0 and Stage 1 it lands on the short-turn common case.
+- THE STAGE 1 EXPRESSIVE PROFILE DOES NOT TRANSFER TO SHORT TURNS, and this negative result is the more useful half. B versus BD is a clean parameter isolation and BD finished BELOW B. Stage 1 established 0.7/0.35 beats the neutral defaults on a 480 char turn; Stage 2 shows it does not beat neutral on turns of 7 to 55 chars. The benefit is LENGTH DEPENDENT.
+
+CONSEQUENCE FOR THE PERFORMANCE DIRECTOR DESIGN, and this narrows the amendment recorded at the end of the Stage 1 section. That amendment says to map the expressive profile to dialogue and keep narration neutral. On this evidence that is TOO BROAD. Only 19 of this book's 5,024 turns exceed 400 chars, so applying 0.7/0.35 to all dialogue would have made 99.6% of turns worse. The cheapest correct action is to NOT build it: production applies no such profile today, so nothing needs changing. If it is ever revisited, gate it on turn length and prove the gate on a length sweep first.
+
+STILL NOT ESTABLISHED, and do not let this get rounded up:
+- One passage, one listener, one render per arm, same limits as every stage so far.
+- NO SEED CONTROL in this run. Stage 1 included Arm D2 to bound the noise floor; Stage 2 has no equivalent. B and BD landed adjacent and the owner's verdict on BD was soft ("not as bad as 1"). Treat "B beats BD" as suggestive. The well-supported gap is that BOTH beat P, which the owner separated clearly.
+- Durations differ for known reasons, not content: B and BD carry fifteen 400 ms paragraph gaps that P does not, and BD's parameters render slightly slower on identical text.
+- Nothing here says anything about narration parameters, or about a second book.
+
+WHAT REMAINS BEFORE A FULL BOOK: throughput (unmeasured, see the previous section), then the Power of the Dog re-narration, roughly 3 hours of 4090 time, which requires DELETING `blocks.json` rather than resuming over it.
+
+### Repo hygiene: book text was public, now untracked (2026-08-03)
+
+(V) `ab_samples/ab_chunks.json` and `ab_samples/README.txt` were tracked in the PUBLIC repo and both contained real Power of the Dog prose: 3,674 characters across 12 body chunks in the JSON, and the same excerpts again in plain human-readable form in the README, one of which is sexually explicit. `.gitignore:21` already said `ab_samples/`; the intent to exclude them existed and was defeated by the classic trap, since gitignore never untracks what is already tracked. They entered at `c7482af` (portable config commit), not at any recent commit.
+
+`git rm --cached` on both, run by the owner 2026-08-03. Tracked file count 40 to 38, both now correctly matched by `.gitignore:21`, and both still on disk so the A/B harness keeps working.
+
+STILL OPEN: the files remain reachable in HISTORY at `c7482af` and every commit after it. Removing them from HEAD stops them appearing in the file browser and in fresh clones' working trees; it does not scrub the history. A full scrub means a rewrite and a force push on a public repo, which is a bigger decision and matters more than usual because a GitHub Release is planned. A sweep of all 40 tracked files found no other file with a book-prose signature.
