@@ -52,4 +52,7 @@ AUDIT_*.md
 HANDOFF_*.md
 
 # Local Claude Code session state and settings, machine-specific.
-.claude/
+# .claude/skills/ IS tracked: it carries the project history migrated out of
+# CLAUDE.md on 2026-08-04. settings.local.json and *.bak stay local.
+.claude/*
+!.claude/skills/
