@@ -59,7 +59,7 @@ def runs_ok(exe):
 
 
 def ffmpeg_already_available():
-    """Path to a WORKING ffmpeg, or None. Order: PATH, our tools\ copy, choco."""
+    """Path to a WORKING ffmpeg, or None. Order: PATH, our tools\\ copy, choco."""
     candidates = [shutil.which("ffmpeg"), FFMPEG_EXE,
                   Path(r"C:\ProgramData\chocolatey\bin\ffmpeg.exe")]
     for cand in candidates:

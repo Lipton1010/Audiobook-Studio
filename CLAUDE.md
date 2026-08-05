@@ -85,13 +85,13 @@ D:\Audiobook_Pipeline\app\ is a local web app wrapping the whole pipeline, PDF t
 
 ## Batched narration engine (default since 2026-07-24)
 
-app/batched_narrate.py puts N text chunks that share one voice through a SINGLE T3 forward pass. It reproduces v1's per-sequence math (right-padded text so real tokens keep learned positions 0..T_j-1, CFG as a 2N-row block-ordered batch, explicit position_ids from cumsum(mask)-1, per-row EOS with finished rows frozen to a safe one-hot). Quality is verified: byte-identical tokens to the old parallel engine. S3Gen still vocodes unbatched on v1's exact path.
+app/batched_narrate.py puts N text chunks that share one voice through a SINGLE T3 forward pass. It reproduces v1's per-sequence math (right-padded text so real tokens keep learned positions 0..T_j-1, CFG as a 2N-row block-ordered batch, explicit position_ids from cumsum(mask)-1, per-row EOS with finished rows frozen to a safe one-hot). Quality is verified: byte-identical tokens to the old parallel engine. S3Gen batches a bucket when there is more than one valid row and trims every result to its real token length; one-row buckets use v1's exact path.
 
 - Selected by config["engine"] ("batched" default, "parallel" fallback). server.py DEFAULT_ENGINE reads env AUDIOBOOK_ENGINE. The batched engine runs ONE process on purpose.
 - VRAM safety is a TOKEN BUDGET, not a fixed batch size: buckets cap rows*Tmax at BATCH_TOKEN_BUDGET (default 1300, cap BATCH_SIZE 12). A fixed count OOM-thrashed and looked like a hang ~62% into a book once chunks got long. On the 4090 the longest chunks land at N=4, medium ~N=8, short at the 12 cap.
 - HONEST SPEEDUP, do not overstate it: ~2x on a full book, and it is chunk-length dependent. Short/medium chunks hit ~3-4x; long chunks near CHAR_CEILING 400 are compute-bound AND forced to small batches, giving only ~1.1-1.2x. Earlier versions of this file said the budget was over-conservative and that S3Gen was "~15% of gen time and overlappable"; BOTH were measured and disproved on 2026-07-26, see the next section.
 - batched_generate frees the kv-cache and calls torch.cuda.empty_cache() before vocoding. This is load-bearing: without it the reserved pool climbs across buckets and pushes S3Gen onto cudaFree-and-retry (one 728-token chunk took 95s instead of 0.87s).
-- Known trade-off: a bucket runs until EVERY row hits EOS, so one row that never emits EOS makes the whole bucket run to max_new_tokens. Mitigation is length bucketing plus modest bucket sizes. CORRECTED 2026-08-04, this used to say "output stays correct, only throughput suffers" and that is FALSE: a runaway row vocodes its padding as audible DEAD AIR. One occurred in the Power of the Dog re-narration (1 chunk in 10,042) and put a 21.4 second silence inside a finished 18 hour m4b. It was invisible until the file was analysed. There is no guard today; the worker already logs `tok_out` per row, so a row at or near the 1000 cap could be regenerated automatically the way the empty-token-stream case already falls back to serial. Fixing one costs minutes: delete that segment, resume (plan_hash is unchanged so nothing else regenerates), reassemble.
+- A bucket runs until EVERY row hits EOS, so one row that never emits EOS still makes the bucket run to max_new_tokens. CORRECTED 2026-08-04, this used to say "output stays correct, only throughput suffers" and that is FALSE: a runaway row once vocoded its padding as 21.4 seconds of audible DEAD AIR. The worker now blocks capped rows before vocoding, retries only that row in isolation up to three times, and fails resumably rather than writing bad audio if every retry caps. The dependency-free safety logic is regression-tested; a fresh CUDA production run remains a release validation gate.
 - app/ab_*.py are the A/B harness and self-tests used to prove equivalence. Keep them.
 
 ## Measured findings, dead ends, and traps (compressed core)
@@ -176,8 +176,8 @@ what round 2 rejected.
 
 OPERATIONAL TRAP, has cost a wasted run: `worker_loop` SKIPS extraction whenever blocks.json exists,
 so changing pipeline_text and resuming an existing job has NO effect. DELETE blocks.json to re-extract
-(the per-page OCR cache survives), or create a fresh job. Changed blocks change plan_hash, which wipes
-segments and forces a full re-narration. Always audit blocks.json on disk after a resume.
+(the per-page OCR cache survives), or create a fresh job. Spoken text/type changes invalidate segments;
+source-page, chapter, and assembly-only metadata do not. Always audit blocks.json on disk after a resume.
 
 ## Portable configuration
 
@@ -193,7 +193,7 @@ Two-column reference books are a different document class from novels and verse,
 - OPERATIONAL TRAP, cost a wasted narration run: worker_loop SKIPS extraction whenever blocks.json exists. So changing pipeline_text and resuming an existing job has NO effect, and plan_hash cannot save you because the blocks it hashes are never regenerated. To apply an extraction change to an existing job, DELETE blocks.json and resume; the per-page OCR cache in pages\ survives, so it costs re-tagging only, no re-OCR. Always audit blocks.json on disk after a resume rather than assuming the fix landed.
 - Path B tagging guards added for this class of book: running headers ("CHAPTER 6 | COSMOLOGY", filtered by the pipe form only, so real chapter openers survive because they emit "CHAPTER 6" and "COSMOLOGY" as separate pipe-free lines); dice tables (a "1d20 Claim to Fame" header plus 3+ numbered rows, where SHORT fragment rows collapse to one marker but LONG rows that are real prose merely tabulated are kept with roll numbers stripped); diagram pages (many short distinct labels AND under 900 total chars, the volume ceiling being what stops it eating a random-tables page); and raw HTML tables, which OCR emits on a few pages and which the markup-only guard cannot catch because the cells contain real words.
 - rasterize_page has a 12 megapixel budget. Fold-out pages exist: DMG page 154 is a 4934x7000pt map that rendered a 107 MB JPEG at 200 dpi and made Ollama return 413, killing extraction 148 pages in.
-- CHAPTER MARKS CAN GO MISSING. m4b chapters come from detected headings, so if OCR does not transcribe a chapter's number (DMG page 106 opens straight into body text because the "4" is decorative art), that chapter gets no mark. The DMG has 5 marks for 6 chapters. The robust fix would be deriving marks from the PDF outline, which is complete (556 entries), instead of from headings; not done.
+- CHAPTER MARKS CAN GO MISSING from detected headings when OCR does not transcribe decorative chapter numbers. New extractions now retain 1-based source-page provenance, the server persists the PDF outline, and assembly uses selected outline divisions when they provide more chapter marks than detected headings. Destinations map to the first real narrated chunk on or after the outline page. This is regression-tested on synthetic mappings but still needs an installed-build M4B navigation check on a real book before release.
 - Expect frequent omission markers in table-dense chapters. That is the extraction rule working, but it is audible, so listen to a table-heavy stretch before committing to a long book.
 
 ## Repo hygiene (OPEN ITEM, blocks a public Release)
@@ -201,8 +201,19 @@ Two-column reference books are a different document class from novels and verse,
 ab_samples/ was tracked in the PUBLIC repo and contained real book prose, including an explicit
 excerpt. `git rm --cached` on 2026-08-03 removed both files from HEAD and .gitignore now matches
 them, so they no longer appear in fresh clones. THEY REMAIN REACHABLE IN HISTORY at c7482af and
-every commit after it. Scrubbing means a rewrite and a force push on a public repo; decide that
+every commit after it. Scrubbing means a rewrite and a force push on a public repo; complete that
 before publishing a GitHub Release. A sweep of all tracked files found no other book prose.
+
+## Release stabilization (approved 2026-08-04)
+
+- `tests/` is the dependency-free regression suite for runaway-token recovery, source-page
+  provenance, outline chapter mapping, segment-hash migration, and completed-job cache cleanup.
+- Segment hashes are now prefixed `v2:` and exclude assembly-only metadata. A matching legacy hash
+  migrates in place without deleting validated segments; spoken text, voice, or planner changes
+  still invalidate them.
+- Completed jobs expose safe segment-cache cleanup. It removes only resumable PCM segments and
+  preserves the job record, blocks, logs, job-local finished audio, and copied audiobook.
+- `AGENTS.md` is the tool-neutral entry point and `RELEASE_CHECKLIST.md` is the mandatory release gate.
 
 WINDOWS-ONLY GIT WRITES. Working-tree files are CRLF while HEAD blobs are LF, reconciled by
 core.autocrlf. A git run from a Linux shell or container reports ALL tracked files as modified, and

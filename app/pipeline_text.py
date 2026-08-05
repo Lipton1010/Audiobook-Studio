@@ -271,6 +271,13 @@ def stitch_pages(pages_of_blocks):
                 and prev["text"][-1] not in TERMINAL_PUNCT
             ):
                 prev["text"] = prev["text"].rstrip() + " " + head["text"].lstrip()
+                # Preserve the full source span when a sentence crosses a page.
+                # Assembly metadata can then map PDF-outline entries to the
+                # first real audio on or after their page without changing the
+                # narration segment identity.
+                head_end = head.get("source_page_end", head.get("source_page"))
+                if head_end is not None:
+                    prev["source_page_end"] = head_end
                 page_blocks = page_blocks[1:]
         merged.extend(page_blocks)
     return merged
@@ -546,16 +553,19 @@ def _verse_page_paragraphs(lines_with_x):
     return paras
 
 
-def paragraphs_to_blocks(paragraphs):
+def paragraphs_to_blocks(paragraphs, source_page=None):
     """Path A blocks: mostly body, with conservative heading detection."""
     blocks = []
     for p in paragraphs:
         if HEADING_LINE_RE.match(p.strip()):
-            blocks.append({"type": "heading", "text": strip_markdown(p)})
+            block = {"type": "heading", "text": strip_markdown(p)}
         elif is_heading(p):
-            blocks.append({"type": "heading", "text": strip_markdown(p)})
+            block = {"type": "heading", "text": strip_markdown(p)}
         else:
-            blocks.append({"type": "body", "text": strip_markdown(p)})
+            block = {"type": "body", "text": strip_markdown(p)}
+        if source_page is not None:
+            block["source_page"] = int(source_page)
+        blocks.append(block)
     return blocks
 
 
@@ -581,7 +591,7 @@ def extract_path_a(pdf_path, page_from, page_to, progress_cb=None):
                 paras = _verse_page_paragraphs([(x0, t) for x0, _, t in lines])
             else:
                 paras = _prose_page_paragraphs(lines, leading)
-            pages.append(paragraphs_to_blocks(paras))
+            pages.append(paragraphs_to_blocks(paras, source_page=pno + 1))
             if progress_cb:
                 progress_cb(idx + 1, total)
         return stitch_pages(pages), mode

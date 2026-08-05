@@ -576,6 +576,19 @@ function renderJob(j) {
     if (j.audiobook_dir) {
       row.appendChild(btn('Open output folder', 'primary', () => openOutputFolder(j.id)));
     }
+    if (j.segment_cache_bytes > 0) {
+      row.appendChild(btn(`Free ${fmtBytes(j.segment_cache_bytes)} segment cache`, '', async () => {
+        const warning = 'Remove this completed job\'s resumable PCM segments? The job record, logs, extraction data, downloadable finished audio, and copied audiobook will stay. Re-narration will be required if you later need new speech segments.';
+        if (!confirm(warning)) return;
+        const response = await fetch(`/api/jobs/${j.id}/cleanup-cache`, {method: 'POST'});
+        const result = await response.json();
+        if (!response.ok) {
+          alert(result.error || 'Could not clean the segment cache.');
+          return;
+        }
+        refreshJobs();
+      }));
+    }
     row.appendChild(btn('Delete', 'danger', async () => {
       if (confirm('Delete this job record and its temporary files? The copied audiobook in the output library will stay.')) {
         await fetch(`/api/jobs/${j.id}/delete`, {method: 'POST'}); refreshJobs();

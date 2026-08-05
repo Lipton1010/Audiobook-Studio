@@ -538,12 +538,13 @@ def suggest_path(pdf_path, pages):
 
 def extract_book_meta(pdf_path, title, job_dir):
     """Pull audiobook tags + cover art from the source PDF (base env has fitz;
-    the narration worker does not). Returns (metadata_dict, cover_path_or_None).
+    the narration worker does not). Returns (metadata, cover path, PDF outline).
     Cover: the first embedded image on page 1, else page 1 rendered. Never
-    fatal - a missing cover or metadata just yields fewer tags."""
+    fatal - missing cover, metadata, or outline just yields fewer tags."""
     meta = {"title": title, "album": title, "genre": "Audiobook",
             "media_type": "2"}  # 2 = Audiobook in the iTunes/MP4 stik atom
     cover_path = None
+    outline = []
     try:
         doc = fitz.open(pdf_path)
         pdf_meta = doc.metadata or {}
@@ -552,6 +553,14 @@ def extract_book_meta(pdf_path, title, job_dir):
             meta["album_artist"] = pdf_meta["author"]
         if pdf_meta.get("title"):
             meta["title"] = meta["album"] = pdf_meta["title"]
+        try:
+            outline = [
+                {"level": int(level), "title": str(entry_title), "page": int(page)}
+                for level, entry_title, page in doc.get_toc(simple=True)
+                if int(page) > 0
+            ]
+        except Exception as e:
+            print(f"outline extraction failed: {e}")
         # Cover: prefer the largest embedded image on page 1, else render it.
         try:
             page = doc.load_page(0)
@@ -574,7 +583,7 @@ def extract_book_meta(pdf_path, title, job_dir):
         doc.close()
     except Exception as e:
         print(f"metadata extraction failed: {e}")
-    return meta, cover_path
+    return meta, cover_path, outline
 
 
 def scan_library():
@@ -746,7 +755,10 @@ def run_extraction(st):
                     pt.rasterize_page(pdf, pno, str(img_path))
                 md = ocr_page(str(img_path))
                 md_path.write_text(md, encoding="utf-8")
-            page_blocks.append(pt.tag_blocks(md))
+            tagged = pt.tag_blocks(md)
+            for block in tagged:
+                block["source_page"] = pno + 1
+            page_blocks.append(tagged)
             st["stage_progress"] = {"stage": "extract", "done": idx + 1, "total": total}
             save_state(st)
             log_line(job_id, f"extracted page {pno + 1} ({idx + 1}/{total})")
@@ -798,18 +810,46 @@ def narration_worker_count():
 
 
 def _plan_hash(job_dir, st):
-    """Identity of the segment set: if any input that determines the audio
-    changes (text, voice, pause profile, planner version), old segments are
-    stale and must be regenerated."""
-    blob = (job_dir / "blocks.json").read_bytes()
+    """Identity of generated segment audio, excluding assembly-only metadata.
+
+    Page provenance, chapter marks, pauses, and output format can all change at
+    assembly time without changing a segment's spoken samples. Hash only the
+    block fields that determine chunk text, plus the voice and planner version,
+    so those metadata improvements never trigger an unnecessary re-narration.
+    """
+    payload = json.loads((job_dir / "blocks.json").read_text(encoding="utf-8"))
+    spoken_blocks = [
+        {"type": block.get("type"), "text": block.get("text", "")}
+        for block in payload.get("blocks", [])
+    ]
+    blob = json.dumps(
+        spoken_blocks, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    voice_sig = _voice_signature(st)
+    key = b"\x00".join([
+        blob,
+        st["path"].encode(),
+        voice_sig.encode(),
+        PLAN_VERSION.encode(),
+    ])
+    return hashlib.sha256(key).hexdigest()
+
+
+def _voice_signature(st):
     # Include the voice file's content signature (size + mtime), not just its
     # path, so overwriting a voice under the same name invalidates segments.
     vp = voice_wav_path(st.get("voice"))
     try:
         vstat = os.stat(vp)
-        voice_sig = f"{vp}:{vstat.st_size}:{vstat.st_mtime_ns}"
+        return f"{vp}:{vstat.st_size}:{vstat.st_mtime_ns}"
     except OSError:
-        voice_sig = vp
+        return vp
+
+
+def _legacy_plan_hash(job_dir, st):
+    """The pre-provenance hash, used only to migrate existing segment sets."""
+    blob = (job_dir / "blocks.json").read_bytes()
+    voice_sig = _voice_signature(st)
     key = b"\x00".join([
         blob,
         st["path"].encode(),
@@ -828,9 +868,19 @@ def ensure_segments_fresh(job_dir, st):
         for t in seg_dir.glob("seg_*.tmp*.wav"):
             t.unlink()
     hp = job_dir / "plan_hash.txt"
-    key = _plan_hash(job_dir, st)
+    key = "v2:" + _plan_hash(job_dir, st)
     old = hp.read_text(encoding="utf-8").strip() if hp.exists() else None
-    if old is not None and old != key and seg_dir.exists():
+    if old is None:
+        stale = False
+    elif old.startswith("v2:"):
+        stale = old != key
+    else:
+        # Existing jobs have an unprefixed hash over the raw blocks.json.
+        # Accept and migrate it only when it still matches exactly; this keeps
+        # every validated segment while moving future resumes to the metadata-
+        # independent identity.
+        stale = old != _legacy_plan_hash(job_dir, st)
+    if stale and seg_dir.exists():
         stale = list(seg_dir.glob("seg_*.wav"))
         for f in stale:
             f.unlink()
@@ -847,6 +897,48 @@ def _count_segments(seg_dir):
     if not seg_dir.exists():
         return 0
     return sum(1 for f in seg_dir.glob("seg_??????.wav") if _SEG_RE.match(f.name))
+
+
+def _directory_size(path):
+    """Total bytes below a directory; missing paths are an empty cache."""
+    path = Path(path)
+    if not path.exists():
+        return 0
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+
+
+def cleanup_completed_job_cache(job_id):
+    """Remove only resumable PCM segments from a completed job.
+
+    The job record, extraction blocks, log, chapter metadata, job-local final
+    output, and copied audiobook-library output are deliberately preserved.
+    """
+    st = load_state(job_id)
+    if not st:
+        raise ValueError("job not found")
+    if st.get("status") != "done":
+        raise ValueError("cache cleanup is only available for completed jobs")
+    seg_dir = JOBS_DIR / job_id / "segments"
+    freed = _directory_size(seg_dir)
+    if seg_dir.exists():
+        shutil.rmtree(seg_dir)
+    st["segment_cache_bytes"] = 0
+    st["segment_cache_freed_bytes"] = st.get("segment_cache_freed_bytes", 0) + freed
+    st["segment_cache_cleared_at"] = time.time()
+    save_state(st)
+    log_line(job_id, f"freed {freed} bytes of completed narration segment cache")
+    return freed
+
+
+def _ensure_segment_cache_stat(st, job_dir):
+    """Populate cache size once for completed jobs created before this field."""
+    seg_dir = Path(job_dir) / "segments"
+    if st.get("status") == "done" and (
+        "segment_cache_bytes" not in st
+        or (st.get("segment_cache_bytes", 0) and not seg_dir.exists())
+    ):
+        st["segment_cache_bytes"] = _directory_size(seg_dir)
+        save_state(st)
 
 
 def _write_worker_pids(job_dir, procs):
@@ -886,7 +978,7 @@ def run_narration(st):
     job_id = st["id"]
     job_dir = JOBS_DIR / job_id
     engine = st.get("engine", DEFAULT_ENGINE)
-    meta, cover = extract_book_meta(st["pdf_path"], st["title"], job_dir)
+    meta, cover, outline = extract_book_meta(st["pdf_path"], st["title"], job_dir)
     config = {
         "path": st["path"],
         "reference_wav": voice_wav_path(st.get("voice")),
@@ -899,6 +991,7 @@ def run_narration(st):
         "batch_s3gen": BATCH_S3GEN,
         "metadata": meta,
         "cover_image": cover,
+        "pdf_outline": outline,
     }
     (job_dir / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
     ensure_segments_fresh(job_dir, st)
@@ -1001,6 +1094,9 @@ def worker_loop():
 
             st["status"] = "done"
             st["finished_at"] = time.time()
+            st["segment_cache_bytes"] = _directory_size(
+                JOBS_DIR / job_id / "segments"
+            )
             save_state(st)
             log_line(job_id, f"job complete, audiobook copied to {book_dir}")
         except _Cancelled:
@@ -1086,6 +1182,7 @@ def job_detail(job_id):
     if not st:
         return None
     job_dir = JOBS_DIR / job_id
+    _ensure_segment_cache_stat(st, job_dir)
     if st.get("status") == "narrating":
         st["narrate_progress"] = _narration_progress(job_dir, st)
     log_path = job_dir / "log.txt"
@@ -1114,6 +1211,7 @@ def beta_test_report(job_id):
     if not st:
         return None
     job_dir = JOBS_DIR / job_id
+    _ensure_segment_cache_stat(st, job_dir)
     created = st.get("created_at")
     finished = st.get("finished_at")
     wall_time = None
@@ -1366,6 +1464,13 @@ class Handler(BaseHTTPRequestHandler):
                     _json_response(self, {"ok": True})
                 else:
                     _json_response(self, {"error": "stop the job first"}, 400)
+            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/cleanup-cache", path):
+                job_id = path.split("/")[3]
+                try:
+                    freed = cleanup_completed_job_cache(job_id)
+                    _json_response(self, {"ok": True, "freed_bytes": freed})
+                except ValueError as exc:
+                    _json_response(self, {"error": str(exc)}, 400)
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/open-output", path):
                 job_id = path.split("/")[3]
                 try:

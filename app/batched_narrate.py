@@ -21,13 +21,12 @@ Design (verified by a design panel + adversarial review):
   one degenerate row can never abort the batch. S3Gen runs unbatched per row on
   v1's exact code path.
 
-KNOWN TRADE-OFF (perf, not correctness): the batch runs until EVERY row hits EOS
-(or max_new_tokens), so a bucket's wall-clock is set by its slowest row, and one
-chunk that never emits EOS makes the whole bucket run the full 1000 steps at 2N
-rows. Output stays correct (finished rows are frozen and truncated at their own
-EOS); only throughput suffers. Shrinking the batch mid-run would require
-re-indexing the DynamicCache, so the mitigation is length-bucketing (group
-similar-length chunks) plus modest bucket sizes.
+KNOWN TRADE-OFF: the batch runs until EVERY row hits EOS (or max_new_tokens), so
+a bucket's wall-clock is set by its slowest row. A row that reaches the cap must
+not be vocoded: its non-speech tail becomes audible dead air. The worker detects
+that exact condition and regenerates only the capped row in isolation before
+vocoding. Shrinking a live batch would require re-indexing the DynamicCache, so
+length bucketing remains the throughput mitigation.
 
 This module only reaches into an already-loaded ChatterboxTTS instance's
 submodules; it imports no model weights of its own.
@@ -51,6 +50,7 @@ from chatterbox.models.s3tokenizer import drop_invalid_tokens
 BOS = 6561  # start_speech_token
 EOS = 6562  # stop_speech_token
 SPEECH_VOCAB_LIMIT = 6561  # keep tokens strictly below this (drops start/stop), tts.py:262
+MAX_NEW_TOKENS = 1000
 
 
 def tokenize_chunk(model, text):
@@ -78,7 +78,7 @@ def batched_generate(
     repetition_penalty=1.2,
     min_p=0.05,
     top_p=1.0,
-    max_new_tokens=1000,
+    max_new_tokens=MAX_NEW_TOKENS,
     forced_ids=None,          # test hook: list[N] of list[int]; force these tokens instead of sampling
     capture_logits=False,     # test hook: also return per-step post-CFG combined logits (N,V)
 ):

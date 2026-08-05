@@ -50,6 +50,8 @@ class _NoWatermark:
 perth.PerthImplicitWatermarker = _NoWatermark
 
 from chatterbox.tts import ChatterboxTTS
+from assembly_metadata import outline_chapter_marks
+from narration_safety import repair_capped_sequences
 
 CHAR_CEILING = 400
 SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?])\s+(?=[A-Z"\'‘“])')
@@ -172,23 +174,30 @@ def build_plan(blocks, profile):
         text = normalize_quoted_ellipsis(b["text"].strip())
         if not text:
             continue
+        provenance = {
+            key: b[key]
+            for key in ("source_page", "source_page_end")
+            if key in b
+        }
         last_block = i == n - 1
         if b["type"] == "heading":
-            plan.append(
-                {
-                    "text": text,
-                    "before_ms": profile["heading_before_ms"],
-                    "after_ms": profile["heading_after_ms"] + (0 if last_block else profile["block_gap_ms"]),
-                    "heading": text,
-                }
-            )
+            entry = {
+                "text": text,
+                "before_ms": profile["heading_before_ms"],
+                "after_ms": profile["heading_after_ms"] + (0 if last_block else profile["block_gap_ms"]),
+                "heading": text,
+            }
+            entry.update(provenance)
+            plan.append(entry)
         else:
             subs = pack_text(text)
             for j, sc in enumerate(subs):
                 after = profile["gap_ms"]
                 if j == len(subs) - 1:
                     after = 0 if last_block else profile["block_gap_ms"]
-                plan.append({"text": sc, "before_ms": 0, "after_ms": after})
+                entry = {"text": sc, "before_ms": 0, "after_ms": after}
+                entry.update(provenance)
+                plan.append(entry)
     return plan
 
 
@@ -355,6 +364,27 @@ def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size
         _t0 = _time.time()
         seqs = bn.batched_generate(model, [t for _, t in bucket], conds)
         _t3s = _time.time() - _t0
+        original_tok_out = [len(s) for s in seqs]
+        if any(n >= bn.MAX_NEW_TOKENS for n in original_tok_out):
+            def _retry_one(row, _attempt):
+                return bn.batched_generate(model, [bucket[row][1]], conds)[0]
+
+            def _log_retry(row, attempt, token_count):
+                chunk_index = bucket[row][0]
+                print(
+                    f"shard {shard}: chunk {chunk_index} hit the "
+                    f"{token_count}-token decode cap; isolated retry "
+                    f"{attempt}/3",
+                    flush=True,
+                )
+
+            seqs = repair_capped_sequences(
+                seqs,
+                bn.MAX_NEW_TOKENS,
+                _retry_one,
+                max_attempts=3,
+                on_retry=_log_retry,
+            )
         _t0 = _time.time()
         wavs = (bn.seqs_to_wavs_batched if batch_s3gen else bn.seqs_to_wavs)(
             model, conds, seqs)
@@ -363,7 +393,7 @@ def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size
         # segments are only written once a whole bucket finishes.
         print(f"shard {shard}: bucket {bnum+1}/{len(buckets)} N={len(bucket)} Tmax={_tmax} "
               f"t3={_t3s:.2f}s s3gen={_s3s:.2f}s "
-              f"tok_out={[len(s) for s in seqs]} "
+              f"tok_out={original_tok_out} final_tok_out={[len(s) for s in seqs]} "
               f"reserved={_torch.cuda.memory_reserved()/1e9:.2f}GB", flush=True)
         for (i, _), wav in zip(bucket, wavs):
             if wav is None:
@@ -451,7 +481,9 @@ def run_assemble(job_dir, plan, config, profile):
     # One header-only pass: total length + chapter marks. sf.info does
     # not read audio data, so this is cheap even for thousands of chunks.
     total_samples = 0
-    chapters = []
+    detected_chapters = []
+    page_starts = []
+    seen_pages = set()
     cursor = 0
     for i, entry in enumerate(plan):
         frames = sf.info(str(seg_dir / f"seg_{i:06d}.wav")).frames
@@ -459,10 +491,20 @@ def run_assemble(job_dir, plan, config, profile):
         after = int(sr * entry["after_ms"] / 1000.0)
         head = entry.get("heading")
         if head and CHAPTER_RE.match(head):
-            chapters.append((int(cursor / sr * 1000), head))
+            detected_chapters.append((int(cursor / sr * 1000), head))
+        source_page = entry.get("source_page")
+        if source_page is not None and source_page not in seen_pages:
+            page_starts.append((source_page, int(cursor / sr * 1000)))
+            seen_pages.add(source_page)
         cursor += before + frames + after
     total_samples = cursor
     total_ms = int(total_samples / sr * 1000)
+    outline_chapters = outline_chapter_marks(config.get("pdf_outline"), page_starts)
+    chapters = (
+        outline_chapters
+        if len(outline_chapters) > len(detected_chapters)
+        else detected_chapters
+    )
     # If the book opens with lead-in before the first chapter heading,
     # give that region a chapter so navigation covers the whole file.
     if chapters and chapters[0][0] > 1500:

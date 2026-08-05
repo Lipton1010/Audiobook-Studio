@@ -8,16 +8,18 @@ Local PDF to audiobook pipeline for legally purchased books, personal use only. 
 
 - `app/` — Audiobook Studio, a local web app wrapping the whole pipeline.
   - `server.py` — stdlib HTTP server + job queue (base conda env). UI at http://localhost:8765. Runs every stage strictly sequentially so the OCR model and the TTS model never share the GPU.
-  - `pipeline_text.py` — extraction and tagging. Path A: text-layer PDFs (prose via x-indent paragraphing, verse via sentence-run grouping, auto-detected). Path B: PyMuPDF rasterize, GLM-OCR via Ollama, block tagging (headings, dialogue, tables and data lists become short spoken omission markers).
-  - `narrate_worker.py` — Chatterbox narration subprocess (chatterbox conda env). Per-chunk WAV checkpoints make multi-hour narrations resumable; output is a single file, default **m4b with navigable chapters** (one per top-level heading), or mp3 / lossless wav. m4b/mp3 are encoded straight from the segments via ffmpeg.
+  - `pipeline_text.py` — extraction and tagging. Path A: text-layer PDFs (adaptive prose paragraphing uses first-line indents when present and vertical spacing otherwise; verse uses sentence-run grouping). Path B: PyMuPDF rasterize, GLM-OCR via Ollama, block tagging (headings, dialogue, tables and data lists become short spoken omission markers). Both paths retain source-page provenance for assembly metadata.
+  - `narrate_worker.py` — Chatterbox narration subprocess (chatterbox conda env). Per-chunk WAV checkpoints make multi-hour narrations resumable; output is a single file, default **m4b with navigable chapters**, or mp3 / lossless wav. Chapter marks use detected top-level headings and fall back to accurately mapped PDF-outline entries when the outline is more complete. m4b/mp3 are encoded straight from the segments via ffmpeg.
   - `convert_voice.py` — converts an uploaded voice sample (wav/mp3/flac/ogg) to a mono reference WAV for cloning.
-  - `static/index.html` — the UI: PDF import and library, jobs with live progress, voice upload and per-job voice selection. Completed jobs have an explicit audio download, an **Open output folder** button, and a compressed beta-test report containing the job and available setup logs.
+  - `static/index.html` — the UI: PDF import and library, jobs with live progress, voice upload and per-job voice selection. Completed jobs have an explicit audio download, an **Open output folder** button, safe segment-cache cleanup, and a compressed beta-test report containing the job and available setup logs.
 - `samples/` — the validated standalone scripts the app grew out of (`path_a.py`, `stage_two.py`, `harvest_lazy_dm.py`, `chunk_and_narrate.py`, `narrate_tagged.py`) and the Ollama `Modelfile` for the tuned `glm-ocr-doc` model.
 - `CLAUDE.md` — standing rules and current validated state of the project.
 - `Start_Audiobook_Studio.bat` — one-click launcher; opens the app in its own window (falls back to your browser if that fails).
 - `install/AudiobookStudio.iss` — Inno Setup script that builds a single `Setup_AudiobookStudio.exe` (see Install below). Build it with `install\build_installer.bat`, which stages a clean copy of the repo with `git archive` first so only tracked files can be packaged, then verifies the compiled installer against Inno's own `OutputManifestFile` and fails the build if any book, audio file, voice clip or local config got embedded. (Do not try to audit the .exe with 7-Zip; it cannot open an Inno-compiled installer.)
 
 Books (PDFs), audio, and generated jobs are gitignored; only code and docs are tracked.
+
+For development validation, run `python -m unittest discover -s tests -v`. Release builds must also satisfy `RELEASE_CHECKLIST.md`.
 
 ## Requirements
 
