@@ -6,11 +6,11 @@ the exact commit and installer artifact being published.
 ## Source and privacy
 
 - [ ] `git status --short --branch` is clean and synchronized with the intended remote.
-- [ ] Dependency-free regression tests pass: `python -m unittest discover -s tests -v`.
-- [ ] Python and embedded JavaScript syntax checks pass.
-- [ ] The two former `ab_samples` excerpt files are absent from every rewritten Git ref.
-- [ ] A recoverable pre-rewrite Git bundle exists outside the published history.
-- [ ] No PDF, generated audio, voice sample, job data, local config, or private audition text is tracked.
+- [x] Dependency-free regression tests pass: `python -m unittest discover -s tests -v`.
+- [x] Python and embedded JavaScript syntax checks pass.
+- [x] The two former `ab_samples` excerpt files are absent from every rewritten Git ref.
+- [x] A recoverable pre-rewrite Git bundle exists outside the published history.
+- [x] No PDF, generated audio, voice sample, job data, local config, or private audition text is tracked.
 
 ## Installer artifact
 

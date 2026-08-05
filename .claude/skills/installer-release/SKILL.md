@@ -223,4 +223,28 @@ The current installer change is deliberately limited to that boundary. It uses I
 `git rm --cached` on both, run by the owner 2026-08-03. Tracked file count 40 to 38, both now correctly matched by `.gitignore:21`, and both still on disk so the A/B harness keeps working.
 
 STILL OPEN: the files remain reachable in HISTORY at `c7482af` and every commit after it. Removing them from HEAD stops them appearing in the file browser and in fresh clones' working trees; it does not scrub the history. A full scrub means a rewrite and a force push on a public repo, which is a bigger decision and matters more than usual because a GitHub Release is planned. A sweep of all 40 tracked files found no other file with a book-prose signature.
+
+SUPERSEDED 2026-08-04: a verified full bundle was created under ignored `Output/`, then every local
+ref was rewritten to remove only `ab_samples/ab_chunks.json` and `ab_samples/README.txt`. The rewrite
+backup refs and local Codex checkpoint trees that still referenced the blobs were removed, reflogs
+were expired, and unreachable objects were pruned. Final local verification found zero matching
+paths across all refs and confirmed both former blob IDs were absent from the object database. The
+remote master SHA was inspected immediately before the protected force-push so an explicit lease
+could prevent overwriting unexpected intervening work.
+
+SUPERSEDED 2026-08-04: a verified full bundle was created under ignored `Output/`, then every local
+ref was rewritten to remove only `ab_samples/ab_chunks.json` and `ab_samples/README.txt`. The rewrite
+backup refs and local Codex checkpoint trees that still referenced the blobs were removed, reflogs
+were expired, and unreachable objects were pruned. Final local verification found zero matching
+paths across all refs and confirmed both former blob IDs were absent from the object database. The
+remote master SHA was inspected immediately before the protected force-push so an explicit lease
+could prevent overwriting unexpected intervening work.
+
+SUPERSEDED 2026-08-04: a verified full bundle was created under ignored `Output/`, then every local
+ref was rewritten to remove only `ab_samples/ab_chunks.json` and `ab_samples/README.txt`. The rewrite
+backup refs and local Codex checkpoint trees that still referenced the blobs were removed, reflogs
+were expired, and unreachable objects were pruned. Final local verification found zero matching
+paths across all refs and confirmed both former blob IDs were absent from the object database. The
+remote master SHA was inspected immediately before the protected force-push so an explicit lease
+could prevent overwriting unexpected intervening work.
 

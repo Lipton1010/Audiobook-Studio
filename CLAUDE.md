@@ -196,13 +196,16 @@ Two-column reference books are a different document class from novels and verse,
 - CHAPTER MARKS CAN GO MISSING from detected headings when OCR does not transcribe decorative chapter numbers. New extractions now retain 1-based source-page provenance, the server persists the PDF outline, and assembly uses selected outline divisions when they provide more chapter marks than detected headings. Destinations map to the first real narrated chunk on or after the outline page. This is regression-tested on synthetic mappings but still needs an installed-build M4B navigation check on a real book before release.
 - Expect frequent omission markers in table-dense chapters. That is the extraction rule working, but it is audible, so listen to a table-heavy stretch before committing to a long book.
 
-## Repo hygiene (OPEN ITEM, blocks a public Release)
+## Repo hygiene (history scrub completed 2026-08-04)
 
 ab_samples/ was tracked in the PUBLIC repo and contained real book prose, including an explicit
-excerpt. `git rm --cached` on 2026-08-03 removed both files from HEAD and .gitignore now matches
-them, so they no longer appear in fresh clones. THEY REMAIN REACHABLE IN HISTORY at c7482af and
-every commit after it. Scrubbing means a rewrite and a force push on a public repo; complete that
-before publishing a GitHub Release. A sweep of all tracked files found no other book prose.
+excerpt. `git rm --cached` on 2026-08-03 removed both files from HEAD. On 2026-08-04 all local refs
+were rewritten to remove `ab_samples/ab_chunks.json` and `ab_samples/README.txt`, rewrite backup
+and Codex checkpoint refs were removed, reflogs expired, and unreachable objects pruned. Verification
+found zero path hits across all remaining refs and both former blob IDs absent from the object
+database. A full pre-scrub bundle is preserved under ignored `Output/` and was verified before the
+rewrite. The force-push must use an explicit lease against the inspected pre-rewrite remote SHA.
+A sweep of all tracked files found no other book prose.
 
 ## Release stabilization (approved 2026-08-04)
 
