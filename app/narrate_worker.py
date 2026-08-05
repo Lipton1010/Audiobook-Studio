@@ -81,8 +81,17 @@ BATCH_S3GEN = os.environ.get("AUDIOBOOK_BATCH_S3GEN", "1") not in ("0", "false",
 PAUSE_PROFILES = {
     # narrate_tagged.py validated values (Path B tagged material)
     "B": {"gap_ms": 50, "block_gap_ms": 100, "heading_before_ms": 200, "heading_after_ms": 150},
-    # chunk_and_narrate.py validated values (Path A novel material)
-    "A": {"gap_ms": 150, "block_gap_ms": 400, "heading_before_ms": 200, "heading_after_ms": 150},
+    # chunk_and_narrate.py validated values (Path A novel material).
+    # block_gap_ms raised 400 -> 650 on 2026-08-04 after two blind listening
+    # rounds on Power of the Dog. NOTE the nominal value is NOT the audible
+    # pause: Chatterbox contributes a measured 380 ms of padding across every
+    # join (180 leading + 200 trailing), so 650 sounds like ~1030 ms, which is
+    # the commercial recording's p90. Round 1 (400/510/650) picked 650 from
+    # below; round 2 (650/900/1200) picked it from above, with 900 called "too
+    # long" and 1200 "way too long". gap_ms stays 150 because its audible
+    # ~530 ms already matches the reference's 480 ms sentence pause.
+    # Pauses are inserted at ASSEMBLY, so changing these needs no re-narration.
+    "A": {"gap_ms": 150, "block_gap_ms": 650, "heading_before_ms": 200, "heading_after_ms": 150},
 }
 FADE_MS = 30
 

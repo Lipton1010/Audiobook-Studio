@@ -107,7 +107,7 @@ STILL NOT ESTABLISHED:
 CONSEQUENCE FOR THE PERFORMANCE DIRECTOR DESIGN two sections above: amend it. Segment on speaker turns ONLY, never on semantic beats inside a turn (Stage 0), and map the expressive profile to dialogue only while narration keeps the neutral defaults (Stage 1). The rest of that design, especially the validated sidecar anchored to source offsets and hashes, is unaffected.
 
 No production narration logic, tracked source, installer or job data was touched. Both Stage 0 runs, the Stage 1 run and all three mappings are preserved.
-
+
 
 <!-- CLAUDE.md lines 593-623 (Stage 2) -->
 ### Stage 2: recovered boundaries WIN on listening; the expressive profile does NOT transfer to short turns (2026-08-03)
@@ -140,4 +140,37 @@ STILL NOT ESTABLISHED, and do not let this get rounded up:
 - Nothing here says anything about narration parameters, or about a second book.
 
 WHAT REMAINS BEFORE A FULL BOOK: throughput (unmeasured, see the previous section), then the Power of the Dog re-narration, roughly 3 hours of 4090 time, which requires DELETING `blocks.json` rather than resuming over it.
-
+
+### Stage 3: pause timing against a commercial reference; block_gap_ms settled at 650 (2026-08-04)
+
+The owner bought the Audible edition of Power of the Dog and downloaded it via Libation as a plain mp3 (20.21 h, 26 chapter marks including front matter, 44.1 kHz mono). It sits in gitignored `Output\Reference_Audio\`. Analysis extracted TIMING STATISTICS ONLY: no transcription, no content, nothing from the recording in the repo. Having the same book made structural comparison possible rather than comparing against someone else's prose rhythm.
+
+METHOD ERROR WORTH NOT REPEATING. The first pass anchored the silence threshold to the noise floor (5th percentile plus a fraction of the range). Both files contain TRUE DIGITAL SILENCE (11.7% of the commercial, 5.5% of ours), so the 5th percentile clamped at the -200 dB floor and the threshold collapsed to -127 dB, counting only exact zeros. Every number in that pass was measuring the wrong thing. The fix is to anchor to the SPEECH level instead, p90 minus 35 dB, which lands near -54 dB and correctly separates speech from both room tone and model padding. The segment-level padding measurement was unaffected because raw segments have only 0.3% digital silence, so its threshold landed correctly at -49.5 dB by accident.
+
+(V) THE MODEL PADDING, and this is the load-bearing number. Measured directly on 402 of the 10,042 real segment WAVs: median 180 ms leading and 200 ms trailing, so **380 ms across every join**. Confirmed independently in the assembled book, where gaps pile up at 680-880 ms (11.4% of all gaps, predicted 400+380=780) and 430-630 ms (7.8%, predicted 150+380=530). So the nominal pause values in `PAUSE_PROFILES` understate the audible pause by roughly half. Anyone reasoning about pause length from the nominal number alone will be wrong.
+
+(V) DISTRIBUTIONS, 112 minutes sampled from each file at matched fractional positions:
+
+| band | commercial | ours at 400 |
+|---|---|---|
+| word/clause 60-150 ms | 30.1% | 45.8% |
+| comma/phrase 150-350 | 20.2% | 23.9% |
+| sentence 350-700 | 26.5% | 14.1% |
+| paragraph 700-1200 | 17.2% | 16.0% |
+| scene break 1200-2500 | 5.6% | 0.1% |
+| section over 2500 | 0.5% | 0.0% |
+
+p50 340 vs 160 ms, p90 1030 vs 790, p99 1792 vs 1070, max 4700 vs 1070. Speech occupies 70.8% of their timeline against 76.9% of ours. Our narration is DENSER at every level, which reverses the worry that the recovered-paragraph book was too spaced out.
+
+ROUND 1 (`Output\Narration_Gap\20260804_gap_v1`), arms 400 / 510 / 650 nominal on a 4 minute excerpt with 70 paragraph joins (17.2 per minute, chunks 6902-6971). Owner verdict: "they all sound incredibly similar". THAT WAS A BRACKET-DESIGN ERROR, NOT A NULL RESULT. Measured long-gap medians were 720 / 790 / 930 ms, i.e. +9.7% and +29.2%, and duration discrimination inside continuous speech needs roughly 20-25%. The arms were verified genuinely distinct by hash and duration, so the files were fine; the span was 32% end to end and could not resolve anything. PROCESS ERROR TOO: the mapping was revealed in the same message that asked for a verdict, and the owner had to volunteer that his pick preceded reading it. Seal the mapping until the ranking arrives.
+
+ROUND 2 (`Output\Narration_Gap\20260804_gap_v2`), same excerpt, arms 650 / 900 / 1200, verified BEFORE handing over: measured medians 930 / 1180 / 1470 ms, steps of +26.9% and +24.6%, both above threshold. Owner verdict, blind: 1200 "way too long", 900 "too long", **650 the favourite**. Severity scaled monotonically with length.
+
+CONCLUSION: `block_gap_ms` 650, audibly ~1030 ms. It beat 400 and 510 from below in round 1 and 900 and 1200 from above in round 2, so it is bracketed on both sides rather than sitting at a boundary. `gap_ms` stays 150 because its audible 530 ms already matches the commercial sentence pause of 480 ms. The chosen value lands on the commercial p90 (1030 ms) rather than its median (890 ms).
+
+WHY THIS COMPARISON IS CLEANER THAN STAGES 0-2: all three arms are byte-identical speech with only inserted silence differing. There is NO stochastic confound at all, unlike every previous audition where S3Gen randomness meant part of any difference was luck. The seed-control arm that Stage 1 needed is unnecessary here by construction.
+
+STILL NOT ESTABLISHED: one passage, one listener. The excerpt was deliberately dialogue-dense at 17.2 paragraph joins per minute, so the value is tuned on the case where the dial fires most often; narration-heavy stretches have far fewer paragraph breaks and the effect there is smaller. Whether 650 suits a different book or narrator is untested.
+
+THE OPEN QUESTION IS STRUCTURAL. The commercial recording's distinguishing feature is a long-pause register we lack entirely, 6.1% of its gaps between 1200 and 4700 ms against our 0.1%. Round 2 shows that reaching those lengths with a UNIFORM gap is rejected, so the answer is not a bigger number, it is a different KIND of pause at the right places. Scene breaks should be detectable from the same page geometry `detect_paragraph_style` / `_modal_leading` already measure, at roughly 2.5x leading rather than the 1.5x that marks a paragraph, and an audition can inject them at assembly with no re-narration. `app/gap_audition.py` is the harness; it takes `--gaps a,b,c`, `--start-chunk` and `--num-chunks` so a prior excerpt can be reproduced exactly.
+

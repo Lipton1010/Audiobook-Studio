@@ -91,7 +91,7 @@ app/batched_narrate.py puts N text chunks that share one voice through a SINGLE 
 - VRAM safety is a TOKEN BUDGET, not a fixed batch size: buckets cap rows*Tmax at BATCH_TOKEN_BUDGET (default 1300, cap BATCH_SIZE 12). A fixed count OOM-thrashed and looked like a hang ~62% into a book once chunks got long. On the 4090 the longest chunks land at N=4, medium ~N=8, short at the 12 cap.
 - HONEST SPEEDUP, do not overstate it: ~2x on a full book, and it is chunk-length dependent. Short/medium chunks hit ~3-4x; long chunks near CHAR_CEILING 400 are compute-bound AND forced to small batches, giving only ~1.1-1.2x. Earlier versions of this file said the budget was over-conservative and that S3Gen was "~15% of gen time and overlappable"; BOTH were measured and disproved on 2026-07-26, see the next section.
 - batched_generate frees the kv-cache and calls torch.cuda.empty_cache() before vocoding. This is load-bearing: without it the reserved pool climbs across buckets and pushes S3Gen onto cudaFree-and-retry (one 728-token chunk took 95s instead of 0.87s).
-- Known trade-off: a bucket runs until EVERY row hits EOS, so one row that never emits EOS makes the whole bucket run to max_new_tokens. Output stays correct, only throughput suffers. Mitigation is length bucketing plus modest bucket sizes.
+- Known trade-off: a bucket runs until EVERY row hits EOS, so one row that never emits EOS makes the whole bucket run to max_new_tokens. Mitigation is length bucketing plus modest bucket sizes. CORRECTED 2026-08-04, this used to say "output stays correct, only throughput suffers" and that is FALSE: a runaway row vocodes its padding as audible DEAD AIR. One occurred in the Power of the Dog re-narration (1 chunk in 10,042) and put a 21.4 second silence inside a finished 18 hour m4b. It was invisible until the file was analysed. There is no guard today; the worker already logs `tok_out` per row, so a row at or near the 1000 cap could be regenerated automatically the way the empty-token-stream case already falls back to serial. Fixing one costs minutes: delete that segment, resume (plan_hash is unchanged so nothing else regenerates), reassemble.
 - app/ab_*.py are the A/B harness and self-tests used to prove equivalence. Keep them.
 
 ## Measured findings, dead ends, and traps (compressed core)
@@ -146,11 +146,33 @@ the same profile LOSES to neutral on 7-55 char turns (Stage 2). The benefit is l
 gate it on turn length and prove the gate on a length sweep first.
 
 Recovered paragraph boundaries WON on listening (Stage 2): one-speaker-per-call went 0.7% -> 56.2%
-and split turns 22.9% -> 2.4%. The 2026-08-04 Power of the Dog m4b (18.36 h, 16 chapter marks) has
-NOT been listened to. It is 1.32 h longer than the original, ~53 min of which is the deliberate
-400 ms gap now firing at all 9,489 paragraphs. If it sounds too spaced out,
-`PAUSE_PROFILES["A"]["block_gap_ms"]` is the dial, and lowering it does NOT require re-narration
-because pauses are inserted at assembly.
+and split turns 22.9% -> 2.4%.
+
+THE NOMINAL PAUSE IS NOT THE AUDIBLE PAUSE. Chatterbox adds a MEASURED 380 ms of its own padding
+across every join (180 ms leading + 200 ms trailing, measured on 402 real segments and confirmed
+independently in the assembled file). So `block_gap_ms` 400 sounds like 780 ms. Any future pause
+tuning must subtract 380 first; reasoning about the nominal number alone will be wrong by roughly
+half. Pauses are inserted at ASSEMBLY, so changing them needs no re-narration, only a reassembly.
+
+`block_gap_ms` IS NOW 650 (2026-08-04), settled by two blind rounds on Power of the Dog. Round 1
+offered 400/510/650 and everything sounded "incredibly similar" because the span was only 32% and
+duration discrimination in continuous speech needs roughly 20-25%; that was a bracket-design error,
+not a listening limit. Round 2 offered 650/900/1200 with each step above threshold, and 650 won
+clearly, with 900 called "too long" and 1200 "way too long". 650 therefore beat 400 and 510 from
+below and 900 and 1200 from above, so it is bracketed, not a boundary artifact. `gap_ms` stays 150.
+
+WHY THOSE VALUES, measured against the commercial Audible recording of the SAME book (timing
+statistics only, no content): their sentence-band median is 480 ms and our chunk gap is audibly
+530 ms, so `gap_ms` needs no change. Their paragraph-band median is 890 ms and their p90 is 1030 ms;
+the owner's chosen 650 is audibly 1030 ms, i.e. their p90 rather than their median.
+
+THE REAL REMAINING GAP IS STRUCTURAL, NOT MAGNITUDE. The commercial narrator spends 6.1% of gaps in
+the 1200-4700 ms range for scene and section breaks; we spend 0.1% and effectively stop at 1.1 s. We
+have exactly two body pause values and no concept of a scene break. Scene breaks should be
+detectable from the same page geometry `_modal_leading` already measures, at roughly 2.5x leading
+rather than the 1.5x that marks a paragraph, and an audition can inject them at assembly without
+re-narrating anything. Untested. Do NOT substitute a bigger uniform gap for this; that is exactly
+what round 2 rejected.
 
 OPERATIONAL TRAP, has cost a wasted run: `worker_loop` SKIPS extraction whenever blocks.json exists,
 so changing pipeline_text and resuming an existing job has NO effect. DELETE blocks.json to re-extract
