@@ -11,6 +11,7 @@ the exact commit and installer artifact being published.
 - [x] The two former `ab_samples` excerpt files are absent from every rewritten Git ref.
 - [x] A recoverable pre-rewrite Git bundle exists outside the published history.
 - [x] No PDF, generated audio, voice sample, job data, local config, or private audition text is tracked.
+- [ ] GitHub Support has dereferenced affected PRs 1 through 4, run server garbage collection, and removed cached views of the former excerpt blobs.
 
 ## Installer artifact
 

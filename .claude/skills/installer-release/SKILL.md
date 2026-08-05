@@ -232,19 +232,10 @@ paths across all refs and confirmed both former blob IDs were absent from the ob
 remote master SHA was inspected immediately before the protected force-push so an explicit lease
 could prevent overwriting unexpected intervening work.
 
-SUPERSEDED 2026-08-04: a verified full bundle was created under ignored `Output/`, then every local
-ref was rewritten to remove only `ab_samples/ab_chunks.json` and `ab_samples/README.txt`. The rewrite
-backup refs and local Codex checkpoint trees that still referenced the blobs were removed, reflogs
-were expired, and unreachable objects were pruned. Final local verification found zero matching
-paths across all refs and confirmed both former blob IDs were absent from the object database. The
-remote master SHA was inspected immediately before the protected force-push so an explicit lease
-could prevent overwriting unexpected intervening work.
-
-SUPERSEDED 2026-08-04: a verified full bundle was created under ignored `Output/`, then every local
-ref was rewritten to remove only `ab_samples/ab_chunks.json` and `ab_samples/README.txt`. The rewrite
-backup refs and local Codex checkpoint trees that still referenced the blobs were removed, reflogs
-were expired, and unreachable objects were pruned. Final local verification found zero matching
-paths across all refs and confirmed both former blob IDs were absent from the object database. The
-remote master SHA was inspected immediately before the protected force-push so an explicit lease
-could prevent overwriting unexpected intervening work.
+POST-PUSH VERIFICATION 2026-08-04: public `master` moved to the rewritten history, but direct GitHub
+API lookup of the former commit and blob still succeeded. `git ls-remote origin "refs/pull/*"`
+showed four affected read-only refs, PRs 1 through 4; public repository metadata reported zero forks.
+GitHub's official sensitive-data-removal procedure says Support must dereference affected PRs, run
+server garbage collection, and remove cached views. That Support purge is now a hard public-release
+gate. A ready-to-send request is preserved under ignored `Output/`; do not include the excerpt text.
 
