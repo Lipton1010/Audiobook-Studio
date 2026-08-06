@@ -5,20 +5,20 @@ the exact commit and installer artifact being published.
 
 ## Source and privacy
 
-- [ ] `git status --short --branch` is clean and synchronized with the intended remote.
+- [x] `git status --short --branch` is clean and synchronized with the intended remote.
 - [x] Dependency-free regression tests pass: `python -m unittest discover -s tests -v`.
 - [x] Python and embedded JavaScript syntax checks pass.
 - [x] The two former `ab_samples` excerpt files are absent from every rewritten Git ref.
 - [x] A recoverable pre-rewrite Git bundle exists outside the published history.
 - [x] No PDF, generated audio, voice sample, job data, local config, or private audition text is tracked.
-- [ ] GitHub Support has dereferenced affected PRs 1 through 4, run server garbage collection, and removed cached views of the former excerpt blobs.
+- [x] GitHub Support has dereferenced affected PRs 1 through 4, run server garbage collection, and removed cached views of the former excerpt blobs.
 
 ## Installer artifact
 
-- [ ] Build only with `install\build_installer.bat`; never compile the Inno file directly.
-- [ ] The build comes from clean `HEAD` and records its commit, byte size, and SHA-256.
-- [ ] The Inno output manifest passes the prohibited-content checks.
-- [ ] The built executable is not committed to Git.
+- [x] Build only with `install\build_installer.bat`; never compile the Inno file directly.
+- [x] The build comes from clean `HEAD` and records its commit, byte size, and SHA-256.
+- [x] The Inno output manifest passes the prohibited-content checks.
+- [x] The built executable is not committed to Git.
 
 ## Exact-build clean-machine validation
 

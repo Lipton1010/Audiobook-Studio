@@ -238,4 +238,11 @@ showed four affected read-only refs, PRs 1 through 4; public repository metadata
 GitHub's official sensitive-data-removal procedure says Support must dereference affected PRs, run
 server garbage collection, and remove cached views. That Support purge is now a hard public-release
 gate. A ready-to-send request is preserved under ignored `Output/`; do not include the excerpt text.
+
+PURGE COMPLETE 2026-08-06: GitHub Support confirmed it removed the internal references from PRs 1
+through 4 and completed the purge. Independent verification found zero remote `refs/pull/*` entries,
+and a HEAD request to the former commit through GitHub's API returned HTTP 422 instead of commit
+data. Local and remote `master` still matched at `0e8e3d789630b4a97de57b4dedf8da6339a283bc`.
+The privacy/history gate is satisfied; this does not satisfy the separate exact-installer physical
+validation gate.
 

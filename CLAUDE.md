@@ -205,11 +205,11 @@ and Codex checkpoint refs were removed, reflogs expired, and unreachable objects
 found zero path hits across all remaining refs and both former blob IDs absent from the object
 database. A full pre-scrub bundle is preserved under ignored `Output/` and was verified before the
 rewrite. The force-push used an explicit lease against the inspected pre-rewrite remote SHA and
-updated public `master` successfully. POST-PUSH GATE: GitHub still advertises four read-only PR refs
-(`#1` through `#4`) that retain the old history, and direct API lookup of the former blob still
-succeeds. The repository reports zero forks. GitHub Support must dereference those PRs, run server
-garbage collection, and remove cached views before a public Release. A sweep of all tracked files
-found no other book prose.
+updated public `master` successfully. PURGE COMPLETE 2026-08-06: GitHub Support removed the internal
+references from PRs 1 through 4, ran its purge, and confirmed completion. Independent verification
+found zero `refs/pull/*` entries and the former commit API lookup now returns HTTP 422 rather than
+commit data. Local and remote `master` both remained at `0e8e3d789630b4a97de57b4dedf8da6339a283bc`.
+The repository reports zero forks. A sweep of all tracked files found no other book prose.
 
 ## Release stabilization (approved 2026-08-04)
 
