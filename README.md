@@ -21,6 +21,24 @@ Books (PDFs), audio, and generated jobs are gitignored; only code and docs are t
 
 For development validation, run `python -m unittest discover -s tests -v`. Release builds must also satisfy `RELEASE_CHECKLIST.md`.
 
+## Experimental 1.1 character discovery
+
+The `codex/v1.1_character_discovery` development branch adds an optional **Discover cast** job for
+Path A prose novels. It runs separately from the existing single-voice audiobook workflow: the app
+extracts the selected pages, asks the configured local Ollama model for a speaking-character census
+and dialogue attribution, then stops without loading Chatterbox or generating audio.
+
+The review screen shows the narrator, speaking characters, confidence counts, aliases, and short
+source-local examples. Names can be corrected, duplicate characters merged, and false characters
+excluded. The validated cast is saved as a job-local JSON sidecar containing hashes, spans,
+attribution metadata, and an edit audit trail; it intentionally does not copy book passages into the
+sidecar. The default model is `qwen3-vl:32b-instruct-q4_K_M` and can be changed with
+`character_model` / `AUDIOBOOK_CHARACTER_MODEL`.
+
+This milestone is discovery and review only. Assigning separate licensed voice samples and rendering
+multi-voice dialogue is planned follow-on work, not part of this branch yet. The released 1.0
+installer and ordinary narration jobs are unchanged.
+
 ## Requirements
 
 You provide these; the installer sets up everything else, including Miniconda and ffmpeg if you don't already have them.

@@ -45,7 +45,7 @@
            border: 1px solid var(--line); color: var(--dim); }
   .badge.running { color: var(--accent); border-color: var(--accent); }
   .badge.done { color: var(--ok); border-color: var(--ok); }
-  .badge.failed, .badge.interrupted { color: var(--bad); border-color: var(--bad); }
+  .badge.failed, .badge.analysis_failed, .badge.interrupted { color: var(--bad); border-color: var(--bad); }
   .spacer { flex: 1; }
   .bar { height: 7px; background: var(--panel2); border-radius: 4px; overflow: hidden; margin: 10px 0 4px; }
   .bar i { display: block; height: 100%; background: var(--accent2); border-radius: 4px;
@@ -60,6 +60,7 @@
             max-height: 180px; overflow: auto; white-space: pre-wrap; }
   dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line);
            border-radius: 12px; padding: 24px; width: 430px; max-width: 92vw; }
+  dialog.cast-dialog { width: 820px; }
   dialog::backdrop { background: rgba(0,0,0,.55); }
   dialog h3 { margin: 0 0 4px; }
   dialog .meta { color: var(--dim); font-size: 13px; margin-bottom: 16px; }
@@ -78,12 +79,19 @@
   .pagerow { display: flex; gap: 14px; }
   .empty { color: var(--dim); padding: 18px 4px; }
   .err { color: var(--bad); font-size: 13px; margin-top: 8px; min-height: 18px; }
+  .cast-summary { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 18px; }
+  .cast-list { display: flex; flex-direction: column; gap: 10px; max-height: 58vh; overflow: auto; }
+  .cast-item { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+  .cast-item.invalid { opacity: .65; }
+  .cast-item .cast-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 9px; }
+  .cast-item select { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 7px; }
+  .cast-example { margin-top: 7px; color: var(--dim); font-size: 13px; font-style: italic; }
 </style>
 </head>
 <body>
 <header>
   <h1>Audiobook <span>Studio</span></h1>
-  <div class="sub">PDF in, narrated audiobook out. One GPU stage at a time.</div>
+  <div class="sub">1.1 development · PDF in, narrated audiobook out. One GPU stage at a time.</div>
 </header>
 <main>
   <h2>Jobs</h2>
@@ -117,6 +125,13 @@
   <div class="meta" id="dlg-meta"></div>
   <label>Audiobook title</label>
   <input type="text" id="f-title">
+  <label>Job type</label>
+  <div class="radio-row" id="workflow-row">
+    <label id="lbl-narrate"><input type="radio" name="workflow" value="narrate" checked>
+      <span>Create audiobook<br><span class="hint">current single-voice workflow</span></span></label>
+    <label id="lbl-cast"><input type="radio" name="workflow" value="cast_discovery">
+      <span>Discover cast<br><span class="hint">Path A prose, no audio yet</span></span></label>
+  </div>
   <label>Pipeline</label>
   <div class="radio-row" id="path-row">
     <label id="lbl-A"><input type="radio" name="path" value="A">
@@ -124,19 +139,21 @@
     <label id="lbl-B"><input type="radio" name="path" value="B">
       <span>Path B<br><span class="hint">GLM-OCR, textbooks</span></span></label>
   </div>
-  <label>Voice</label>
-  <select id="f-voice" style="background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:7px; padding:7px 10px; width:100%; font-size:14px"></select>
-  <label>Output format</label>
-  <select id="f-format" style="background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:7px; padding:7px 10px; width:100%; font-size:14px">
-    <option value="m4b">m4b — audiobook with chapters (recommended)</option>
-    <option value="mp3">mp3 — universal, plays anywhere</option>
-    <option value="wav">wav — lossless master, large</option>
-  </select>
-  <div id="ffmpeg-warn" style="display:none; margin-top:8px; padding:10px 12px; border:1px solid var(--line); border-radius:7px; background:var(--panel2); font-size:13px; line-height:1.5">
-    <div id="ffmpeg-warn-text"></div>
-    <div style="margin-top:8px; display:flex; align-items:center; gap:10px">
-      <button class="primary" id="ffmpeg-install-btn" onclick="installFfmpeg()">Install ffmpeg</button>
-      <span id="ffmpeg-warn-status" style="color:var(--dim)"></span>
+  <div id="narration-fields">
+    <label>Voice</label>
+    <select id="f-voice" style="background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:7px; padding:7px 10px; width:100%; font-size:14px"></select>
+    <label>Output format</label>
+    <select id="f-format" style="background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:7px; padding:7px 10px; width:100%; font-size:14px">
+      <option value="m4b">m4b — audiobook with chapters (recommended)</option>
+      <option value="mp3">mp3 — universal, plays anywhere</option>
+      <option value="wav">wav — lossless master, large</option>
+    </select>
+    <div id="ffmpeg-warn" style="display:none; margin-top:8px; padding:10px 12px; border:1px solid var(--line); border-radius:7px; background:var(--panel2); font-size:13px; line-height:1.5">
+      <div id="ffmpeg-warn-text"></div>
+      <div style="margin-top:8px; display:flex; align-items:center; gap:10px">
+        <button class="primary" id="ffmpeg-install-btn" onclick="installFfmpeg()">Install ffmpeg</button>
+        <span id="ffmpeg-warn-status" style="color:var(--dim)"></span>
+      </div>
     </div>
   </div>
   <label>Page range</label>
@@ -147,12 +164,25 @@
   <div class="err" id="dlg-err"></div>
   <div class="dlg-actions">
     <button onclick="dlg.close()">Cancel</button>
-    <button class="primary" onclick="createJob()">Create Audiobook</button>
+    <button class="primary" id="create-job-btn" onclick="createJob()">Create Audiobook</button>
+  </div>
+</dialog>
+
+<dialog id="cast-dlg" class="cast-dialog">
+  <h3 id="cast-title">Character cast</h3>
+  <div class="meta" id="cast-meta"></div>
+  <div class="cast-summary" id="cast-summary"></div>
+  <div class="err" id="cast-err"></div>
+  <div class="cast-list" id="cast-list"></div>
+  <div class="dlg-actions">
+    <button id="cast-retry-btn">Run analysis again</button>
+    <button class="primary" onclick="document.getElementById('cast-dlg').close()">Close</button>
   </div>
 </dialog>
 
 <script>
 const dlg = document.getElementById('dlg');
+const castDlg = document.getElementById('cast-dlg');
 let dlgBook = null;
 let library = [];
 
@@ -237,11 +267,27 @@ function openDlg(book) {
   document.getElementById('f-to').value = book.pages;
   document.getElementById('f-to').max = book.pages;
   document.getElementById('dlg-err').textContent = '';
+  document.querySelector('input[name=workflow][value=narrate]').checked = true;
   document.querySelector(`input[name=path][value=${book.suggested_path}]`).checked = true;
+  markWorkflow();
   markPath();
   dlg.showModal();
 }
+document.getElementById('workflow-row').addEventListener('change', markWorkflow);
 document.getElementById('path-row').addEventListener('change', markPath);
+function markWorkflow() {
+  const workflow = document.querySelector('input[name=workflow]:checked')?.value || 'narrate';
+  const discovery = workflow === 'cast_discovery';
+  document.getElementById('lbl-narrate').classList.toggle('sel', !discovery);
+  document.getElementById('lbl-cast').classList.toggle('sel', discovery);
+  document.getElementById('narration-fields').style.display = discovery ? 'none' : '';
+  document.getElementById('create-job-btn').textContent = discovery ? 'Discover Characters' : 'Create Audiobook';
+  const pathA = document.querySelector('input[name=path][value=A]');
+  const pathB = document.querySelector('input[name=path][value=B]');
+  pathB.disabled = discovery;
+  if (discovery) pathA.checked = true;
+  markPath();
+}
 function markPath() {
   const v = document.querySelector('input[name=path]:checked')?.value;
   document.getElementById('lbl-A').classList.toggle('sel', v === 'A');
@@ -398,15 +444,19 @@ async function uploadPdf() {
 }
 
 async function createJob() {
+  const workflow = document.querySelector('input[name=workflow]:checked')?.value || 'narrate';
   const body = {
     pdf_path: dlgBook.path,
     title: document.getElementById('f-title').value,
     path: document.querySelector('input[name=path]:checked').value,
-    voice: document.getElementById('f-voice').value,
-    format: document.getElementById('f-format').value,
+    workflow,
     page_from: +document.getElementById('f-from').value,
     page_to: +document.getElementById('f-to').value,
   };
+  if (workflow === 'narrate') {
+    body.voice = document.getElementById('f-voice').value;
+    body.format = document.getElementById('f-format').value;
+  }
   const r = await fetch('/api/jobs', {method: 'POST',
     headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
   if (!r.ok) {
@@ -521,14 +571,24 @@ function renderJob(j) {
   const div = document.createElement('div');
   div.className = 'job';
   div.dataset.jobId = j.id;
-  const running = ['queued','extracting','tagging','narrating'].includes(j.status);
-  const badgeCls = running ? 'running' : (j.status === 'done' ? 'done' : j.status);
+  const running = ['queued','extracting','tagging','analyzing_cast','narrating'].includes(j.status);
+  const complete = ['done','cast_ready'].includes(j.status);
+  const badgeCls = running ? 'running' : (complete ? 'done' : j.status);
+  const statusLabel = ({cast_ready: 'cast ready', analysis_failed: 'analysis failed'})[j.status] || j.status;
 
   let progressHtml = '', detail = '';
   if (j.status === 'extracting' && j.stage_progress) {
     const p = j.stage_progress;
     progressHtml = bar(p.done / p.total);
     detail = `Extracting pages: ${p.done} / ${p.total}`;
+  } else if (j.status === 'analyzing_cast' && j.stage_progress) {
+    const p = j.stage_progress;
+    progressHtml = bar(p.total ? p.done / p.total : 0);
+    const phase = p.phase === 'attribution' ? 'Attributing dialogue' :
+      (p.phase === 'census' ? 'Finding speaking characters' : 'Starting character model');
+    detail = `${phase}${p.total ? `: ${p.done} / ${p.total}` : '...'}`;
+  } else if (j.status === 'analyzing_cast') {
+    detail = 'Character analysis starting (local model loading)...';
   } else if (j.status === 'narrating' && j.narrate_progress) {
     const p = j.narrate_progress;
     progressHtml = bar(p.total ? p.done / p.total : 0);
@@ -537,8 +597,11 @@ function renderJob(j) {
     detail = 'Narration starting (model loading)...';
   } else if (j.status === 'queued') {
     detail = 'Waiting for the GPU (one stage runs at a time)';
-  } else if (j.status === 'failed') {
+  } else if (['failed','analysis_failed'].includes(j.status)) {
     detail = 'Error: ' + (j.error || 'see log');
+  } else if (j.status === 'cast_ready' && j.cast_summary) {
+    const c = j.cast_summary;
+    detail = `${c.speaking_characters} speaking characters · ${c.attributed_turns} attributed turns · ${c.unknown_turns} unknown turns`;
   } else if (j.status === 'done' && j.block_counts) {
     const wallTime = j.finished_at && j.created_at
       ? `Elapsed from creation to completion: ${fmtDuration(j.finished_at - j.created_at)} · ` : '';
@@ -548,11 +611,14 @@ function renderJob(j) {
   }
 
   const pages = `pages ${j.page_from}–${j.page_to}`;
+  const workflowDetail = j.workflow === 'cast_discovery'
+    ? 'Character discovery'
+    : `${j.voice ? esc(j.voice) : ''}${j.format ? ' · ' + esc(j.format) : ''}`;
   div.innerHTML = `
     <div class="row1">
       <span class="title">${esc(j.title)}</span>
-      <span class="badge ${badgeCls}">${esc(j.status)}</span>
-      <span class="detail">Path ${esc(j.path)} · ${esc(pages)}${j.voice ? ' · ' + esc(j.voice) : ''}${j.format ? ' · ' + esc(j.format) : ''}</span>
+      <span class="badge ${badgeCls}">${esc(statusLabel)}</span>
+      <span class="detail">Path ${esc(j.path)} · ${esc(pages)}${workflowDetail ? ' · ' + workflowDetail : ''}</span>
       <span class="spacer"></span>
     </div>
     ${progressHtml}
@@ -562,12 +628,20 @@ function renderJob(j) {
   if (running) row.appendChild(btn('Cancel', 'danger', async () => {
     await fetch(`/api/jobs/${j.id}/cancel`, {method: 'POST'}); refreshJobs();
   }));
-  if (['failed','canceled','interrupted'].includes(j.status)) {
+  if (['failed','analysis_failed','canceled','interrupted'].includes(j.status)) {
     row.appendChild(btn('Resume', 'primary', async () => {
       await fetch(`/api/jobs/${j.id}/resume`, {method: 'POST'}); refreshJobs();
     }));
     row.appendChild(btn('Delete', 'danger', async () => {
       if (confirm('Delete this job and all its files?')) {
+        await fetch(`/api/jobs/${j.id}/delete`, {method: 'POST'}); refreshJobs();
+      }
+    }));
+  }
+  if (j.status === 'cast_ready') {
+    row.appendChild(btn('Review cast', 'primary', () => openCast(j.id, j.title)));
+    row.appendChild(btn('Delete', 'danger', async () => {
+      if (confirm('Delete this discovery job, its extracted text, and cast report?')) {
         await fetch(`/api/jobs/${j.id}/delete`, {method: 'POST'}); refreshJobs();
       }
     }));
@@ -639,6 +713,150 @@ function renderJob(j) {
     div.appendChild(pre);
   }
   return div;
+}
+
+let activeCastJobId = null;
+let activeCastTitle = '';
+
+async function openCast(jobId, title) {
+  activeCastJobId = jobId;
+  activeCastTitle = title || 'Character cast';
+  document.getElementById('cast-title').textContent = `${activeCastTitle} cast`;
+  document.getElementById('cast-err').textContent = '';
+  document.getElementById('cast-list').replaceChildren();
+  document.getElementById('cast-summary').replaceChildren();
+  document.getElementById('cast-meta').textContent = 'Loading validated local cast report...';
+  if (!castDlg.open) castDlg.showModal();
+  try {
+    const r = await fetch(`/api/jobs/${jobId}/cast`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Could not load the cast report.');
+    renderCast(data);
+  } catch (e) {
+    document.getElementById('cast-err').textContent = e.message || 'Could not load the cast report.';
+  }
+}
+
+function renderCast(data) {
+  const summary = document.getElementById('cast-summary');
+  summary.replaceChildren();
+  const stats = data.summary || {};
+  for (const label of [
+    `${stats.speaking_characters || 0} speaking characters`,
+    `${stats.attributed_turns || 0} attributed turns`,
+    `${stats.unknown_turns || 0} unknown turns`,
+    `${stats.non_speech_quotes || 0} non-speech quotes`,
+  ]) {
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.textContent = label;
+    summary.appendChild(badge);
+  }
+  document.getElementById('cast-meta').textContent =
+    `Local model: ${data.model} · ${data.analysis?.window_count || 0} windows · ${data.edit_count || 0} manual edits`;
+
+  const list = document.getElementById('cast-list');
+  list.replaceChildren();
+  const narrator = document.createElement('div');
+  narrator.className = 'cast-item';
+  const narratorName = document.createElement('div');
+  narratorName.className = 'name';
+  narratorName.textContent = data.narrator?.display_name || 'Narrator';
+  const narratorMeta = document.createElement('div');
+  narratorMeta.className = 'meta';
+  narratorMeta.textContent = 'Reserved narrator role. Voice assignment arrives in the next milestone.';
+  narrator.append(narratorName, narratorMeta);
+  list.appendChild(narrator);
+
+  const activeCharacters = (data.characters || []).filter(c => !c.invalid);
+  for (const character of data.characters || []) {
+    const item = document.createElement('div');
+    item.className = 'cast-item' + (character.invalid ? ' invalid' : '');
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.value = character.display_name;
+    nameInput.disabled = !!character.invalid;
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    const counts = character.confidence_counts || {};
+    meta.textContent = character.invalid
+      ? 'Excluded from the speaking cast'
+      : `${character.turn_count} turns · confidence: ${counts.high || 0} high, ${counts.medium || 0} medium, ${counts.low || 0} low`;
+    const aliases = document.createElement('div');
+    aliases.className = 'detail';
+    aliases.textContent = character.aliases?.length
+      ? `Aliases: ${character.aliases.join(', ')}` : 'No aliases proposed';
+    item.append(nameInput, meta, aliases);
+    if (character.example) {
+      const example = document.createElement('div');
+      example.className = 'cast-example';
+      example.textContent = `${character.example_page ? `Page ${character.example_page}: ` : ''}${character.example}`;
+      item.appendChild(example);
+    }
+    if (!character.invalid) {
+      const actions = document.createElement('div');
+      actions.className = 'cast-actions';
+      actions.appendChild(btn('Save name', '', () => castEdit({
+        action: 'rename', character_id: character.id, display_name: nameInput.value,
+      })));
+      const targets = activeCharacters.filter(c => c.id !== character.id);
+      if (targets.length) {
+        const select = document.createElement('select');
+        for (const target of targets) {
+          const option = document.createElement('option');
+          option.value = target.id;
+          option.textContent = `Merge into ${target.display_name}`;
+          select.appendChild(option);
+        }
+        actions.append(select, btn('Merge duplicate', '', () => castEdit({
+          action: 'merge', character_id: character.id,
+          target_character_id: select.value,
+        })));
+      }
+      actions.appendChild(btn('Not a character', 'danger', async () => {
+        if (confirm(`Exclude "${character.display_name}" and return its turns to unknown?`)) {
+          await castEdit({action: 'invalidate', character_id: character.id});
+        }
+      }));
+      item.appendChild(actions);
+    }
+    list.appendChild(item);
+  }
+  if (!(data.characters || []).length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'No identifiable speaking characters were found. Unknown quotations remain reported above.';
+    list.appendChild(empty);
+  }
+  document.getElementById('cast-retry-btn').onclick = retryCastAnalysis;
+}
+
+async function castEdit(edit) {
+  const err = document.getElementById('cast-err');
+  err.textContent = '';
+  try {
+    const r = await fetch(`/api/jobs/${activeCastJobId}/cast/edit`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(edit),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Cast edit failed.');
+    renderCast(data);
+    refreshJobs();
+  } catch (e) {
+    err.textContent = e.message || 'Cast edit failed.';
+  }
+}
+
+async function retryCastAnalysis() {
+  if (!confirm('Run the local character analysis again? The current report remains until the replacement succeeds.')) return;
+  const r = await fetch(`/api/jobs/${activeCastJobId}/cast/retry`, {method: 'POST'});
+  const data = await r.json();
+  if (!r.ok) {
+    document.getElementById('cast-err').textContent = data.error || 'Could not retry analysis.';
+    return;
+  }
+  castDlg.close();
+  refreshJobs();
 }
 
 async function openOutputFolder(jobId) {

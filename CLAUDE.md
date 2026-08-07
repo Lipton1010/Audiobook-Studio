@@ -222,6 +222,32 @@ The repository reports zero forks. A sweep of all tracked files found no other b
   preserves the job record, blocks, logs, job-local finished audio, and copied audiobook.
 - `AGENTS.md` is the tool-neutral entry point and `RELEASE_CHECKLIST.md` is the mandatory release gate.
 
+## 1.1 character discovery branch (validated 2026-08-07)
+
+- Development is isolated on `codex/v1.1_character_discovery`; the released 1.0 line is not changed.
+- The UI has an optional Discover cast job type for Path A prose only. It uses the normal Path A
+  extraction, then runs a two-pass local Ollama analysis (speaking-character census followed by
+  quote attribution) and stops at `cast_ready`. It never invokes narration, audio assembly, or PDF
+  archival. Ordinary audiobook jobs retain their existing defaults and worker path.
+- The default discovery model is the already-installed `qwen3-vl:32b-instruct-q4_K_M`. Character
+  model, context size, and bounded analysis-window size are configurable. The model is explicitly
+  unloaded in a `finally` path so it cannot remain resident before a later TTS job.
+- `app/character_discovery.py` indexes dialogue candidates deterministically, including continued
+  multi-paragraph quotation groups; validates every returned span, source hash, evidence reference,
+  character ID, and summary count; and writes `cast_plan.json` atomically. The persisted plan stores
+  hashes, offsets, names, aliases, confidence, and edit history but no copied book passages.
+- Cast review supports rename, merge, invalidate/not-a-character, and retry. Short examples are
+  hydrated from the existing local `blocks.json` only when the review API is requested.
+- Synthetic model validation correctly identified Mara Vale (2 turns) and Jon Reed (1), left a sign
+  quotation as non-speech, and produced zero unknown turns. The cold two-pass run took 145.3 seconds
+  on the development machine; `ollama ps` was empty afterward. Browser validation covered the job
+  type toggle, enforced Path A, hidden voice/output controls, cast review, persisted rename, retry
+  presence, and a clean console.
+- Regression coverage is 29 passing unit tests, including source preservation, model-contract
+  rejection, bounded windows, audited edits, no-text sidecars, no-audio discovery execution, Path B
+  rejection, and unchanged narration-job defaults. This is not an installer/release milestone; do
+  not build or publish it without completing the normal release checklist.
+
 WINDOWS-ONLY GIT WRITES. Working-tree files are CRLF while HEAD blobs are LF, reconciled by
 core.autocrlf. A git run from a Linux shell or container reports ALL tracked files as modified, and
 `git add -A` / `git commit -a` / `git stash` / `git checkout` from such a shell would commit CRLF

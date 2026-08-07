@@ -31,6 +31,7 @@ from urllib.parse import unquote, urlparse
 import fitz  # PyMuPDF
 import requests
 
+import character_discovery as cd
 import pipeline_text as pt
 from config import CFG
 
@@ -61,6 +62,9 @@ CHATTERBOX_PY = CFG.chatterbox_python
 OLLAMA_URL = CFG.ollama_url
 OCR_MODEL = CFG.ocr_model
 OCR_PROMPT = CFG.ocr_prompt
+CHARACTER_MODEL = CFG.character_model
+CHARACTER_NUM_CTX = CFG.character_num_ctx
+CHARACTER_WINDOW_CHARS = CFG.character_window_chars
 PORT = CFG.port
 
 AUDIO_EXTS = {".m4b", ".mp3", ".wav"}
@@ -322,6 +326,36 @@ def list_jobs():
             if st:
                 out.append(st)
     return out
+
+
+def build_job_state(body, page_total, job_id):
+    """Normalize a job request while keeping 1.0 narration defaults intact."""
+    workflow = (
+        "cast_discovery"
+        if body.get("workflow") == "cast_discovery"
+        else "narrate"
+    )
+    requested_path = body.get("path", "B")
+    if workflow == "cast_discovery" and requested_path != "A":
+        raise ValueError("Character discovery currently supports Path A novels only.")
+    state = {
+        "id": job_id,
+        "title": body.get("title") or Path(body["pdf_path"]).stem,
+        "pdf_path": body["pdf_path"],
+        "path": requested_path,
+        "page_from": max(1, int(body.get("page_from", 1))),
+        "page_to": min(page_total, int(body.get("page_to", page_total))),
+        "workflow": workflow,
+        "status": "queued",
+        "created_at": time.time(),
+    }
+    if workflow == "narrate":
+        state.update({
+            "voice": body.get("voice") or DEFAULT_VOICE,
+            "format": body.get("format") if body.get("format") in ("m4b", "mp3", "wav") else "m4b",
+            "engine": body.get("engine") if body.get("engine") in ("parallel", "batched") else DEFAULT_ENGINE,
+        })
+    return state
 
 
 # ---------- library ----------
@@ -775,6 +809,141 @@ def run_extraction(st):
     return st
 
 
+def _cast_plan_path(job_id):
+    return JOBS_DIR / job_id / "cast_plan.json"
+
+
+def _write_json_atomic(path, value):
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    tmp.replace(path)
+
+
+def _load_cast_plan(job_id):
+    job_dir = JOBS_DIR / job_id
+    plan_path = _cast_plan_path(job_id)
+    blocks_path = job_dir / "blocks.json"
+    if not plan_path.exists():
+        raise ValueError("This job does not have a character cast yet.")
+    if not blocks_path.exists():
+        raise ValueError("The extracted text for this cast is missing.")
+    blocks = json.loads(blocks_path.read_text(encoding="utf-8"))["blocks"]
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    cd.validate_cast_plan(plan, blocks)
+    return plan, blocks
+
+
+def cast_plan_view(job_id):
+    """Return cast metadata plus short local examples, never copied sidecar text."""
+    plan, blocks = _load_cast_plan(job_id)
+    turns_by_speaker = {}
+    for turn in plan["turns"]:
+        speaker_id = turn.get("speaker_id")
+        if speaker_id and turn.get("status") == "attributed":
+            turns_by_speaker.setdefault(speaker_id, turn)
+
+    characters = []
+    for source in plan["characters"]:
+        item = dict(source)
+        turn = turns_by_speaker.get(item["id"])
+        if turn:
+            text = str(blocks[turn["block_index"]].get("text", ""))
+            example = text[turn["start"]:turn["end"]]
+            if len(example) > 240:
+                example = example[:237].rstrip() + "..."
+            item["example"] = example
+            item["example_page"] = turn.get("source_page")
+        characters.append(item)
+    return {
+        "schema_version": plan["schema_version"],
+        "source_sha256": plan["source_sha256"],
+        "model": plan["model"],
+        "analysis": plan["analysis"],
+        "narrator": plan["narrator"],
+        "characters": characters,
+        "summary": plan["summary"],
+        "edit_count": len(plan.get("edits", [])),
+    }
+
+
+def edit_cast_plan(job_id, edit):
+    plan, blocks = _load_cast_plan(job_id)
+    updated = cd.apply_cast_edit(plan, blocks, edit)
+    _write_json_atomic(_cast_plan_path(job_id), updated)
+    st = load_state(job_id)
+    if st:
+        st["cast_summary"] = updated["summary"]
+        save_state(st)
+    return cast_plan_view(job_id)
+
+
+def run_character_discovery(st):
+    """Analyze extracted Path A prose after extraction and stop before TTS."""
+    job_id = st["id"]
+    job_dir = JOBS_DIR / job_id
+    if st.get("path") != "A":
+        raise ValueError("Character discovery currently supports Path A novels only.")
+    if st.get("text_mode") == "verse":
+        raise ValueError("Character discovery currently supports prose novels only.")
+    blocks = json.loads(
+        (job_dir / "blocks.json").read_text(encoding="utf-8")
+    )["blocks"]
+    st["status"] = "analyzing_cast"
+    st["stage_progress"] = {
+        "stage": "cast_analysis", "phase": "starting", "done": 0, "total": 0
+    }
+    save_state(st)
+    log_line(job_id, f"character discovery starting with local model {CHARACTER_MODEL}")
+
+    client = cd.OllamaJSONClient(
+        OLLAMA_URL,
+        CHARACTER_MODEL,
+        num_ctx=CHARACTER_NUM_CTX,
+    )
+
+    def progress(phase, done, total):
+        st["stage_progress"] = {
+            "stage": "cast_analysis",
+            "phase": phase,
+            "done": done,
+            "total": total,
+        }
+        save_state(st)
+
+    try:
+        plan = cd.analyze_blocks(
+            blocks,
+            client,
+            model_name=CHARACTER_MODEL,
+            num_ctx=CHARACTER_NUM_CTX,
+            window_chars=CHARACTER_WINDOW_CHARS,
+            progress=progress,
+            cancelled=lambda: _cancelled(job_id),
+            log=lambda message: log_line(job_id, message),
+        )
+    except cd.CharacterAnalysisCancelled as exc:
+        raise _Cancelled() from exc
+
+    _write_json_atomic(_cast_plan_path(job_id), plan)
+    st["cast_summary"] = plan["summary"]
+    st["status"] = "cast_ready"
+    st["finished_at"] = time.time()
+    st.pop("error", None)
+    save_state(st)
+    summary = plan["summary"]
+    log_line(
+        job_id,
+        "cast ready: "
+        f"{summary['speaking_characters']} speaking characters, "
+        f"{summary['attributed_turns']} attributed turns, "
+        f"{summary['unknown_turns']} unknown turns",
+    )
+    return st
+
+
 def gpu_total_vram_gb():
     """Total VRAM of GPU 0 in GB, or None if no NVIDIA GPU is present."""
     try:
@@ -1065,6 +1234,9 @@ def worker_loop():
         try:
             if not (JOBS_DIR / job_id / "blocks.json").exists():
                 st = run_extraction(st)
+            if st.get("workflow", "narrate") == "cast_discovery":
+                run_character_discovery(st)
+                continue
             st = run_narration(st)
             out_dir = JOBS_DIR / job_id / "output"
             safe_title = re.sub(r"[^\w \-]", "", st["title"]).strip() or job_id
@@ -1104,7 +1276,11 @@ def worker_loop():
             save_state(st)
             log_line(job_id, "job canceled")
         except Exception as e:
-            st["status"] = "failed"
+            st["status"] = (
+                "analysis_failed"
+                if st.get("workflow") == "cast_discovery"
+                else "failed"
+            )
             st["error"] = str(e)
             save_state(st)
             log_line(job_id, f"FAILED: {e}")
@@ -1319,6 +1495,12 @@ class Handler(BaseHTTPRequestHandler):
                 _json_response(self, ffmpeg_status())
             elif path == "/api/jobs":
                 _json_response(self, {"jobs": list_jobs()})
+            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/cast", path):
+                job_id = path.split("/")[3]
+                try:
+                    _json_response(self, cast_plan_view(job_id))
+                except ValueError as exc:
+                    _json_response(self, {"error": str(exc)}, 404)
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+", path):
                 st = job_detail(path.rsplit("/", 1)[1])
                 _json_response(self, st if st else {"error": "not found"}, 200 if st else 404)
@@ -1406,40 +1588,67 @@ class Handler(BaseHTTPRequestHandler):
                 _json_response(self, {"ok": True})
             elif path == "/api/jobs":
                 body = self._read_json()
-                # Preflight the voice before creating anything, so a fresh install
-                # fails here with a clear message instead of hours into the job.
-                verr = missing_voice_error(body.get("voice") or DEFAULT_VOICE)
-                if verr:
-                    _json_response(self, {"error": verr}, 400)
-                    return
-                # Same preflight for ffmpeg: refuse an m4b/mp3 job now rather
-                # than failing the encode after the narration has finished.
-                req_fmt = body.get("format") if body.get("format") in ("m4b", "mp3", "wav") else "m4b"
-                ferr = missing_ffmpeg_error(req_fmt)
-                if ferr:
-                    _json_response(self, {"error": ferr, "ffmpeg_missing": True}, 400)
-                    return
+                workflow = (
+                    "cast_discovery"
+                    if body.get("workflow") == "cast_discovery"
+                    else "narrate"
+                )
+                if workflow == "narrate":
+                    # Discovery deliberately needs neither voice nor ffmpeg. A normal
+                    # narration still preflights both before creating job data.
+                    verr = missing_voice_error(body.get("voice") or DEFAULT_VOICE)
+                    if verr:
+                        _json_response(self, {"error": verr}, 400)
+                        return
+                    req_fmt = body.get("format") if body.get("format") in ("m4b", "mp3", "wav") else "m4b"
+                    ferr = missing_ffmpeg_error(req_fmt)
+                    if ferr:
+                        _json_response(self, {"error": ferr, "ffmpeg_missing": True}, 400)
+                        return
                 job_id = str(uuid.uuid4())
+                n = page_count(body["pdf_path"]) or 1
+                try:
+                    st = build_job_state(body, n, job_id)
+                except (KeyError, TypeError, ValueError) as exc:
+                    _json_response(self, {"error": str(exc)}, 400)
+                    return
                 job_dir = JOBS_DIR / job_id
                 job_dir.mkdir()
-                n = page_count(body["pdf_path"]) or 1
-                st = {
-                    "id": job_id,
-                    "title": body.get("title") or Path(body["pdf_path"]).stem,
-                    "pdf_path": body["pdf_path"],
-                    "path": body.get("path", "B"),
-                    "page_from": max(1, int(body.get("page_from", 1))),
-                    "page_to": min(n, int(body.get("page_to", n))),
-                    "voice": body.get("voice") or DEFAULT_VOICE,
-                    "format": body.get("format") if body.get("format") in ("m4b", "mp3", "wav") else "m4b",
-                    "engine": body.get("engine") if body.get("engine") in ("parallel", "batched") else DEFAULT_ENGINE,
-                    "status": "queued",
-                    "created_at": time.time(),
-                }
                 save_state(st)
-                log_line(job_id, f"created: {st['title']} path {st['path']} pages {st['page_from']}..{st['page_to']}")
+                log_line(
+                    job_id,
+                    f"created: {st['title']} workflow {workflow} path {st['path']} "
+                    f"pages {st['page_from']}..{st['page_to']}",
+                )
                 enqueue(job_id)
                 _json_response(self, st)
+            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/cast/retry", path):
+                job_id = path.split("/")[3]
+                st = load_state(job_id)
+                if (
+                    st
+                    and st.get("workflow") == "cast_discovery"
+                    and st.get("status") in ("cast_ready", "analysis_failed", "canceled", "interrupted")
+                ):
+                    st["status"] = "queued"
+                    st.pop("error", None)
+                    _cancel_flags.pop(job_id, None)
+                    save_state(st)
+                    enqueue(job_id)
+                    _json_response(self, {"ok": True})
+                else:
+                    _json_response(self, {"error": "cast analysis is not retryable"}, 400)
+            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/cast/edit", path):
+                job_id = path.split("/")[3]
+                st = load_state(job_id)
+                if not st or st.get("status") != "cast_ready":
+                    _json_response(self, {"error": "cast is not ready for editing"}, 400)
+                    return
+                try:
+                    result = edit_cast_plan(job_id, self._read_json())
+                    _json_response(self, result)
+                except (ValueError, cd.CastPlanError) as exc:
+                    _json_response(self, {"error": str(exc)}, 400)
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/cancel", path):
                 job_id = path.split("/")[3]
                 request_cancel(job_id)
@@ -1447,7 +1656,7 @@ class Handler(BaseHTTPRequestHandler):
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/resume", path):
                 job_id = path.split("/")[3]
                 st = load_state(job_id)
-                if st and st["status"] in ("failed", "canceled", "interrupted"):
+                if st and st["status"] in ("failed", "analysis_failed", "canceled", "interrupted"):
                     st["status"] = "queued"
                     st.pop("error", None)
                     _cancel_flags.pop(job_id, None)  # no stale cancel survives into the retry
@@ -1459,7 +1668,10 @@ class Handler(BaseHTTPRequestHandler):
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/delete", path):
                 job_id = path.split("/")[3]
                 st = load_state(job_id)
-                if st and st["status"] in ("done", "failed", "canceled", "interrupted", "queued"):
+                if st and st["status"] in (
+                    "done", "cast_ready", "failed", "analysis_failed",
+                    "canceled", "interrupted", "queued"
+                ):
                     shutil.rmtree(JOBS_DIR / job_id, ignore_errors=True)
                     _json_response(self, {"ok": True})
                 else:

@@ -12,5 +12,8 @@
   "ollama_url": "http://localhost:11434/api/generate",
   "ocr_model": "glm-ocr-doc",
   "ocr_prompt": "Transcribe this document page as clean Markdown, preserving reading order and tables.",
+  "character_model": "qwen3-vl:32b-instruct-q4_K_M",
+  "character_num_ctx": 8192,
+  "character_window_chars": 18000,
   "port": 8765
 }

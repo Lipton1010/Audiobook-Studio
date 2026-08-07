@@ -50,6 +50,9 @@ _ENV = {
     "ollama_url": "AUDIOBOOK_OLLAMA_URL",
     "ocr_model": "AUDIOBOOK_OCR_MODEL",
     "ocr_prompt": "AUDIOBOOK_OCR_PROMPT",
+    "character_model": "AUDIOBOOK_CHARACTER_MODEL",
+    "character_num_ctx": "AUDIOBOOK_CHARACTER_NUM_CTX",
+    "character_window_chars": "AUDIOBOOK_CHARACTER_WINDOW_CHARS",
     "port": "AUDIOBOOK_PORT",
 }
 
@@ -154,12 +157,34 @@ class Config:
             "ocr_prompt", file_cfg,
             "Transcribe this document page as clean Markdown, preserving reading order and tables.",
         )
+        self.character_model = _pick(
+            "character_model", file_cfg, "qwen3-vl:32b-instruct-q4_K_M"
+        )
+        self.character_num_ctx = self._positive_int(
+            _pick("character_num_ctx", file_cfg, 8192), 8192,
+            "character_num_ctx",
+        )
+        self.character_window_chars = self._positive_int(
+            _pick("character_window_chars", file_cfg, 18000), 18000,
+            "character_window_chars",
+        )
         raw_port = _pick("port", file_cfg, 8765)
         try:
             self.port = int(raw_port)
         except (TypeError, ValueError):
             _warn(f"invalid port {raw_port!r}; using 8765")
             self.port = 8765
+
+    @staticmethod
+    def _positive_int(value, default, label):
+        try:
+            parsed = int(value)
+            if parsed > 0:
+                return parsed
+        except (TypeError, ValueError):
+            pass
+        _warn(f"invalid {label} {value!r}; using {default}")
+        return default
 
     def warnings(self):
         """Human-readable list of things that look wrong, surfaced at startup
@@ -229,6 +254,9 @@ class Config:
             "library_roots": [str(r) for r in self.library_roots],
             "ollama_url": self.ollama_url,
             "ocr_model": self.ocr_model,
+            "character_model": self.character_model,
+            "character_num_ctx": self.character_num_ctx,
+            "character_window_chars": self.character_window_chars,
             "port": self.port,
         }
 
