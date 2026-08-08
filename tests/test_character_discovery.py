@@ -154,6 +154,28 @@ class CharacterDiscoveryTests(unittest.TestCase):
         self.assertEqual(invalid["summary"]["unknown_turns"], 2)
         self.assertEqual(len(invalid["edits"]), 3)
 
+    def test_voice_assignments_are_validated_and_audited(self):
+        plan = self.make_plan()
+        alice = plan["characters"][0]["id"]
+
+        with_narrator = cd.apply_voice_assignment(
+            plan, self.blocks, "narrator", "Calm Narrator"
+        )
+        assigned = cd.apply_voice_assignment(
+            with_narrator, self.blocks, alice, "Alice Voice"
+        )
+
+        self.assertEqual(assigned["narrator"]["voice_name"], "Calm Narrator")
+        self.assertEqual(assigned["characters"][0]["voice_name"], "Alice Voice")
+        self.assertEqual(assigned["edits"][-1]["action"], "assign_voice")
+        self.assertEqual(assigned["edits"][-1]["role_id"], alice)
+        persisted = json.dumps(assigned, ensure_ascii=False)
+        self.assertNotIn("Come inside", persisted)
+        with self.assertRaisesRegex(cd.CastPlanError, "120"):
+            cd.apply_voice_assignment(
+                assigned, self.blocks, alice, "v" * 121
+            )
+
     def test_model_must_return_every_target_turn_once(self):
         class MissingAttributionClient(FakeClient):
             def call_json(self, prompt):

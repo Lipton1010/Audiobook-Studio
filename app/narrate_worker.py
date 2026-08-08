@@ -51,6 +51,7 @@ perth.PerthImplicitWatermarker = _NoWatermark
 
 from chatterbox.tts import ChatterboxTTS
 from assembly_metadata import outline_chapter_marks
+import multivoice_plan as mvp
 from narration_safety import repair_capped_sequences
 
 CHAR_CEILING = 400
@@ -287,7 +288,22 @@ def load_plan(job_dir):
     blocks = json.loads((job_dir / "blocks.json").read_text(encoding="utf-8"))["blocks"]
     config = json.loads((job_dir / "config.json").read_text(encoding="utf-8"))
     profile = PAUSE_PROFILES[config.get("path", "B")]
-    plan = build_plan(blocks, profile)
+    if config.get("workflow") == "cast_narration":
+        cast_plan = json.loads(
+            (job_dir / "cast_plan.json").read_text(encoding="utf-8")
+        )
+        plan = mvp.build_plan(blocks, cast_plan, profile)
+        voice_paths = config.get("voice_paths") or {}
+        for entry in plan:
+            voice_name = entry["voice_name"]
+            voice_path = voice_paths.get(voice_name)
+            if not voice_path or not Path(voice_path).exists():
+                raise RuntimeError(
+                    f"assigned voice '{voice_name}' is missing; upload or reassign it"
+                )
+            entry["voice_path"] = voice_path
+    else:
+        plan = build_plan(blocks, profile)
     return plan, config, profile
 
 
@@ -306,7 +322,8 @@ def _generate_serial(model, plan, ref_wav, todo, seg_dir, sr, shard):
     """v1 engine: one model.generate per chunk (re-embeds the voice each call)."""
     done = 0
     for i in todo:
-        wav = model.generate(plan[i]["text"], audio_prompt_path=ref_wav)
+        voice_path = plan[i].get("voice_path", ref_wav)
+        wav = model.generate(plan[i]["text"], audio_prompt_path=voice_path)
         _write_segment(seg_dir, i, wav.squeeze().cpu().numpy(), sr, shard)
         done += 1
         if done % 10 == 0:
@@ -432,8 +449,27 @@ def run_generate(job_dir, plan, ref_wav, shard, nshards, engine="parallel",
     sr = model.sr
 
     if engine == "batched":
-        _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size,
-                          token_budget, batch_s3gen)
+        if any(plan[i].get("voice_path") for i in todo):
+            groups = mvp.group_indices_by_voice(plan, todo, ref_wav)
+            print(
+                f"shard {shard}: {len(groups)} voice conditioning group(s)",
+                flush=True,
+            )
+            for group_number, (voice_path, voice_todo) in enumerate(groups, 1):
+                print(
+                    f"shard {shard}: voice group {group_number}/{len(groups)} "
+                    f"has {len(voice_todo)} chunk(s)",
+                    flush=True,
+                )
+                _generate_batched(
+                    model, plan, voice_path, voice_todo, seg_dir, sr, shard,
+                    batch_size, token_budget, batch_s3gen,
+                )
+        else:
+            _generate_batched(
+                model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size,
+                token_budget, batch_s3gen,
+            )
     else:
         _generate_serial(model, plan, ref_wav, todo, seg_dir, sr, shard)
 

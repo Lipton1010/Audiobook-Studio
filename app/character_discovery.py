@@ -564,6 +564,14 @@ def validate_cast_plan(plan: dict[str, Any], blocks: list[dict[str, Any]]) -> No
     turns = plan.get("turns")
     if not isinstance(characters, list) or not isinstance(turns, list):
         raise CastPlanError("cast plan characters and turns must be lists")
+    narrator = plan.get("narrator")
+    if (
+        not isinstance(narrator, dict)
+        or narrator.get("id") != "narrator"
+        or narrator.get("role") != "narrator"
+    ):
+        raise CastPlanError("cast plan narrator is missing or invalid")
+    _validate_voice_name(narrator.get("voice_name"))
     ids = [str(item.get("id", "")) for item in characters]
     if any(not item for item in ids) or len(ids) != len(set(ids)):
         raise CastPlanError("cast character ids must be non-empty and unique")
@@ -579,6 +587,7 @@ def validate_cast_plan(plan: dict[str, Any], blocks: list[dict[str, Any]]) -> No
             raise CastPlanError(f"character {name!r} has invalid aliases")
         if any(not str(alias).strip() or len(str(alias)) > 120 for alias in aliases):
             raise CastPlanError(f"character {name!r} has an invalid alias")
+        _validate_voice_name(item.get("voice_name"))
         if not isinstance(evidence, list) or not evidence:
             raise CastPlanError(f"character {name!r} has no anchored evidence")
         evidence_by_character[item["id"]] = set(str(value) for value in evidence)
@@ -622,6 +631,53 @@ def validate_cast_plan(plan: dict[str, Any], blocks: list[dict[str, Any]]) -> No
         raise CastPlanError("cast plan summary is stale or inconsistent")
 
 
+def _validate_voice_name(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, str) or not value.strip() or len(value.strip()) > 120:
+        raise CastPlanError("voice names must be 1 to 120 characters")
+
+
+def apply_voice_assignment(
+    plan: dict[str, Any],
+    blocks: list[dict[str, Any]],
+    role_id: str,
+    voice_name: str | None,
+) -> dict[str, Any]:
+    """Assign or clear a local voice name and retain an audit entry."""
+    updated = copy.deepcopy(plan)
+    role_id = str(role_id or "")
+    if voice_name is not None:
+        voice_name = str(voice_name).strip() or None
+    _validate_voice_name(voice_name)
+
+    if role_id == "narrator":
+        role = updated.get("narrator")
+    else:
+        role = next(
+            (
+                item
+                for item in updated.get("characters", [])
+                if item.get("id") == role_id and not item.get("invalid")
+            ),
+            None,
+        )
+    if not role:
+        raise CastPlanError("cast role not found")
+
+    previous = role.get("voice_name")
+    role["voice_name"] = voice_name
+    updated.setdefault("edits", []).append({
+        "action": "assign_voice",
+        "role_id": role_id,
+        "previous_voice_name": previous,
+        "voice_name": voice_name,
+        "applied_at": time.time(),
+    })
+    validate_cast_plan(updated, blocks)
+    return updated
+
+
 def apply_cast_edit(
     plan: dict[str, Any], blocks: list[dict[str, Any]], edit: dict[str, Any]
 ) -> dict[str, Any]:
@@ -660,6 +716,8 @@ def apply_cast_edit(
             | set(character.get("evidence_turn_ids", []))
         )
         target["user_edited"] = True
+        if not target.get("voice_name") and character.get("voice_name"):
+            target["voice_name"] = character["voice_name"]
         for turn in updated["turns"]:
             if turn.get("speaker_id") == character_id:
                 turn["speaker_id"] = target_id
@@ -669,6 +727,7 @@ def apply_cast_edit(
     elif action == "invalidate":
         character["invalid"] = True
         character["user_edited"] = True
+        character["voice_name"] = None
         for turn in updated["turns"]:
             if turn.get("speaker_id") == character_id:
                 turn.update({

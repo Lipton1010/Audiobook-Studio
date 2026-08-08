@@ -21,7 +21,7 @@ Books (PDFs), audio, and generated jobs are gitignored; only code and docs are t
 
 For development validation, run `python -m unittest discover -s tests -v`. Release builds must also satisfy `RELEASE_CHECKLIST.md`.
 
-## Experimental 1.1 character discovery
+## Experimental 1.1 cast and multi-voice narration
 
 The `codex/v1.1_character_discovery` development branch adds an optional **Discover cast** job for
 Path A prose novels. It runs separately from the existing single-voice audiobook workflow: the app
@@ -35,9 +35,23 @@ attribution metadata, and an edit audit trail; it intentionally does not copy bo
 sidecar. The default model is `qwen3-vl:32b-instruct-q4_K_M` and can be changed with
 `character_model` / `AUDIOBOOK_CHARACTER_MODEL`.
 
-This milestone is discovery and review only. Assigning separate licensed voice samples and rendering
-multi-voice dialogue is planned follow-on work, not part of this branch yet. The released 1.0
-installer and ordinary narration jobs are unchanged.
+After discovery, upload licensed voice samples through the existing Voices panel and assign one to
+the narrator and each active speaking character. Shared samples are permitted with a visible warning;
+a completely distinct cast needs one sample per role. **Create Multi-Voice Audiobook** then renders
+the narrator, dialogue, and attribution with their assigned references. Unknown and non-speech
+quotations safely fall back to the narrator.
+
+`app/multivoice_plan.py` compiles only exact, hashed source slices; it rejects stale spans and proves
+that every non-whitespace source character survives before TTS starts. The Chatterbox worker keeps
+one model loaded, processes chunks in same-voice conditioning groups, and retains the existing
+per-segment resume and assembly behavior. The multi-voice hash includes the text-to-voice mapping and
+every reference file signature, so changed assignments or overwritten samples cannot reuse stale
+audio.
+
+This remains a development branch. A real GPU smoke test verified grouped generation and assembly,
+but the temporary groups deliberately reused the same approved reference clip, so listening quality
+and voice distinctness still require the owner's eventual samples. The released 1.0 installer and
+ordinary single-voice narration jobs are unchanged.
 
 ## Requirements
 

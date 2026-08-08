@@ -57,12 +57,53 @@ class CharacterWorkflowTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.jobs = Path(self.temp.name) / "jobs"
         self.jobs.mkdir()
+        self.voices = Path(self.temp.name) / "voices"
+        self.voices.mkdir()
+        self.default_voice = Path(self.temp.name) / "default.wav"
+        self.default_voice.write_bytes(b"default-voice")
         self.jobs_patch = mock.patch.object(server, "JOBS_DIR", self.jobs)
+        self.voices_patch = mock.patch.object(server, "VOICES_DIR", self.voices)
+        self.reference_patch = mock.patch.object(
+            server, "REFERENCE_WAV", str(self.default_voice)
+        )
         self.jobs_patch.start()
+        self.voices_patch.start()
+        self.reference_patch.start()
 
     def tearDown(self):
+        self.reference_patch.stop()
+        self.voices_patch.stop()
         self.jobs_patch.stop()
         self.temp.cleanup()
+
+    def write_cast_job(self, job_id="cast-job"):
+        job_dir = self.jobs / job_id
+        job_dir.mkdir()
+        blocks = [{
+            "type": "body",
+            "text": "Mara said, “Hello.”",
+            "source_page": 1,
+        }]
+        (job_dir / "blocks.json").write_text(
+            json.dumps({"blocks": blocks}), encoding="utf-8"
+        )
+        plan = valid_plan(blocks)
+        (job_dir / "cast_plan.json").write_text(
+            json.dumps(plan), encoding="utf-8"
+        )
+        state = {
+            "id": job_id,
+            "title": "Synthetic Novel",
+            "pdf_path": "novel.pdf",
+            "path": "A",
+            "page_from": 1,
+            "page_to": 1,
+            "workflow": "cast_discovery",
+            "status": "cast_ready",
+            "cast_summary": plan["summary"],
+        }
+        server.save_state(state)
+        return state, blocks, plan
 
     def test_discovery_state_needs_no_voice_format_or_engine(self):
         state = server.build_job_state({
@@ -154,6 +195,64 @@ class CharacterWorkflowTests(unittest.TestCase):
         self.assertEqual(view["characters"][0]["display_name"], "Mara V.")
         self.assertEqual(
             (job_dir / "blocks.json").read_text(encoding="utf-8"), original_blocks
+        )
+
+    def test_voice_assignment_readiness_and_render_transition(self):
+        state, blocks, plan = self.write_cast_job("job-6")
+        (self.voices / "Mara Voice.wav").write_bytes(b"mara")
+        character_id = plan["characters"][0]["id"]
+
+        narrator_view = server.assign_cast_voice(
+            state["id"], "narrator", server.DEFAULT_VOICE
+        )
+        self.assertFalse(narrator_view["render_readiness"]["can_start"])
+        ready_view = server.assign_cast_voice(
+            state["id"], character_id, "Mara Voice"
+        )
+        self.assertTrue(ready_view["render_readiness"]["can_start"])
+
+        with mock.patch.object(server, "enqueue") as enqueue:
+            queued = server.start_cast_narration(
+                state["id"], {"format": "wav", "engine": "batched"}
+            )
+
+        self.assertEqual(queued["workflow"], "cast_narration")
+        self.assertEqual(queued["status"], "queued")
+        self.assertEqual(queued["format"], "wav")
+        self.assertEqual(queued["cast_voice_count"], 2)
+        enqueue.assert_called_once_with(state["id"])
+
+    def test_render_rejects_missing_character_voice(self):
+        state, _, _ = self.write_cast_job("job-7")
+        server.assign_cast_voice(
+            state["id"], "narrator", server.DEFAULT_VOICE
+        )
+
+        with self.assertRaisesRegex(ValueError, "Mara Vale"):
+            server.start_cast_narration(state["id"], {"format": "wav"})
+
+    def test_multivoice_hash_changes_with_character_assignment(self):
+        state, blocks, plan = self.write_cast_job("job-8")
+        (self.voices / "Mara One.wav").write_bytes(b"mara-one")
+        (self.voices / "Mara Two.wav").write_bytes(b"mara-two")
+        character_id = plan["characters"][0]["id"]
+        server.assign_cast_voice(state["id"], "narrator", server.DEFAULT_VOICE)
+        server.assign_cast_voice(state["id"], character_id, "Mara One")
+        state = server.load_state(state["id"])
+        state["workflow"] = "cast_narration"
+        first = server._plan_hash(self.jobs / state["id"], state)
+
+        server.assign_cast_voice(state["id"], character_id, "Mara Two")
+        second = server._plan_hash(self.jobs / state["id"], state)
+
+        self.assertNotEqual(first, second)
+
+    def test_missing_cast_voice_does_not_fall_back_to_narrator(self):
+        requested = Path(server.assigned_voice_wav_path("Deleted Voice"))
+
+        self.assertEqual(requested, self.voices / "Deleted Voice.wav")
+        self.assertEqual(
+            Path(server.voice_wav_path("Deleted Voice")), self.default_voice
         )
 
 

@@ -32,6 +32,7 @@ import fitz  # PyMuPDF
 import requests
 
 import character_discovery as cd
+import multivoice_plan as mvp
 import pipeline_text as pt
 from config import CFG
 
@@ -226,6 +227,13 @@ def voice_wav_path(name):
         return REFERENCE_WAV
     p = VOICES_DIR / (name + ".wav")
     return str(p) if p.exists() else REFERENCE_WAV
+
+
+def assigned_voice_wav_path(name):
+    """Strict cast path: never substitute the narrator for a missing role."""
+    if not name or name == DEFAULT_VOICE:
+        return str(REFERENCE_WAV)
+    return str(VOICES_DIR / (name + ".wav"))
 
 
 def save_voice(name, raw_bytes, ext):
@@ -836,6 +844,48 @@ def _load_cast_plan(job_id):
     return plan, blocks
 
 
+def cast_render_readiness(plan):
+    """Report assignment problems without silently substituting a voice."""
+    roles = mvp.required_voice_roles(plan)
+    available = {
+        item["name"] for item in list_voices() if item.get("available")
+    }
+    missing = [
+        {"id": role["id"], "display_name": role["display_name"]}
+        for role in roles
+        if not role.get("voice_name")
+    ]
+    unavailable = [
+        {
+            "id": role["id"],
+            "display_name": role["display_name"],
+            "voice_name": role.get("voice_name"),
+        }
+        for role in roles
+        if role.get("voice_name") and role["voice_name"] not in available
+    ]
+    roles_by_voice = {}
+    for role in roles:
+        if role.get("voice_name"):
+            roles_by_voice.setdefault(role["voice_name"], []).append(
+                role["display_name"]
+            )
+    shared = [
+        {"voice_name": name, "roles": names}
+        for name, names in roles_by_voice.items()
+        if len(names) > 1
+    ]
+    return {
+        "can_start": not missing and not unavailable,
+        "required_roles": roles,
+        "missing_roles": missing,
+        "unavailable_roles": unavailable,
+        # Shared voices are permitted, but surfaced because a fully distinct
+        # cast requires one licensed sample per listed role.
+        "shared_voices": shared,
+    }
+
+
 def cast_plan_view(job_id):
     """Return cast metadata plus short local examples, never copied sidecar text."""
     plan, blocks = _load_cast_plan(job_id)
@@ -857,6 +907,8 @@ def cast_plan_view(job_id):
             item["example"] = example
             item["example_page"] = turn.get("source_page")
         characters.append(item)
+    st = load_state(job_id) or {}
+    editable_statuses = {"cast_ready", "failed", "canceled", "interrupted"}
     return {
         "schema_version": plan["schema_version"],
         "source_sha256": plan["source_sha256"],
@@ -866,6 +918,25 @@ def cast_plan_view(job_id):
         "characters": characters,
         "summary": plan["summary"],
         "edit_count": len(plan.get("edits", [])),
+        "job": {
+            "workflow": st.get("workflow"),
+            "status": st.get("status"),
+            "format": st.get("format"),
+        },
+        "render_readiness": cast_render_readiness(plan),
+        "permissions": {
+            "editable": st.get("status") in editable_statuses,
+            "can_retry_analysis": (
+                st.get("workflow") == "cast_discovery"
+                and st.get("status") in {
+                    "cast_ready", "analysis_failed", "canceled", "interrupted"
+                }
+            ),
+            "can_start_render": (
+                st.get("workflow") == "cast_discovery"
+                and st.get("status") == "cast_ready"
+            ),
+        },
     }
 
 
@@ -876,8 +947,96 @@ def edit_cast_plan(job_id, edit):
     st = load_state(job_id)
     if st:
         st["cast_summary"] = updated["summary"]
+        if st.get("workflow") == "cast_narration":
+            st["cast_voice_count"] = len({
+                role["voice_name"]
+                for role in mvp.required_voice_roles(updated)
+                if role.get("voice_name")
+            })
         save_state(st)
     return cast_plan_view(job_id)
+
+
+def assign_cast_voice(job_id, role_id, voice_name):
+    plan, blocks = _load_cast_plan(job_id)
+    if voice_name is not None:
+        voice_name = str(voice_name).strip() or None
+    if voice_name is not None:
+        available = {
+            item["name"] for item in list_voices() if item.get("available")
+        }
+        if voice_name not in available:
+            raise ValueError(
+                f"Voice '{voice_name}' is not available. Upload it first."
+            )
+    updated = cd.apply_voice_assignment(
+        plan, blocks, str(role_id or ""), voice_name
+    )
+    _write_json_atomic(_cast_plan_path(job_id), updated)
+    st = load_state(job_id)
+    if st and st.get("workflow") == "cast_narration":
+        st["cast_voice_count"] = len({
+            role["voice_name"]
+            for role in mvp.required_voice_roles(updated)
+            if role.get("voice_name")
+        })
+        save_state(st)
+    return cast_plan_view(job_id)
+
+
+def start_cast_narration(job_id, options):
+    """Transition one reviewed discovery job into multi-voice narration."""
+    st = load_state(job_id)
+    if (
+        not st
+        or st.get("workflow") != "cast_discovery"
+        or st.get("status") != "cast_ready"
+    ):
+        raise ValueError("This cast is not ready to start narration.")
+    plan, _ = _load_cast_plan(job_id)
+    readiness = cast_render_readiness(plan)
+    if readiness["missing_roles"]:
+        names = ", ".join(
+            item["display_name"] for item in readiness["missing_roles"]
+        )
+        raise ValueError(f"Assign a voice to: {names}.")
+    if readiness["unavailable_roles"]:
+        names = ", ".join(
+            f"{item['display_name']} ({item['voice_name']})"
+            for item in readiness["unavailable_roles"]
+        )
+        raise ValueError(f"These assigned voices are unavailable: {names}.")
+
+    fmt = options.get("format")
+    if fmt not in ("m4b", "mp3", "wav"):
+        fmt = "m4b"
+    ferr = missing_ffmpeg_error(fmt)
+    if ferr:
+        raise ValueError(ferr)
+    engine = options.get("engine")
+    if engine not in ("parallel", "batched"):
+        engine = DEFAULT_ENGINE
+
+    st["workflow"] = "cast_narration"
+    st["status"] = "queued"
+    st["format"] = fmt
+    st["engine"] = engine
+    st["cast_voice_count"] = len({
+        role["voice_name"]
+        for role in readiness["required_roles"]
+        if role.get("voice_name")
+    })
+    st.pop("finished_at", None)
+    st.pop("error", None)
+    _cancel_flags.pop(job_id, None)
+    save_state(st)
+    log_line(
+        job_id,
+        f"multi-voice narration queued with {st['cast_voice_count']} voice(s), "
+        f"format {fmt}, engine {engine}",
+    )
+    enqueue(job_id)
+    return st
 
 
 def run_character_discovery(st):
@@ -987,6 +1146,32 @@ def _plan_hash(job_dir, st):
     so those metadata improvements never trigger an unnecessary re-narration.
     """
     payload = json.loads((job_dir / "blocks.json").read_text(encoding="utf-8"))
+    if st.get("workflow") == "cast_narration":
+        cast_plan = json.loads(
+            (job_dir / "cast_plan.json").read_text(encoding="utf-8")
+        )
+        blocks = payload.get("blocks", [])
+        cd.validate_cast_plan(cast_plan, blocks)
+        chunks = mvp.compile_chunks(blocks, cast_plan)
+        spoken_plan = [
+            {"text": chunk["text"], "voice_name": chunk["voice_name"]}
+            for chunk in chunks
+        ]
+        blob = json.dumps(
+            spoken_plan, ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8")
+        voice_signatures = [
+            _voice_name_signature(name, strict=True)
+            for name in sorted({chunk["voice_name"] for chunk in chunks})
+        ]
+        key = b"\x00".join([
+            blob,
+            st["path"].encode(),
+            "\n".join(voice_signatures).encode(),
+            ("multivoice-" + mvp.PLAN_VERSION).encode(),
+        ])
+        return hashlib.sha256(key).hexdigest()
+
     spoken_blocks = [
         {"type": block.get("type"), "text": block.get("text", "")}
         for block in payload.get("blocks", [])
@@ -1007,7 +1192,15 @@ def _plan_hash(job_dir, st):
 def _voice_signature(st):
     # Include the voice file's content signature (size + mtime), not just its
     # path, so overwriting a voice under the same name invalidates segments.
-    vp = voice_wav_path(st.get("voice"))
+    return _voice_name_signature(st.get("voice"))
+
+
+def _voice_name_signature(voice_name, strict=False):
+    vp = (
+        assigned_voice_wav_path(voice_name)
+        if strict
+        else voice_wav_path(voice_name)
+    )
     try:
         vstat = os.stat(vp)
         return f"{vp}:{vstat.st_size}:{vstat.st_mtime_ns}"
@@ -1037,10 +1230,13 @@ def ensure_segments_fresh(job_dir, st):
         for t in seg_dir.glob("seg_*.tmp*.wav"):
             t.unlink()
     hp = job_dir / "plan_hash.txt"
-    key = "v2:" + _plan_hash(job_dir, st)
+    multi_voice = st.get("workflow") == "cast_narration"
+    key = ("mv1:" if multi_voice else "v2:") + _plan_hash(job_dir, st)
     old = hp.read_text(encoding="utf-8").strip() if hp.exists() else None
     if old is None:
         stale = False
+    elif multi_voice:
+        stale = old != key
     elif old.startswith("v2:"):
         stale = old != key
     else:
@@ -1147,10 +1343,33 @@ def run_narration(st):
     job_id = st["id"]
     job_dir = JOBS_DIR / job_id
     engine = st.get("engine", DEFAULT_ENGINE)
+    reference_wav = voice_wav_path(st.get("voice"))
+    voice_paths = None
+    if st.get("workflow") == "cast_narration":
+        cast_plan, _ = _load_cast_plan(job_id)
+        readiness = cast_render_readiness(cast_plan)
+        if not readiness["can_start"]:
+            missing = readiness["missing_roles"] + readiness["unavailable_roles"]
+            names = ", ".join(item["display_name"] for item in missing)
+            raise ValueError(f"Multi-voice assignments are incomplete: {names}.")
+        voice_names = sorted({
+            role["voice_name"] for role in readiness["required_roles"]
+        })
+        for voice_name in voice_names:
+            voice_path = assigned_voice_wav_path(voice_name)
+            if not Path(voice_path).exists():
+                raise ValueError(
+                    f"Assigned voice '{voice_name}' is missing. Upload or reassign it."
+                )
+        voice_paths = {
+            voice_name: assigned_voice_wav_path(voice_name)
+            for voice_name in voice_names
+        }
+        reference_wav = voice_paths[cast_plan["narrator"]["voice_name"]]
     meta, cover, outline = extract_book_meta(st["pdf_path"], st["title"], job_dir)
     config = {
         "path": st["path"],
-        "reference_wav": voice_wav_path(st.get("voice")),
+        "reference_wav": reference_wav,
         "title": st["title"],
         "format": st.get("format", "m4b"),
         "fallback_part_minutes": 240,
@@ -1162,6 +1381,9 @@ def run_narration(st):
         "cover_image": cover,
         "pdf_outline": outline,
     }
+    if voice_paths is not None:
+        config["workflow"] = "cast_narration"
+        config["voice_paths"] = voice_paths
     (job_dir / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
     ensure_segments_fresh(job_dir, st)
 
@@ -1641,7 +1863,9 @@ class Handler(BaseHTTPRequestHandler):
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/cast/edit", path):
                 job_id = path.split("/")[3]
                 st = load_state(job_id)
-                if not st or st.get("status") != "cast_ready":
+                if not st or st.get("status") not in (
+                    "cast_ready", "failed", "canceled", "interrupted"
+                ):
                     _json_response(self, {"error": "cast is not ready for editing"}, 400)
                     return
                 try:
@@ -1649,6 +1873,37 @@ class Handler(BaseHTTPRequestHandler):
                     _json_response(self, result)
                 except (ValueError, cd.CastPlanError) as exc:
                     _json_response(self, {"error": str(exc)}, 400)
+            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/cast/voice", path):
+                job_id = path.split("/")[3]
+                st = load_state(job_id)
+                if not st or st.get("status") not in (
+                    "cast_ready", "failed", "canceled", "interrupted"
+                ):
+                    _json_response(self, {"error": "cast voices are not editable"}, 400)
+                    return
+                body = self._read_json()
+                try:
+                    result = assign_cast_voice(
+                        job_id, body.get("role_id"), body.get("voice_name")
+                    )
+                    _json_response(self, result)
+                except (ValueError, cd.CastPlanError) as exc:
+                    _json_response(self, {"error": str(exc)}, 400)
+            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/cast/render", path):
+                job_id = path.split("/")[3]
+                try:
+                    result = start_cast_narration(job_id, self._read_json())
+                    _json_response(self, result)
+                except ValueError as exc:
+                    message = str(exc)
+                    _json_response(
+                        self,
+                        {
+                            "error": message,
+                            "ffmpeg_missing": "needs ffmpeg" in message,
+                        },
+                        400,
+                    )
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/cancel", path):
                 job_id = path.split("/")[3]
                 request_cancel(job_id)
@@ -1657,6 +1912,20 @@ class Handler(BaseHTTPRequestHandler):
                 job_id = path.split("/")[3]
                 st = load_state(job_id)
                 if st and st["status"] in ("failed", "analysis_failed", "canceled", "interrupted"):
+                    if st.get("workflow") == "cast_narration":
+                        try:
+                            plan, _ = _load_cast_plan(job_id)
+                            readiness = cast_render_readiness(plan)
+                            if not readiness["can_start"]:
+                                raise ValueError(
+                                    "Review the cast and repair missing voice assignments first."
+                                )
+                            ferr = missing_ffmpeg_error(st.get("format", "m4b"))
+                            if ferr:
+                                raise ValueError(ferr)
+                        except ValueError as exc:
+                            _json_response(self, {"error": str(exc)}, 400)
+                            return
                     st["status"] = "queued"
                     st.pop("error", None)
                     _cancel_flags.pop(job_id, None)  # no stale cancel survives into the retry

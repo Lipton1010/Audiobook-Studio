@@ -247,6 +247,41 @@ The repository reports zero forks. A sweep of all tracked files found no other b
   rejection, bounded windows, audited edits, no-text sidecars, no-audio discovery execution, Path B
   rejection, and unchanged narration-job defaults. This is not an installer/release milestone; do
   not build or publish it without completing the normal release checklist.
+- Multi-voice continuation is now implemented on the same development branch. The cast dialog lists
+  every available uploaded voice for the narrator and active characters, persists assignments in the
+  audited cast sidecar, reports missing/deleted samples, warns when roles share a voice, and starts a
+  `cast_narration` job only after every required role has an available reference. Unknown and
+  not-speech quotations deliberately use the narrator.
+- `app/multivoice_plan.py` is the shared stdlib-only compiler used by the base server and isolated
+  Chatterbox worker. It revalidates the cast source hash, turn spans, and per-block hashes inside the
+  TTS environment; slices only canonical `blocks.json` text; preserves every non-whitespace source
+  character; and retains offsets/hashes on each in-memory chunk. Narration uses the existing 400-char
+  soft ceiling. Common dialogue turns stay whole up to 600 characters, covering the validated
+  480-character audition case; rarer longer turns split at sentence/clause boundaries.
+- Speaker changes inside a paragraph add zero explicit PCM pause because separate Chatterbox calls
+  already contribute a measured ~380 ms join. Packing splits inside one role retain the normal 150 ms
+  chunk gap, and recovered paragraph/heading pauses remain the existing Path A values.
+- The batched worker loads one Chatterbox model and groups pending chunk indices by reference path.
+  Each voice gets one conditioning pass and its own normal token-length buckets; groups run
+  sequentially, so the OCR/TTS ownership rule and the one-model GPU design remain intact. The serial
+  fallback chooses the assigned reference per chunk. Ordinary single-voice plans take the original
+  code path unchanged.
+- Multi-voice resumability uses an `mv1:` identity over compiled spoken text, its voice-name mapping,
+  planner version, and size/mtime signatures for every referenced WAV. Reassigning, deleting, or
+  overwriting any voice is caught before model load and invalidates stale segments. Failed/canceled
+  jobs allow cast correction before the normal Resume action.
+- Real synthetic GPU smoke test: four exact-source chunks, three conditioning groups, four generated
+  segments, then a 4.64-second non-silent 24 kHz WAV. Generation completed in 18.6 seconds, reserved
+  3.65-3.76 GB during the tiny buckets, and left `ollama ps` empty with the TTS process exited. All
+  three temporary names pointed to the same approved reference, so this proves routing/generation and
+  assembly, NOT audible voice distinctness or multi-character quality. All job/audio/voice test
+  artifacts were deleted afterward.
+- Browser validation covered disabled-until-complete assignments, distinct persisted selections,
+  shared-voice warning, WAV selection, enabled render action, and a clean console. Regression coverage
+  is now 43 passing tests, including source preservation, stale-cast rejection inside the worker,
+  voice-aware hashing, missing-reference failure, real worker plan loading, and exact equality of the
+  ordinary single-voice plan. Distinct licensed samples and listening remain release gates;
+  this is still not an installer/release milestone.
 
 WINDOWS-ONLY GIT WRITES. Working-tree files are CRLF while HEAD blobs are LF, reconciled by
 core.autocrlf. A git run from a Linux shell or container reports ALL tracked files as modified, and

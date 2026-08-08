@@ -86,6 +86,11 @@
   .cast-item .cast-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 9px; }
   .cast-item select { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 7px; }
   .cast-example { margin-top: 7px; color: var(--dim); font-size: 13px; font-style: italic; }
+  .voice-assignment { display: flex; gap: 8px; align-items: center; margin-top: 9px; flex-wrap: wrap; }
+  .voice-assignment label { color: var(--dim); font-size: 13px; }
+  .cast-render-panel { margin-top: 14px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); }
+  .cast-render-panel .render-row { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; }
+  .cast-render-panel select { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 8px; }
 </style>
 </head>
 <body>
@@ -174,6 +179,20 @@
   <div class="cast-summary" id="cast-summary"></div>
   <div class="err" id="cast-err"></div>
   <div class="cast-list" id="cast-list"></div>
+  <div class="cast-render-panel" id="cast-render-panel">
+    <div class="render-row">
+      <div>
+        <label for="cast-format">Audiobook format</label><br>
+        <select id="cast-format">
+          <option value="m4b">m4b — audiobook with chapters</option>
+          <option value="mp3">mp3 — universal</option>
+          <option value="wav">wav — lossless master</option>
+        </select>
+      </div>
+      <button class="primary" id="cast-render-btn">Create Multi-Voice Audiobook</button>
+    </div>
+    <div class="detail" id="cast-render-status" style="margin-top:8px"></div>
+  </div>
   <div class="dlg-actions">
     <button id="cast-retry-btn">Run analysis again</button>
     <button class="primary" onclick="document.getElementById('cast-dlg').close()">Close</button>
@@ -336,20 +355,25 @@ let ffmpegPoll = null;
 
 function renderFfmpeg() {
   const sel = document.getElementById('f-format');
+  const castSel = document.getElementById('cast-format');
   const warn = document.getElementById('ffmpeg-warn');
   const text = document.getElementById('ffmpeg-warn-text');
   const status = document.getElementById('ffmpeg-warn-status');
   const btnEl = document.getElementById('ffmpeg-install-btn');
   const needs = ffmpeg.formats_needing_ffmpeg || ['m4b', 'mp3'];
 
-  for (const opt of sel.options) {
-    const blocked = !ffmpeg.available && needs.includes(opt.value);
-    opt.disabled = blocked;
-    const base = opt.textContent.replace(/ \u2014 needs ffmpeg$/, '');
-    opt.textContent = blocked ? base + ' \u2014 needs ffmpeg' : base;
+  for (const formatSelect of [sel, castSel]) {
+    for (const opt of formatSelect.options) {
+      const blocked = !ffmpeg.available && needs.includes(opt.value);
+      opt.disabled = blocked;
+      const base = opt.textContent.replace(/ \u2014 needs ffmpeg$/, '');
+      opt.textContent = blocked ? base + ' \u2014 needs ffmpeg' : base;
+    }
+    // Never leave a disabled option selected.
+    if (formatSelect.selectedOptions.length && formatSelect.selectedOptions[0].disabled) {
+      formatSelect.value = 'wav';
+    }
   }
-  // Never leave a disabled option selected.
-  if (sel.selectedOptions.length && sel.selectedOptions[0].disabled) sel.value = 'wav';
 
   if (ffmpeg.available) { warn.style.display = 'none'; return; }
   warn.style.display = '';
@@ -613,7 +637,9 @@ function renderJob(j) {
   const pages = `pages ${j.page_from}–${j.page_to}`;
   const workflowDetail = j.workflow === 'cast_discovery'
     ? 'Character discovery'
-    : `${j.voice ? esc(j.voice) : ''}${j.format ? ' · ' + esc(j.format) : ''}`;
+    : (j.workflow === 'cast_narration'
+      ? `Multi-voice · ${j.cast_voice_count || 0} voices${j.format ? ' · ' + esc(j.format) : ''}`
+      : `${j.voice ? esc(j.voice) : ''}${j.format ? ' · ' + esc(j.format) : ''}`);
   div.innerHTML = `
     <div class="row1">
       <span class="title">${esc(j.title)}</span>
@@ -645,6 +671,8 @@ function renderJob(j) {
         await fetch(`/api/jobs/${j.id}/delete`, {method: 'POST'}); refreshJobs();
       }
     }));
+  } else if (j.workflow === 'cast_narration' && j.cast_summary) {
+    row.appendChild(btn('Review cast', '', () => openCast(j.id, j.title)));
   }
   if (j.status === 'done') {
     if (j.audiobook_dir) {
@@ -717,6 +745,7 @@ function renderJob(j) {
 
 let activeCastJobId = null;
 let activeCastTitle = '';
+let activeCastData = null;
 
 async function openCast(jobId, title) {
   activeCastJobId = jobId;
@@ -728,6 +757,7 @@ async function openCast(jobId, title) {
   document.getElementById('cast-meta').textContent = 'Loading validated local cast report...';
   if (!castDlg.open) castDlg.showModal();
   try {
+    await loadVoices();
     const r = await fetch(`/api/jobs/${jobId}/cast`);
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || 'Could not load the cast report.');
@@ -738,6 +768,8 @@ async function openCast(jobId, title) {
 }
 
 function renderCast(data) {
+  activeCastData = data;
+  const editable = !!data.permissions?.editable;
   const summary = document.getElementById('cast-summary');
   summary.replaceChildren();
   const stats = data.summary || {};
@@ -764,8 +796,12 @@ function renderCast(data) {
   narratorName.textContent = data.narrator?.display_name || 'Narrator';
   const narratorMeta = document.createElement('div');
   narratorMeta.className = 'meta';
-  narratorMeta.textContent = 'Reserved narrator role. Voice assignment arrives in the next milestone.';
-  narrator.append(narratorName, narratorMeta);
+  narratorMeta.textContent = 'Reads prose, headings, dialogue attribution, and quotations whose speaker is unknown.';
+  narrator.append(
+    narratorName,
+    narratorMeta,
+    voiceAssignmentControl('narrator', data.narrator?.voice_name, editable),
+  );
   list.appendChild(narrator);
 
   const activeCharacters = (data.characters || []).filter(c => !c.invalid);
@@ -775,7 +811,7 @@ function renderCast(data) {
     const nameInput = document.createElement('input');
     nameInput.type = 'text';
     nameInput.value = character.display_name;
-    nameInput.disabled = !!character.invalid;
+    nameInput.disabled = !!character.invalid || !editable;
     const meta = document.createElement('div');
     meta.className = 'meta';
     const counts = character.confidence_counts || {};
@@ -787,13 +823,18 @@ function renderCast(data) {
     aliases.textContent = character.aliases?.length
       ? `Aliases: ${character.aliases.join(', ')}` : 'No aliases proposed';
     item.append(nameInput, meta, aliases);
+    if (!character.invalid) {
+      item.appendChild(
+        voiceAssignmentControl(character.id, character.voice_name, editable)
+      );
+    }
     if (character.example) {
       const example = document.createElement('div');
       example.className = 'cast-example';
       example.textContent = `${character.example_page ? `Page ${character.example_page}: ` : ''}${character.example}`;
       item.appendChild(example);
     }
-    if (!character.invalid) {
+    if (!character.invalid && editable) {
       const actions = document.createElement('div');
       actions.className = 'cast-actions';
       actions.appendChild(btn('Save name', '', () => castEdit({
@@ -828,7 +869,110 @@ function renderCast(data) {
     empty.textContent = 'No identifiable speaking characters were found. Unknown quotations remain reported above.';
     list.appendChild(empty);
   }
-  document.getElementById('cast-retry-btn').onclick = retryCastAnalysis;
+  renderCastReadiness(data);
+  const retryButton = document.getElementById('cast-retry-btn');
+  retryButton.hidden = !data.permissions?.can_retry_analysis;
+  retryButton.onclick = retryCastAnalysis;
+}
+
+function voiceAssignmentControl(roleId, currentVoice, editable) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'voice-assignment';
+  const label = document.createElement('label');
+  label.textContent = 'Voice';
+  const select = document.createElement('select');
+  const empty = document.createElement('option');
+  empty.value = '';
+  empty.textContent = 'Choose an uploaded voice...';
+  select.appendChild(empty);
+  for (const voice of voices.filter(item => item.available !== false)) {
+    const option = document.createElement('option');
+    option.value = voice.name;
+    option.textContent = voice.name;
+    select.appendChild(option);
+  }
+  if (currentVoice && !voices.some(v => v.name === currentVoice && v.available !== false)) {
+    const unavailable = document.createElement('option');
+    unavailable.value = currentVoice;
+    unavailable.textContent = `${currentVoice} — unavailable`;
+    select.appendChild(unavailable);
+  }
+  select.value = currentVoice || '';
+  select.disabled = !editable;
+  select.onchange = () => assignCastVoice(roleId, select.value || null);
+  wrapper.append(label, select);
+  return wrapper;
+}
+
+function renderCastReadiness(data) {
+  const readiness = data.render_readiness || {};
+  const permission = !!data.permissions?.can_start_render;
+  const button = document.getElementById('cast-render-btn');
+  const status = document.getElementById('cast-render-status');
+  const format = document.getElementById('cast-format');
+  renderFfmpeg();
+  button.hidden = !permission;
+  format.disabled = !permission;
+  button.disabled = !permission || !readiness.can_start;
+  button.onclick = startMultiVoiceNarration;
+
+  if (readiness.missing_roles?.length) {
+    status.textContent = 'Still needs voices: ' + readiness.missing_roles
+      .map(item => item.display_name).join(', ') + '.';
+  } else if (readiness.unavailable_roles?.length) {
+    status.textContent = 'Upload or reassign unavailable voices: ' + readiness.unavailable_roles
+      .map(item => `${item.display_name} (${item.voice_name})`).join(', ') + '.';
+  } else if (readiness.shared_voices?.length) {
+    status.textContent = 'Ready to render. Shared voice warning: ' + readiness.shared_voices
+      .map(item => `${item.voice_name} is assigned to ${item.roles.join(' and ')}`).join('; ') + '.';
+  } else if (readiness.can_start) {
+    status.textContent = 'Ready to render with one assigned reference voice per role.';
+  } else {
+    status.textContent = 'Voice assignments are not ready.';
+  }
+  if (!permission && data.job?.status === 'done') {
+    status.textContent = 'This cast has already produced a completed audiobook.';
+  } else if (!permission && data.job?.workflow === 'cast_narration') {
+    status.textContent += ' Use the job card to resume or monitor narration.';
+  }
+}
+
+async function assignCastVoice(roleId, voiceName) {
+  const err = document.getElementById('cast-err');
+  err.textContent = '';
+  try {
+    const r = await fetch(`/api/jobs/${activeCastJobId}/cast/voice`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({role_id: roleId, voice_name: voiceName}),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Voice assignment failed.');
+    renderCast(data);
+  } catch (e) {
+    err.textContent = e.message || 'Voice assignment failed.';
+    if (activeCastData) renderCast(activeCastData);
+  }
+}
+
+async function startMultiVoiceNarration() {
+  const format = document.getElementById('cast-format').value;
+  if (!confirm('Start multi-voice narration with these assignments? Character analysis will not run again.')) return;
+  const err = document.getElementById('cast-err');
+  err.textContent = '';
+  try {
+    const r = await fetch(`/api/jobs/${activeCastJobId}/cast/render`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({format}),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Could not start multi-voice narration.');
+    castDlg.close();
+    refreshJobs();
+  } catch (e) {
+    err.textContent = e.message || 'Could not start multi-voice narration.';
+  }
 }
 
 async function castEdit(edit) {
