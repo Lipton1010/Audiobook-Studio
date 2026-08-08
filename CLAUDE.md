@@ -282,6 +282,28 @@ The repository reports zero forks. A sweep of all tracked files found no other b
   voice-aware hashing, missing-reference failure, real worker plan loading, and exact equality of the
   ordinary single-voice plan. Distinct licensed samples and listening remain release gates;
   this is still not an installer/release milestone.
+- Voice-type casting was added on 2026-08-08. The census prompt now returns `female`, `male`, or
+  `unknown` for each speaking character based on nearby textual evidence; conflicting multi-window
+  evidence collapses to unknown instead of guessing. The narrator and every character expose an
+  audited manual correction. Existing schema-1 cast plans remain valid and hydrate missing types as
+  unknown, so this development change does not strand earlier discovery jobs.
+- The Voices panel now catalogs WAV files from configurable `voice_library_roots` in place; the
+  default is the directory containing `reference_wav`, so the separate 1.1 tree can use the private
+  sample library under the 1.0 tree without copying or changing it. Explicit `Female` / `Male`
+  filename prefixes seed metadata; generic names stay unknown. The app deliberately does not infer
+  type from acoustic pitch. Manual overrides live in ignored `app/voice_catalog.json`, which contains
+  labels only, no audio or absolute paths. External library samples cannot be deleted from the app.
+- Cast selectors sort matching sample types first, retain unknown/mismatched options for deliberate
+  casting, and surface type mismatches or unconfirmed types without blocking render. The expanded
+  private library was discovered as five female-labelled WAVs, thirteen male-labelled WAVs, the male
+  default, and one generic unknown WAV; the reference WAV is de-duplicated and non-WAV library files
+  are not treated as ready Chatterbox references.
+- Real-model validation on invented text took 30.7 seconds: Qwen identified Alice Mercer as female,
+  Daniel Cross as male, and a sign quotation as non-speech, then `ollama ps` returned empty. Browser
+  validation covered the full private catalog, compatible-first ordering, ready render state,
+  mismatch warning, correction clearing that warning, and a clean console. All temporary job and
+  server artifacts were removed. Regression coverage is now 47 passing tests. No TTS/audio output,
+  installer, release, or 1.0 file was changed for this metadata milestone.
 
 WINDOWS-ONLY GIT WRITES. Working-tree files are CRLF while HEAD blobs are LF, reconciled by
 core.autocrlf. A git run from a Linux shell or container reports ALL tracked files as modified, and

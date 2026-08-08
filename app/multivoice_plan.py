@@ -78,6 +78,7 @@ def required_voice_roles(cast_plan: dict[str, Any]) -> list[dict[str, Any]]:
         "id": NARRATOR_ID,
         "display_name": str(narrator.get("display_name") or "Narrator"),
         "voice_name": narrator.get("voice_name"),
+        "voice_type": narrator.get("voice_type", "unknown"),
         "role": "narrator",
         "turn_count": None,
     }]
@@ -88,6 +89,7 @@ def required_voice_roles(cast_plan: dict[str, Any]) -> list[dict[str, Any]]:
             "id": character["id"],
             "display_name": character["display_name"],
             "voice_name": character.get("voice_name"),
+            "voice_type": character.get("voice_type", "unknown"),
             "role": "character",
             "turn_count": int(character.get("turn_count", 0)),
         })

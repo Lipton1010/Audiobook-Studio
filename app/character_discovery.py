@@ -24,6 +24,7 @@ DEFAULT_NUM_CTX = 8192
 DEFAULT_WINDOW_CHARS = 18000
 CONFIDENCE_VALUES = {"high", "medium", "low"}
 EVIDENCE_VALUES = {"explicit", "context", "alternation", "unknown"}
+VOICE_TYPE_VALUES = {"male", "female", "unknown"}
 
 
 class CastPlanError(ValueError):
@@ -228,6 +229,29 @@ def _stable_character_id(display_name: str) -> str:
     return f"char_{slug}_{digest}"
 
 
+def _voice_type(value: Any) -> str:
+    """Normalize the small, casting-only voice presentation vocabulary."""
+    if value in (None, ""):
+        return "unknown"
+    normalized = str(value).strip().casefold()
+    if normalized not in VOICE_TYPE_VALUES:
+        raise CastPlanError(
+            "voice type must be one of: female, male, unknown"
+        )
+    return normalized
+
+
+def _merge_voice_types(first: Any, second: Any) -> str:
+    """Prefer explicit agreement; conflicting model evidence stays unknown."""
+    first_type = _voice_type(first)
+    second_type = _voice_type(second)
+    if first_type == "unknown":
+        return second_type
+    if second_type == "unknown" or first_type == second_type:
+        return first_type
+    return "unknown"
+
+
 def _merge_character_candidates(
     raw_characters: Iterable[dict[str, Any]], valid_turn_ids: set[str]
 ) -> list[dict[str, Any]]:
@@ -247,6 +271,7 @@ def _merge_character_candidates(
             raise CastPlanError(
                 f"character candidate {name!r} has no valid anchored turn evidence"
             )
+        voice_type = _voice_type(raw.get("voice_type"))
         match = next((index for index, known in enumerate(keys) if known & candidate_keys), None)
         if match is None:
             merged.append({
@@ -257,6 +282,7 @@ def _merge_character_candidates(
                 "evidence_turn_ids": sorted(set(evidence)),
                 "turn_count": 0,
                 "confidence_counts": {"high": 0, "medium": 0, "low": 0},
+                "voice_type": voice_type,
                 "voice_name": None,
                 "invalid": False,
                 "user_edited": False,
@@ -270,6 +296,9 @@ def _merge_character_candidates(
             item["aliases"] = sorted(all_aliases, key=str.casefold)
             item["evidence_turn_ids"] = sorted(
                 set(item["evidence_turn_ids"]) | set(evidence)
+            )
+            item["voice_type"] = _merge_voice_types(
+                item.get("voice_type"), voice_type
             )
             keys[match].update(candidate_keys)
     return merged
@@ -342,7 +371,7 @@ Return JSON only. Do not rewrite, summarize, or quote the book in your answer.
 Target turn ids: {ids}
 
 Return this shape:
-{{"characters":[{{"display_name":"canonical name from the text","aliases":["title or alias"],"evidence_turn_ids":["turn_000001"]}}]}}
+{{"characters":[{{"display_name":"canonical name from the text","aliases":["title or alias"],"evidence_turn_ids":["turn_000001"],"voice_type":"male|female|unknown"}}]}}
 
 Rules:
 1. Include only people or personified beings who speak in a target TURN.
@@ -350,6 +379,7 @@ Rules:
 3. Merge titles and aliases when the surrounding text makes identity explicit.
 4. Every character must cite at least one supplied target turn id.
 5. If a speaker cannot be identified, omit that speaker rather than inventing a name.
+6. Set voice_type to male or female only when names, pronouns, titles, or explicit nearby text support it. Otherwise use unknown.
 
 LOCAL TEXT WINDOW:
 {window_text}"""
@@ -509,6 +539,7 @@ def analyze_blocks(
                 "id": "narrator",
                 "role": "narrator",
                 "display_name": "Narrator",
+                "voice_type": "unknown",
                 "voice_name": None,
             },
             "characters": characters,
@@ -572,6 +603,7 @@ def validate_cast_plan(plan: dict[str, Any], blocks: list[dict[str, Any]]) -> No
     ):
         raise CastPlanError("cast plan narrator is missing or invalid")
     _validate_voice_name(narrator.get("voice_name"))
+    _voice_type(narrator.get("voice_type"))
     ids = [str(item.get("id", "")) for item in characters]
     if any(not item for item in ids) or len(ids) != len(set(ids)):
         raise CastPlanError("cast character ids must be non-empty and unique")
@@ -588,6 +620,7 @@ def validate_cast_plan(plan: dict[str, Any], blocks: list[dict[str, Any]]) -> No
         if any(not str(alias).strip() or len(str(alias)) > 120 for alias in aliases):
             raise CastPlanError(f"character {name!r} has an invalid alias")
         _validate_voice_name(item.get("voice_name"))
+        _voice_type(item.get("voice_type"))
         if not isinstance(evidence, list) or not evidence:
             raise CastPlanError(f"character {name!r} has no anchored evidence")
         evidence_by_character[item["id"]] = set(str(value) for value in evidence)
@@ -678,6 +711,44 @@ def apply_voice_assignment(
     return updated
 
 
+def apply_voice_type(
+    plan: dict[str, Any],
+    blocks: list[dict[str, Any]],
+    role_id: str,
+    voice_type: str,
+) -> dict[str, Any]:
+    """Set a reviewed role's casting voice type and retain an audit entry."""
+    updated = copy.deepcopy(plan)
+    role_id = str(role_id or "")
+    normalized = _voice_type(voice_type)
+    if role_id == "narrator":
+        role = updated.get("narrator")
+    else:
+        role = next(
+            (
+                item
+                for item in updated.get("characters", [])
+                if item.get("id") == role_id and not item.get("invalid")
+            ),
+            None,
+        )
+    if not role:
+        raise CastPlanError("cast role not found")
+
+    previous = _voice_type(role.get("voice_type"))
+    role["voice_type"] = normalized
+    role["user_edited"] = True
+    updated.setdefault("edits", []).append({
+        "action": "set_voice_type",
+        "role_id": role_id,
+        "previous_voice_type": previous,
+        "voice_type": normalized,
+        "applied_at": time.time(),
+    })
+    validate_cast_plan(updated, blocks)
+    return updated
+
+
 def apply_cast_edit(
     plan: dict[str, Any], blocks: list[dict[str, Any]], edit: dict[str, Any]
 ) -> dict[str, Any]:
@@ -716,6 +787,9 @@ def apply_cast_edit(
             | set(character.get("evidence_turn_ids", []))
         )
         target["user_edited"] = True
+        target["voice_type"] = _merge_voice_types(
+            target.get("voice_type"), character.get("voice_type")
+        )
         if not target.get("voice_name") and character.get("voice_name"):
             target["voice_name"] = character["voice_name"]
         for turn in updated["turns"]:

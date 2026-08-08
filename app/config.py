@@ -45,6 +45,7 @@ _ENV = {
     "base_dir": "AUDIOBOOK_BASE_DIR",
     "chatterbox_python": "AUDIOBOOK_CHATTERBOX_PY",
     "reference_wav": "AUDIOBOOK_REFERENCE_WAV",
+    "voice_library_roots": "AUDIOBOOK_VOICE_LIBRARY_ROOTS",  # os.pathsep-separated
     "audiobooks_dir": "AUDIOBOOK_AUDIOBOOKS_DIR",
     "library_roots": "AUDIOBOOK_LIBRARY_ROOTS",  # os.pathsep-separated in env
     "ollama_url": "AUDIOBOOK_OLLAMA_URL",
@@ -140,6 +141,10 @@ class Config:
             "reference_wav", file_cfg,
             str(self.base_dir / "samples" / "Voice_Sample" / "male_ref.wav"),
         )
+        voice_roots_val = _pick(
+            "voice_library_roots", file_cfg, [str(Path(self.reference_wav).parent)]
+        )
+        self.voice_library_roots = [Path(p) for p in _as_path_list(voice_roots_val)]
         self.audiobooks_dir = Path(
             _pick("audiobooks_dir", file_cfg, str(self.base_dir / "audiobooks"))
         )
@@ -250,6 +255,7 @@ class Config:
             "base_dir": str(self.base_dir),
             "chatterbox_python": self.chatterbox_python,
             "reference_wav": self.reference_wav,
+            "voice_library_roots": [str(r) for r in self.voice_library_roots],
             "audiobooks_dir": str(self.audiobooks_dir),
             "library_roots": [str(r) for r in self.library_roots],
             "ollama_url": self.ollama_url,

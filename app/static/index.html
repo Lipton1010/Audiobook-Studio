@@ -315,20 +315,57 @@ function markPath() {
 
 let voices = [];
 
+const voiceTypeLabels = {female: 'Female', male: 'Male', unknown: 'Unknown'};
+
+function voiceTypeLabel(value) {
+  return voiceTypeLabels[value] || voiceTypeLabels.unknown;
+}
+
+function voiceTypeSelect(current, onChange, disabled = false) {
+  const select = document.createElement('select');
+  select.setAttribute('aria-label', 'Voice type');
+  for (const value of ['female', 'male', 'unknown']) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = voiceTypeLabel(value);
+    select.appendChild(option);
+  }
+  select.value = current || 'unknown';
+  select.disabled = disabled;
+  select.onchange = () => onChange(select.value);
+  return select;
+}
+
 async function loadVoices() {
   const r = await fetch('/api/voices');
   voices = (await r.json()).voices;
   const sel = document.getElementById('f-voice');
   const cur = sel.value;
-  sel.innerHTML = voices.map(v => `<option value="${v.name}"${v.available === false ? ' disabled' : ''}>${v.name}${v.available === false ? ' \u2014 missing, upload a voice' : ''}</option>`).join('');
+  sel.replaceChildren();
+  for (const voice of voices) {
+    const option = document.createElement('option');
+    option.value = voice.name;
+    option.disabled = voice.available === false;
+    option.textContent = `${voiceTypeLabel(voice.voice_type)} · ${voice.name}`
+      + (voice.available === false ? ' · missing' : '');
+    sel.appendChild(option);
+  }
   if (voices.some(v => v.name === cur)) sel.value = cur;
   const list = document.getElementById('voices');
-  list.innerHTML = '';
+  list.replaceChildren();
   for (const v of voices) {
     const row = document.createElement('div');
     row.style.cssText = 'display:flex; align-items:center; gap:10px; padding:4px 0';
-    row.innerHTML = `<span>${v.name}</span><span class="spacer"></span>`;
-    if (!v.builtin) {
+    const name = document.createElement('span');
+    name.textContent = v.name;
+    const spacer = document.createElement('span');
+    spacer.className = 'spacer';
+    row.append(name, spacer, voiceTypeSelect(
+      v.voice_type,
+      value => updateVoiceCatalogType(v.name, value),
+      v.available === false,
+    ));
+    if (v.deletable) {
       row.appendChild(btn('Delete', 'danger', async () => {
         if (confirm(`Delete voice "${v.name}"?`)) {
           await fetch(`/api/voices/${encodeURIComponent(v.name)}/delete`, {method: 'POST'});
@@ -338,10 +375,30 @@ async function loadVoices() {
     } else {
       const tag = document.createElement('span');
       tag.className = 'badge';
-      tag.textContent = 'built in';
+      tag.textContent = v.builtin ? 'default' : 'library';
       row.appendChild(tag);
     }
     list.appendChild(row);
+  }
+}
+
+async function updateVoiceCatalogType(voiceName, voiceType) {
+  const err = document.getElementById('voice-err');
+  err.textContent = '';
+  try {
+    const r = await fetch('/api/voices/type', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({voice_name: voiceName, voice_type: voiceType}),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Could not save voice type.');
+    voices = data.voices;
+    await loadVoices();
+    if (activeCastData) renderCast(activeCastData);
+  } catch (e) {
+    err.textContent = e.message || 'Could not save voice type.';
+    await loadVoices();
   }
 }
 
@@ -800,7 +857,10 @@ function renderCast(data) {
   narrator.append(
     narratorName,
     narratorMeta,
-    voiceAssignmentControl('narrator', data.narrator?.voice_name, editable),
+    castVoiceTypeControl('narrator', data.narrator?.voice_type, editable),
+    voiceAssignmentControl(
+      'narrator', data.narrator?.voice_name, editable, data.narrator?.voice_type
+    ),
   );
   list.appendChild(narrator);
 
@@ -825,7 +885,12 @@ function renderCast(data) {
     item.append(nameInput, meta, aliases);
     if (!character.invalid) {
       item.appendChild(
-        voiceAssignmentControl(character.id, character.voice_name, editable)
+        castVoiceTypeControl(character.id, character.voice_type, editable)
+      );
+      item.appendChild(
+        voiceAssignmentControl(
+          character.id, character.voice_name, editable, character.voice_type
+        )
       );
     }
     if (character.example) {
@@ -875,7 +940,23 @@ function renderCast(data) {
   retryButton.onclick = retryCastAnalysis;
 }
 
-function voiceAssignmentControl(roleId, currentVoice, editable) {
+function castVoiceTypeControl(roleId, currentType, editable) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'voice-assignment';
+  const label = document.createElement('label');
+  label.textContent = 'Voice type';
+  wrapper.append(
+    label,
+    voiceTypeSelect(
+      currentType,
+      value => assignCastVoiceType(roleId, value),
+      !editable,
+    ),
+  );
+  return wrapper;
+}
+
+function voiceAssignmentControl(roleId, currentVoice, editable, expectedType = 'unknown') {
   const wrapper = document.createElement('div');
   wrapper.className = 'voice-assignment';
   const label = document.createElement('label');
@@ -883,12 +964,23 @@ function voiceAssignmentControl(roleId, currentVoice, editable) {
   const select = document.createElement('select');
   const empty = document.createElement('option');
   empty.value = '';
-  empty.textContent = 'Choose an uploaded voice...';
+  empty.textContent = expectedType && expectedType !== 'unknown'
+    ? `Choose a ${voiceTypeLabel(expectedType).toLowerCase()} voice...`
+    : 'Choose a voice...';
   select.appendChild(empty);
-  for (const voice of voices.filter(item => item.available !== false)) {
+  const rankedVoices = voices.filter(item => item.available !== false).sort((a, b) => {
+    const rank = voice => {
+      if (!expectedType || expectedType === 'unknown') return 0;
+      if (voice.voice_type === expectedType) return 0;
+      if (voice.voice_type === 'unknown') return 1;
+      return 2;
+    };
+    return rank(a) - rank(b) || a.name.localeCompare(b.name);
+  });
+  for (const voice of rankedVoices) {
     const option = document.createElement('option');
     option.value = voice.name;
-    option.textContent = voice.name;
+    option.textContent = `${voiceTypeLabel(voice.voice_type)} · ${voice.name}`;
     select.appendChild(option);
   }
   if (currentVoice && !voices.some(v => v.name === currentVoice && v.available !== false)) {
@@ -922,6 +1014,15 @@ function renderCastReadiness(data) {
   } else if (readiness.unavailable_roles?.length) {
     status.textContent = 'Upload or reassign unavailable voices: ' + readiness.unavailable_roles
       .map(item => `${item.display_name} (${item.voice_name})`).join(', ') + '.';
+  } else if (readiness.voice_type_mismatches?.length) {
+    status.textContent = 'Ready to render, but check voice type mismatches: ' +
+      readiness.voice_type_mismatches.map(item =>
+        `${item.display_name} is ${voiceTypeLabel(item.expected_voice_type)}, ` +
+        `but ${item.voice_name} is ${voiceTypeLabel(item.voice_type)}`
+      ).join('; ') + '.';
+  } else if (readiness.unconfirmed_voice_types?.length) {
+    status.textContent = 'Ready to render, but confirm unknown voice types: ' +
+      readiness.unconfirmed_voice_types.map(item => item.display_name).join(', ') + '.';
   } else if (readiness.shared_voices?.length) {
     status.textContent = 'Ready to render. Shared voice warning: ' + readiness.shared_voices
       .map(item => `${item.voice_name} is assigned to ${item.roles.join(' and ')}`).join('; ') + '.';
@@ -951,6 +1052,24 @@ async function assignCastVoice(roleId, voiceName) {
     renderCast(data);
   } catch (e) {
     err.textContent = e.message || 'Voice assignment failed.';
+    if (activeCastData) renderCast(activeCastData);
+  }
+}
+
+async function assignCastVoiceType(roleId, voiceType) {
+  const err = document.getElementById('cast-err');
+  err.textContent = '';
+  try {
+    const r = await fetch(`/api/jobs/${activeCastJobId}/cast/voice-type`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({role_id: roleId, voice_type: voiceType}),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Voice type update failed.');
+    renderCast(data);
+  } catch (e) {
+    err.textContent = e.message || 'Voice type update failed.';
     if (activeCastData) renderCast(activeCastData);
   }
 }

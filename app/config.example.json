@@ -4,6 +4,9 @@
   "base_dir": "D:\\Audiobook_Pipeline",
   "chatterbox_python": "C:\\Users\\you\\miniconda3\\envs\\chatterbox\\python.exe",
   "reference_wav": "D:\\Audiobook_Pipeline\\samples\\Voice_Sample\\male_ref.wav",
+  "voice_library_roots": [
+    "D:\\Audiobook_Pipeline\\samples\\Voice_Sample"
+  ],
   "audiobooks_dir": "D:\\Audiobook_Pipeline\\audiobooks",
   "library_roots": [
     "D:\\Audiobook_Pipeline\\samples",

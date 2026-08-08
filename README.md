@@ -28,16 +28,23 @@ Path A prose novels. It runs separately from the existing single-voice audiobook
 extracts the selected pages, asks the configured local Ollama model for a speaking-character census
 and dialogue attribution, then stops without loading Chatterbox or generating audio.
 
-The review screen shows the narrator, speaking characters, confidence counts, aliases, and short
-source-local examples. Names can be corrected, duplicate characters merged, and false characters
+The first model pass also assigns each speaking character a casting voice type of **Female**,
+**Male**, or **Unknown**, using only evidence in the nearby text. The review screen shows the
+narrator, speaking characters, voice types, confidence counts, aliases, and short source-local
+examples. Names and voice types can be corrected, duplicate characters merged, and false characters
 excluded. The validated cast is saved as a job-local JSON sidecar containing hashes, spans,
 attribution metadata, and an edit audit trail; it intentionally does not copy book passages into the
 sidecar. The default model is `qwen3-vl:32b-instruct-q4_K_M` and can be changed with
 `character_model` / `AUDIOBOOK_CHARACTER_MODEL`.
 
-After discovery, upload licensed voice samples through the existing Voices panel and assign one to
-the narrator and each active speaking character. Shared samples are permitted with a visible warning;
-a completely distinct cast needs one sample per role. **Create Multi-Voice Audiobook** then renders
+After discovery, assign a licensed voice sample to the narrator and each active speaking character.
+The app lists both UI uploads and WAV files in `voice_library_roots`, which defaults to the folder
+containing `reference_wav`. A filename beginning with `Female` or `Male` seeds that sample's type;
+generic names remain Unknown instead of being guessed from pitch. Every sample type remains editable
+in the Voices panel, with overrides stored only in ignored local metadata. Matching samples are shown
+first in each cast selector, while unknown types and intentional mismatches remain available with a
+visible warning. Shared samples are also permitted with a warning; a completely distinct cast needs
+one sample per role. **Create Multi-Voice Audiobook** then renders
 the narrator, dialogue, and attribution with their assigned references. Unknown and non-speech
 quotations safely fall back to the narrator.
 
@@ -49,9 +56,9 @@ every reference file signature, so changed assignments or overwritten samples ca
 audio.
 
 This remains a development branch. A real GPU smoke test verified grouped generation and assembly,
-but the temporary groups deliberately reused the same approved reference clip, so listening quality
-and voice distinctness still require the owner's eventual samples. The released 1.0 installer and
-ordinary single-voice narration jobs are unchanged.
+and a real local Qwen scan verified Female/Male inference on synthetic text. Listening quality and
+voice distinctness across the expanded sample library still require an owner audition. The released
+1.0 installer and ordinary single-voice narration jobs are unchanged.
 
 ## Requirements
 

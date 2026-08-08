@@ -33,6 +33,7 @@ def valid_plan(blocks):
         "evidence_turn_ids": [turns[0]["id"]],
         "turn_count": len(turns),
         "confidence_counts": {"high": len(turns), "medium": 0, "low": 0},
+        "voice_type": "female",
         "voice_name": None,
         "invalid": False,
         "user_edited": False,
@@ -42,7 +43,7 @@ def valid_plan(blocks):
         "source_sha256": cd.source_hash(blocks),
         "model": "synthetic-model",
         "analysis": {"num_ctx": 8192, "window_chars": 18000, "window_count": 1, "created_at": 1.0},
-        "narrator": {"id": "narrator", "role": "narrator", "display_name": "Narrator", "voice_name": None},
+        "narrator": {"id": "narrator", "role": "narrator", "display_name": "Narrator", "voice_type": "unknown", "voice_name": None},
         "characters": characters,
         "turns": turns,
         "edits": [],
@@ -59,6 +60,9 @@ class CharacterWorkflowTests(unittest.TestCase):
         self.jobs.mkdir()
         self.voices = Path(self.temp.name) / "voices"
         self.voices.mkdir()
+        self.voice_library = Path(self.temp.name) / "voice-library"
+        self.voice_library.mkdir()
+        self.voice_catalog = Path(self.temp.name) / "voice_catalog.json"
         self.default_voice = Path(self.temp.name) / "default.wav"
         self.default_voice.write_bytes(b"default-voice")
         self.jobs_patch = mock.patch.object(server, "JOBS_DIR", self.jobs)
@@ -66,11 +70,21 @@ class CharacterWorkflowTests(unittest.TestCase):
         self.reference_patch = mock.patch.object(
             server, "REFERENCE_WAV", str(self.default_voice)
         )
+        self.voice_library_patch = mock.patch.object(
+            server, "VOICE_LIBRARY_ROOTS", [self.voice_library]
+        )
+        self.voice_catalog_patch = mock.patch.object(
+            server, "VOICE_CATALOG_PATH", self.voice_catalog
+        )
         self.jobs_patch.start()
         self.voices_patch.start()
         self.reference_patch.start()
+        self.voice_library_patch.start()
+        self.voice_catalog_patch.start()
 
     def tearDown(self):
+        self.voice_catalog_patch.stop()
+        self.voice_library_patch.stop()
         self.reference_patch.stop()
         self.voices_patch.stop()
         self.jobs_patch.stop()
@@ -221,6 +235,53 @@ class CharacterWorkflowTests(unittest.TestCase):
         self.assertEqual(queued["format"], "wav")
         self.assertEqual(queued["cast_voice_count"], 2)
         enqueue.assert_called_once_with(state["id"])
+
+    def test_external_voice_library_uses_filename_types_and_local_overrides(self):
+        female = self.voice_library / "Female Ember.wav"
+        male = self.voice_library / "Male Rowan.wav"
+        mystery = self.voice_library / "Mystery Voice.wav"
+        female.write_bytes(b"female")
+        male.write_bytes(b"male")
+        mystery.write_bytes(b"mystery")
+
+        voices = {item["name"]: item for item in server.list_voices()}
+        self.assertEqual(voices[server.DEFAULT_VOICE]["voice_type"], "unknown")
+        self.assertEqual(voices["Female Ember"]["voice_type"], "female")
+        self.assertEqual(voices["Male Rowan"]["voice_type"], "male")
+        self.assertEqual(voices["Mystery Voice"]["voice_type"], "unknown")
+        self.assertEqual(voices["Female Ember"]["source"], "library")
+        self.assertFalse(voices["Female Ember"]["deletable"])
+        self.assertEqual(
+            Path(server.assigned_voice_wav_path("Female Ember")), female
+        )
+
+        server.set_voice_catalog_type("Mystery Voice", "female")
+        updated = {item["name"]: item for item in server.list_voices()}
+        self.assertEqual(updated["Mystery Voice"]["voice_type"], "female")
+        catalog_text = self.voice_catalog.read_text(encoding="utf-8")
+        self.assertNotIn(str(mystery), catalog_text)
+        self.assertNotIn("mystery", catalog_text)
+
+    def test_voice_type_mismatch_warns_but_does_not_block_render(self):
+        state, _, plan = self.write_cast_job("job-types")
+        (self.voices / "Male Rowan.wav").write_bytes(b"male")
+        character_id = plan["characters"][0]["id"]
+        server.assign_cast_voice(state["id"], "narrator", server.DEFAULT_VOICE)
+        view = server.assign_cast_voice(
+            state["id"], character_id, "Male Rowan"
+        )
+
+        readiness = view["render_readiness"]
+        self.assertTrue(readiness["can_start"])
+        self.assertEqual(
+            readiness["voice_type_mismatches"][0]["display_name"], "Mara Vale"
+        )
+
+        corrected = server.set_cast_voice_type(
+            state["id"], character_id, "male"
+        )
+        self.assertFalse(corrected["render_readiness"]["voice_type_mismatches"])
+        self.assertEqual(corrected["characters"][0]["voice_type"], "male")
 
     def test_render_rejects_missing_character_voice(self):
         state, _, _ = self.write_cast_job("job-7")

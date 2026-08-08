@@ -25,11 +25,13 @@ class FakeClient:
                         "display_name": "Alice Vale",
                         "aliases": ["Alice"],
                         "evidence_turn_ids": ["turn_000001"],
+                        "voice_type": "female",
                     },
                     {
                         "display_name": "Bob Reed",
                         "aliases": ["Bob"],
                         "evidence_turn_ids": ["turn_000002"],
+                        "voice_type": "male",
                     },
                 ]
             }
@@ -116,6 +118,10 @@ class CharacterDiscoveryTests(unittest.TestCase):
         self.assertEqual(plan["summary"]["speaking_characters"], 2)
         self.assertEqual(plan["summary"]["attributed_turns"], 2)
         self.assertEqual(plan["summary"]["unknown_turns"], 0)
+        self.assertEqual(
+            [item["voice_type"] for item in plan["characters"]],
+            ["female", "male"],
+        )
         persisted = json.dumps(plan, ensure_ascii=False)
         self.assertNotIn("Come inside", persisted)
         self.assertNotIn("Not tonight", persisted)
@@ -174,6 +180,35 @@ class CharacterDiscoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(cd.CastPlanError, "120"):
             cd.apply_voice_assignment(
                 assigned, self.blocks, alice, "v" * 121
+            )
+
+    def test_voice_type_is_editable_and_audited_without_copying_text(self):
+        plan = self.make_plan()
+        alice = plan["characters"][0]["id"]
+
+        reviewed = cd.apply_voice_type(
+            plan, self.blocks, alice, "male"
+        )
+
+        self.assertEqual(reviewed["characters"][0]["voice_type"], "male")
+        self.assertTrue(reviewed["characters"][0]["user_edited"])
+        self.assertEqual(reviewed["edits"][-1]["action"], "set_voice_type")
+        self.assertNotIn("Come inside", json.dumps(reviewed, ensure_ascii=False))
+        with self.assertRaisesRegex(cd.CastPlanError, "female, male, unknown"):
+            cd.apply_voice_type(reviewed, self.blocks, alice, "androgynous")
+
+    def test_invalid_model_voice_type_is_rejected(self):
+        class InvalidVoiceTypeClient(FakeClient):
+            def call_json(self, prompt):
+                response = super().call_json(prompt)
+                if "characters" in response:
+                    response["characters"][0]["voice_type"] = "probably female"
+                return response
+
+        with self.assertRaisesRegex(cd.CastPlanError, "female, male, unknown"):
+            cd.analyze_blocks(
+                self.blocks, InvalidVoiceTypeClient(),
+                model_name="synthetic-model", window_chars=5000,
             )
 
     def test_model_must_return_every_target_turn_once(self):

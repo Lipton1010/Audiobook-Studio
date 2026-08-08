@@ -40,6 +40,7 @@ APP_DIR = Path(__file__).parent
 JOBS_DIR = APP_DIR / "jobs"
 STATIC_DIR = APP_DIR / "static"
 VOICES_DIR = APP_DIR / "voices"
+VOICE_CATALOG_PATH = APP_DIR / "voice_catalog.json"
 
 # Machine-specific settings now come from config.py (env > config.json >
 # auto-detect > original default), so the app is portable across machines
@@ -57,6 +58,7 @@ PROCESSED_PDF_DIR = CFG.base_dir / "processed_pdfs"
 # Default voice: converted from "Voice Sample Male.mp3" via convert_voice.py;
 # the old ref_15s.wav default was judged bad on listening (2026-07-21).
 REFERENCE_WAV = CFG.reference_wav
+VOICE_LIBRARY_ROOTS = CFG.voice_library_roots
 DEFAULT_VOICE = "Default narrator (male sample)"
 AUDIOBOOKS_DIR = CFG.audiobooks_dir
 CHATTERBOX_PY = CFG.chatterbox_python
@@ -108,14 +110,119 @@ VOICES_DIR.mkdir(exist_ok=True)
 
 # ---------- voices ----------
 
+VOICE_TYPE_VALUES = {"male", "female", "unknown"}
+
+
+def _infer_voice_type(name):
+    """Use explicit filename labels only; never guess from acoustic pitch."""
+    normalized = str(name or "").strip().casefold()
+    if re.match(r"^female(?:[\s_-]|$)", normalized):
+        return "female"
+    if re.match(r"^male(?:[\s_-]|$)", normalized):
+        return "male"
+    return "unknown"
+
+
+def _load_voice_catalog():
+    if not VOICE_CATALOG_PATH.exists():
+        return {"schema_version": 1, "voices": {}}
+    try:
+        value = json.loads(VOICE_CATALOG_PATH.read_text(encoding="utf-8"))
+        voices = value.get("voices", {}) if isinstance(value, dict) else {}
+        if not isinstance(voices, dict):
+            raise ValueError("voices must be an object")
+        return {"schema_version": 1, "voices": voices}
+    except Exception as exc:
+        raise ValueError(f"Could not read local voice catalog: {exc}") from exc
+
+
+def _save_voice_catalog(catalog):
+    tmp = VOICE_CATALOG_PATH.with_suffix(".json.tmp")
+    tmp.write_text(
+        json.dumps(catalog, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    tmp.replace(VOICE_CATALOG_PATH)
+
+
+def _voice_records():
+    """Return stable display names mapped to private local reference paths."""
+    records = {}
+    reference = Path(REFERENCE_WAV)
+    try:
+        reference_resolved = reference.resolve()
+    except OSError:
+        reference_resolved = reference
+    records[DEFAULT_VOICE] = {
+        "name": DEFAULT_VOICE,
+        "path": reference,
+        "builtin": True,
+        "deletable": False,
+        "source": "default",
+    }
+
+    for root in VOICE_LIBRARY_ROOTS:
+        root = Path(root)
+        if not root.is_dir():
+            continue
+        for path in sorted(root.glob("*.wav"), key=lambda item: item.name.casefold()):
+            try:
+                if path.resolve() == reference_resolved:
+                    continue
+            except OSError:
+                pass
+            records.setdefault(path.stem, {
+                "name": path.stem,
+                "path": path,
+                "builtin": False,
+                "deletable": False,
+                "source": "library",
+            })
+
+    # App uploads intentionally win a same-name collision because they are the
+    # samples the user explicitly manages in the Voices panel.
+    for path in sorted(VOICES_DIR.glob("*.wav"), key=lambda item: item.name.casefold()):
+        records[path.stem] = {
+            "name": path.stem,
+            "path": path,
+            "builtin": False,
+            "deletable": True,
+            "source": "uploaded",
+        }
+
+    overrides = _load_voice_catalog()["voices"]
+    for record in records.values():
+        override = overrides.get(record["name"], {})
+        voice_type = override.get("voice_type") if isinstance(override, dict) else None
+        if voice_type not in VOICE_TYPE_VALUES:
+            voice_type = _infer_voice_type(record["name"])
+            if voice_type == "unknown" and record["source"] == "default":
+                voice_type = _infer_voice_type(Path(record["path"]).stem)
+        record["voice_type"] = voice_type
+        record["available"] = record["path"].exists()
+    return records
+
+
 def list_voices():
-    # The default clip is NOT shipped with the repo (rights rule), so on a fresh
-    # clone it is absent. Report that instead of offering a voice that cannot work.
-    voices = [{"name": DEFAULT_VOICE, "builtin": True,
-               "available": Path(REFERENCE_WAV).exists()}]
-    for f in sorted(VOICES_DIR.glob("*.wav")):
-        voices.append({"name": f.stem, "builtin": False, "available": True})
-    return voices
+    records = _voice_records()
+    ordered = [records.pop(DEFAULT_VOICE)] if DEFAULT_VOICE in records else []
+    ordered.extend(sorted(records.values(), key=lambda item: item["name"].casefold()))
+    return [
+        {key: value for key, value in record.items() if key != "path"}
+        for record in ordered
+    ]
+
+
+def set_voice_catalog_type(name, voice_type):
+    name = str(name or "").strip()
+    voice_type = str(voice_type or "").strip().casefold()
+    if voice_type not in VOICE_TYPE_VALUES:
+        raise ValueError("Voice type must be female, male, or unknown.")
+    if name not in _voice_records():
+        raise ValueError(f"Voice '{name}' is not available.")
+    catalog = _load_voice_catalog()
+    catalog["voices"][name] = {"voice_type": voice_type}
+    _save_voice_catalog(catalog)
+    return list_voices()
 
 
 def missing_voice_error(name):
@@ -225,14 +332,17 @@ def start_ffmpeg_install():
 def voice_wav_path(name):
     if not name or name == DEFAULT_VOICE:
         return REFERENCE_WAV
-    p = VOICES_DIR / (name + ".wav")
-    return str(p) if p.exists() else REFERENCE_WAV
+    record = _voice_records().get(name)
+    return str(record["path"]) if record and record["available"] else REFERENCE_WAV
 
 
 def assigned_voice_wav_path(name):
     """Strict cast path: never substitute the narrator for a missing role."""
     if not name or name == DEFAULT_VOICE:
         return str(REFERENCE_WAV)
+    record = _voice_records().get(name)
+    if record:
+        return str(record["path"])
     return str(VOICES_DIR / (name + ".wav"))
 
 
@@ -847,9 +957,8 @@ def _load_cast_plan(job_id):
 def cast_render_readiness(plan):
     """Report assignment problems without silently substituting a voice."""
     roles = mvp.required_voice_roles(plan)
-    available = {
-        item["name"] for item in list_voices() if item.get("available")
-    }
+    voices = {item["name"]: item for item in list_voices()}
+    available = {name for name, item in voices.items() if item.get("available")}
     missing = [
         {"id": role["id"], "display_name": role["display_name"]}
         for role in roles
@@ -875,11 +984,37 @@ def cast_render_readiness(plan):
         for name, names in roles_by_voice.items()
         if len(names) > 1
     ]
+    mismatches = []
+    unconfirmed = []
+    for role in roles:
+        expected = role.get("voice_type", "unknown")
+        assigned = voices.get(role.get("voice_name"), {})
+        actual = assigned.get("voice_type", "unknown")
+        if expected != "unknown" and actual != "unknown" and expected != actual:
+            mismatches.append({
+                "id": role["id"],
+                "display_name": role["display_name"],
+                "voice_name": role.get("voice_name"),
+                "expected_voice_type": expected,
+                "voice_type": actual,
+            })
+        elif role.get("voice_name") and (
+            expected == "unknown" or actual == "unknown"
+        ):
+            unconfirmed.append({
+                "id": role["id"],
+                "display_name": role["display_name"],
+                "voice_name": role.get("voice_name"),
+                "expected_voice_type": expected,
+                "voice_type": actual,
+            })
     return {
         "can_start": not missing and not unavailable,
         "required_roles": roles,
         "missing_roles": missing,
         "unavailable_roles": unavailable,
+        "voice_type_mismatches": mismatches,
+        "unconfirmed_voice_types": unconfirmed,
         # Shared voices are permitted, but surfaced because a fully distinct
         # cast requires one licensed sample per listed role.
         "shared_voices": shared,
@@ -898,6 +1033,7 @@ def cast_plan_view(job_id):
     characters = []
     for source in plan["characters"]:
         item = dict(source)
+        item["voice_type"] = cd._voice_type(item.get("voice_type"))
         turn = turns_by_speaker.get(item["id"])
         if turn:
             text = str(blocks[turn["block_index"]].get("text", ""))
@@ -914,7 +1050,10 @@ def cast_plan_view(job_id):
         "source_sha256": plan["source_sha256"],
         "model": plan["model"],
         "analysis": plan["analysis"],
-        "narrator": plan["narrator"],
+        "narrator": {
+            **plan["narrator"],
+            "voice_type": cd._voice_type(plan["narrator"].get("voice_type")),
+        },
         "characters": characters,
         "summary": plan["summary"],
         "edit_count": len(plan.get("edits", [])),
@@ -981,6 +1120,15 @@ def assign_cast_voice(job_id, role_id, voice_name):
             if role.get("voice_name")
         })
         save_state(st)
+    return cast_plan_view(job_id)
+
+
+def set_cast_voice_type(job_id, role_id, voice_type):
+    plan, blocks = _load_cast_plan(job_id)
+    updated = cd.apply_voice_type(
+        plan, blocks, str(role_id or ""), str(voice_type or "")
+    )
+    _write_json_atomic(_cast_plan_path(job_id), updated)
     return cast_plan_view(job_id)
 
 
@@ -1802,6 +1950,15 @@ class Handler(BaseHTTPRequestHandler):
                     _json_response(self, {"ok": True, "name": saved})
                 except Exception as e:
                     _json_response(self, {"error": str(e)}, 400)
+            elif path == "/api/voices/type":
+                body = self._read_json()
+                try:
+                    updated = set_voice_catalog_type(
+                        body.get("voice_name"), body.get("voice_type")
+                    )
+                    _json_response(self, {"ok": True, "voices": updated})
+                except ValueError as exc:
+                    _json_response(self, {"error": str(exc)}, 400)
             elif re.fullmatch(r"/api/voices/[^/]+/delete", path):
                 name = unquote(path.split("/")[3])
                 p = VOICES_DIR / (name + ".wav")
@@ -1885,6 +2042,22 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     result = assign_cast_voice(
                         job_id, body.get("role_id"), body.get("voice_name")
+                    )
+                    _json_response(self, result)
+                except (ValueError, cd.CastPlanError) as exc:
+                    _json_response(self, {"error": str(exc)}, 400)
+            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/cast/voice-type", path):
+                job_id = path.split("/")[3]
+                st = load_state(job_id)
+                if not st or st.get("status") not in (
+                    "cast_ready", "failed", "canceled", "interrupted"
+                ):
+                    _json_response(self, {"error": "cast voice types are not editable"}, 400)
+                    return
+                body = self._read_json()
+                try:
+                    result = set_cast_voice_type(
+                        job_id, body.get("role_id"), body.get("voice_type")
                     )
                     _json_response(self, result)
                 except (ValueError, cd.CastPlanError) as exc:

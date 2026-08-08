@@ -16,6 +16,7 @@ audiobooks/
 
 # Machine-specific config stays local; only config.example.json is tracked.
 app/config.json
+app/voice_catalog.json
 
 # Local A/B listen-test material (regenerable, not part of the app).
 ab_samples/
