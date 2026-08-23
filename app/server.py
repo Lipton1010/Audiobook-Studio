@@ -35,6 +35,15 @@ import pipeline_text as pt
 from config import CFG
 
 APP_DIR = Path(__file__).parent
+try:
+    APP_VERSION = (APP_DIR / "VERSION").read_text(encoding="utf-8").strip()
+except OSError:
+    APP_VERSION = "0.0.0"
+# Where update checks look for the latest release. Only ever read from, never
+# written to automatically: a new version is something the owner PUSHES (a
+# GitHub Release), the app only checks and shows a link, it never downloads
+# or applies anything itself.
+GITHUB_REPO = "Lipton1010/Audiobook-Studio"
 JOBS_DIR = APP_DIR / "jobs"
 STATIC_DIR = APP_DIR / "static"
 VOICES_DIR = APP_DIR / "voices"
@@ -166,6 +175,58 @@ def missing_ffmpeg_error(fmt):
     return (f"{fmt} output needs ffmpeg, which is not installed on this machine. "
             f"Click 'Install ffmpeg' in the app to fix this automatically, or "
             f"choose WAV output instead.")
+
+
+def _parse_version(v):
+    """'v1.2.3' or '1.2.3' -> (1, 2, 3), tolerant of a missing/odd part."""
+    parts = []
+    for p in v.strip().lstrip("vV").split("."):
+        try:
+            parts.append(int(p))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts)
+
+
+def check_for_update():
+    """Best-effort check against GitHub Releases. Never raises: no internet,
+    a rate limit, or GitHub being down all just mean 'nothing to show', not
+    a broken app. Only ever NOTIFIES with a link to the release page; it
+    never downloads or applies anything on its own."""
+    try:
+        r = requests.get(
+            f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
+            timeout=10, headers={"Accept": "application/vnd.github+json"},
+        )
+        if r.status_code != 200:
+            return {"current": APP_VERSION, "update_available": False}
+        data = r.json()
+        latest = str(data.get("tag_name") or "").strip()
+        if not latest or _parse_version(latest) <= _parse_version(APP_VERSION):
+            return {"current": APP_VERSION, "update_available": False}
+        return {
+            "current": APP_VERSION,
+            "latest": latest,
+            "update_available": True,
+            "release_url": data.get("html_url"),
+        }
+    except Exception:
+        return {"current": APP_VERSION, "update_available": False}
+
+
+def missing_gpu_error():
+    """None if an NVIDIA GPU is visible to the system, else a message.
+
+    This only catches the "no GPU at all" case (nvidia-smi absent or
+    failing). It cannot tell whether the GPU has enough free VRAM for
+    narration; that is handled by scaling the batch size down and, if it
+    still runs out, failing narration itself with a clear message rather
+    than a raw traceback."""
+    if gpu_total_vram_gb() is not None:
+        return None
+    return ("No NVIDIA GPU was detected on this machine (or its driver is "
+            "not installed). Chatterbox narration requires an NVIDIA GPU; "
+            "CPU-only narration is not supported.")
 
 
 def _run_ffmpeg_install():
@@ -809,6 +870,32 @@ def narration_worker_count():
     return max(1, min(MAX_WORKERS, n))
 
 
+def scaled_batch_token_budget():
+    """The batched engine's per-bucket VRAM budget, scaled down for cards
+    smaller than the 4090 this was calibrated on.
+
+    BATCH_TOKEN_BUDGET=1300 was measured to peak around 8 GB on a 24 GB
+    card, and separately measured to NOT help further if raised even on
+    that same 4090 (see CLAUDE.md), so 1300 stays a ceiling rather than
+    something bigger cards get more of. This scales it down linearly by
+    detected VRAM for anything smaller. This is a straight-line estimate,
+    NOT a measurement on any card but the 4090: it assumes peak VRAM is
+    roughly proportional to the token budget, which ignores the model's
+    own fixed load footprint. Treat it as a way to make OOM less likely on
+    the first try, not a guarantee; narrate_worker's per-bucket OOM retry
+    is what actually recovers when this guess is still too high.
+    An explicit AUDIOBOOK_BATCH_TOKEN_BUDGET env override always wins.
+    """
+    if os.environ.get("AUDIOBOOK_BATCH_TOKEN_BUDGET"):
+        return BATCH_TOKEN_BUDGET
+    vram = gpu_total_vram_gb()
+    if not vram:
+        return 300  # unknown GPU: stay conservative
+    usable = max(0.0, vram - VRAM_RESERVE_GB)
+    scaled = int(1300 * usable / (24.0 - VRAM_RESERVE_GB))
+    return max(150, min(1300, scaled))
+
+
 def _plan_hash(job_dir, st):
     """Identity of generated segment audio, excluding assembly-only metadata.
 
@@ -974,6 +1061,21 @@ def _spawn_worker(job_dir, logf, extra_args):
     )
 
 
+def _narration_failure_message(job_dir, codes):
+    """A worker's own clean diagnosis, if it wrote one, else the generic
+    exit-code message. narrate_worker writes error.json for causes it can
+    identify (currently: GPU out of memory even at a single chunk)."""
+    err_file = job_dir / "error.json"
+    if err_file.exists():
+        try:
+            data = json.loads(err_file.read_text(encoding="utf-8"))
+            if data.get("message"):
+                return data["message"]
+        except Exception:
+            pass
+    return f"a narration worker failed (exit codes {codes}), see log"
+
+
 def run_narration(st):
     job_id = st["id"]
     job_dir = JOBS_DIR / job_id
@@ -987,7 +1089,9 @@ def run_narration(st):
         "fallback_part_minutes": 240,
         "engine": engine,
         "batch_size": BATCH_SIZE,
-        "batch_token_budget": BATCH_TOKEN_BUDGET,
+        "batch_token_budget": (
+            scaled_batch_token_budget() if engine == "batched" else BATCH_TOKEN_BUDGET
+        ),
         "batch_s3gen": BATCH_S3GEN,
         "metadata": meta,
         "cover_image": cover,
@@ -1022,7 +1126,7 @@ def run_narration(st):
         if _cancel_flags.pop(job_id, False):
             raise _Cancelled()
         if any(c != 0 for c in codes):
-            raise RuntimeError(f"a narration worker failed (exit codes {codes}), see log")
+            raise RuntimeError(_narration_failure_message(job_dir, codes))
 
         # Assembly: one process, no model load. Register it BEFORE the cancel
         # check so a cancel arriving in this window still kills it.
@@ -1051,6 +1155,58 @@ def run_narration(st):
 
 class _Cancelled(Exception):
     pass
+
+
+def _gpu_report_info():
+    """Best-effort 'name, VRAM' string for crash reports. Never raises;
+    a report is worth sending even if this one field is unavailable."""
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=15,
+            creationflags=WINDOWS_NO_WINDOW,
+        )
+        if out.returncode != 0:
+            return "no NVIDIA GPU detected"
+        return out.stdout.strip().splitlines()[0]
+    except Exception:
+        return "unknown (nvidia-smi not available)"
+
+
+def _report_crash(st, stage, exc):
+    """Best-effort crash report to a Discord webhook, only if the owner has
+    configured error_webhook_url (see config.py; disabled by default on
+    every install). Deliberately sends ONLY structured fields, never book
+    text: no chunk text, no blocks.json content, no log tail. Every
+    exception message actually raised in this codebase (checked
+    2026-08-23) is a static string or built from numbers/paths/exit codes,
+    never book content, which is what makes str(exc) safe to include here
+    as-is; keep future exception messages that way rather than assuming
+    this function would filter anything out.
+
+    Never allowed to raise: a Discord/network hiccup must never mask the
+    real job failure this is reporting on top of."""
+    url = CFG.error_webhook_url
+    if not url:
+        return
+    payload = {
+        "embeds": [{
+            "title": f"Audiobook Studio job failed: {stage}",
+            "color": 15548997,
+            "fields": [
+                {"name": "Error", "value": str(exc)[:1000] or "(empty)", "inline": False},
+                {"name": "Stage", "value": str(stage), "inline": True},
+                {"name": "Engine", "value": str(st.get("engine", DEFAULT_ENGINE)), "inline": True},
+                {"name": "Job title", "value": str(st.get("title", "unknown")), "inline": True},
+                {"name": "GPU", "value": _gpu_report_info(), "inline": False},
+                {"name": "OS", "value": platform.platform(), "inline": False},
+            ],
+        }],
+    }
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as report_exc:
+        log_line(st["id"], f"crash report not sent: {report_exc}")
 
 
 def worker_loop():
@@ -1104,10 +1260,12 @@ def worker_loop():
             save_state(st)
             log_line(job_id, "job canceled")
         except Exception as e:
+            stage = st.get("status", "unknown")
             st["status"] = "failed"
             st["error"] = str(e)
             save_state(st)
             log_line(job_id, f"FAILED: {e}")
+            _report_crash(st, stage, e)
 
 
 def _narration_progress(job_dir, st):
@@ -1319,6 +1477,8 @@ class Handler(BaseHTTPRequestHandler):
                 _json_response(self, ffmpeg_status())
             elif path == "/api/jobs":
                 _json_response(self, {"jobs": list_jobs()})
+            elif path == "/api/update/check":
+                _json_response(self, check_for_update())
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+", path):
                 st = job_detail(path.rsplit("/", 1)[1])
                 _json_response(self, st if st else {"error": "not found"}, 200 if st else 404)
@@ -1418,6 +1578,10 @@ class Handler(BaseHTTPRequestHandler):
                 ferr = missing_ffmpeg_error(req_fmt)
                 if ferr:
                     _json_response(self, {"error": ferr, "ffmpeg_missing": True}, 400)
+                    return
+                gerr = missing_gpu_error()
+                if gerr:
+                    _json_response(self, {"error": gerr}, 400)
                     return
                 job_id = str(uuid.uuid4())
                 job_dir = JOBS_DIR / job_id

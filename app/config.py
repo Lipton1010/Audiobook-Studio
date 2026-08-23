@@ -51,6 +51,7 @@ _ENV = {
     "ocr_model": "AUDIOBOOK_OCR_MODEL",
     "ocr_prompt": "AUDIOBOOK_OCR_PROMPT",
     "port": "AUDIOBOOK_PORT",
+    "error_webhook_url": "AUDIOBOOK_ERROR_WEBHOOK_URL",
 }
 
 
@@ -160,6 +161,14 @@ class Config:
         except (TypeError, ValueError):
             _warn(f"invalid port {raw_port!r}; using 8765")
             self.port = 8765
+
+        # Optional: a webhook (e.g. a Discord channel webhook URL) that gets a
+        # short, structured POST when a job fails. None/empty disables it
+        # entirely, which is the default for every install: this must be
+        # opted into per machine, never shipped as a working default, since
+        # it sends crash info off the machine. Deliberately excluded from
+        # summary() so it never lands in a debug/log view.
+        self.error_webhook_url = _pick("error_webhook_url", file_cfg, None) or None
 
     def warnings(self):
         """Human-readable list of things that look wrong, surfaced at startup

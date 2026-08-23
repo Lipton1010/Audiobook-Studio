@@ -213,7 +213,7 @@ The current installer change is deliberately limited to that boundary. It uses I
 (V, source inspection; R for the physical-path reconstruction) The other chat's proposed sequence in which `[Files]` populated `runtime\miniconda3` before Miniconda ran is not this installer's sequence: `PrepareToInstall` runs before `[Files]`, as the existing failure page already demonstrated. The committed `DefaultDirName` is the no-space `AudiobookStudio`, but Inno's default `UsePreviousAppDir=yes` allows an earlier path stored for the same AppId to override it. That explains the observed return to the obsolete spaced folder and is consistent with the test account's install history, but the registry value was not captured, so label that mechanism reasoned rather than directly observed. The installer now sets `UsePreviousAppDir=no`. If its exact app-owned `runtime\miniconda3` target exists without `python.exe`, it removes that incomplete target before downloading or launching Miniconda and verifies removal; an existing target with `python.exe` is reused. Books, voices, jobs and audiobooks are outside that cleanup target and remain untouched. This source change is not yet a physical-install result.
 
 (V, local compilation and focused execution) The revised production script compiled successfully with Inno Setup 6.7.1, and the scan for continuation lines that ISPP would misread as directives found none. A disposable Inno harness then created a genuinely non-empty `runtime\miniconda3` containing a nested stale file, executed the same guarded `DelTree` cleanup, verified the target no longer existed, downloaded and hash-verified the exact pinned Miniconda, and launched it through `ExecAndLogOutput` with the production arguments and working directory. Miniconda exited 0, processed 35,751 permissions with zero failures, printed `Done!`, and `python.exe` existed. This executes recovery from the exact class of stale target reported by the physical PC. It does not yet execute the complete installer or prove the new no-space default on that PC.
-
+
 
 <!-- CLAUDE.md lines 624-631 (repo hygiene: blocks the release) -->
 ### Repo hygiene: book text was public, now untracked (2026-08-03)
@@ -245,4 +245,67 @@ and a HEAD request to the former commit through GitHub's API returned HTTP 422 i
 data. Local and remote `master` still matched at `0e8e3d789630b4a97de57b4dedf8da6339a283bc`.
 The privacy/history gate is satisfied; this does not satisfy the separate exact-installer physical
 validation gate.
-
+
+### Patch installer and update-notify plumbing (added 2026-08-23)
+
+Built after Brandon's first outside-machine crash (see CLAUDE.md's GPU capability handling section):
+he had no way to apply a 2-file code fix himself, and reinstalling from scratch to ship a small fix
+is disproportionate. `install/AudiobookStudio_Patch.iss` is a second, much smaller Inno script for
+exactly this case.
+
+- Shares the main installer's AppId (`{FF5AC68A-...}`) so Inno's own `UsePreviousAppDir` (default yes,
+  deliberately NOT overridden here, unlike the main script) finds wherever Audiobook Studio actually
+  got installed. `DisableDirPage=yes` skips the directory page entirely, since for the intended
+  non-technical recipient there is nothing useful for them to confirm there.
+- `[Files]` lists exactly 5 explicit files (server.py, narrate_worker.py, config.py,
+  config.example.json, VERSION), never a wildcard, so this class of installer cannot leak a book PDF
+  or the voice clip the way the main installer's `..\*` spec has to guard against.
+- Deliberately has almost NO Pascal Script, on purpose: that is where 100% of the main installer's
+  historical bugs came from (see every section above this one). The only custom code is a single
+  `PrepareToInstall` check that refuses to proceed if `{app}\app\server.py` doesn't already exist,
+  so a bad path never silently creates a fresh empty folder instead of patching the real install.
+
+(V) FIRST COMPILE ALREADY HAD A REAL BUG, caught by running it, not by reading it: the safety check
+was originally written as `NextButtonClick(CurPageID)` gated on `CurPageID = wpWelcome`, which reads
+as the obvious place to check something before anything else happens. A silent-mode test run
+(`/VERYSILENT /SUPPRESSMSGBOXES /LOG=...`, no existing install present) crashed with "Internal error:
+An attempt was made to expand the 'app' constant before it was initialized" instead of showing the
+intended clean message. `{app}` is not guaranteed resolved that early when `DisableDirPage=yes` skips
+the page that would normally resolve it. Fixed by moving the identical `FileExists` check into
+`PrepareToInstall`, the exact point the MAIN installer's own Miniconda check already proved safe for
+this ("returning a non-empty string aborts cleanly with a readable message"). This is the same lesson
+this skill has recorded three separate times already for the main installer: a Pascal script that
+reads correctly is not the same as one that has been run.
+
+(V) Both real scenarios were then executed, not just re-read: with no existing install present, a
+silent run correctly aborted with the intended clean message and created nothing (log confirms
+`PrepareToInstall failed: Could not find an existing Audiobook Studio install at: ...`, directory
+never created). With a stub existing install created at the real default path
+(`%LOCALAPPDATA%\Programs\AudiobookStudio`, stub server.py/narrate_worker.py plus a stub
+`runtime\miniconda3\pythonw.exe`), the same installer correctly overwrote the stub files with the
+real fixed content and left the rest of the fake install (the runtime folder) untouched. Both test
+artifacts and the test uninstall registry key were removed afterward. Compiled artifact:
+`Setup_AudiobookStudio_Patch.exe`, 2,126,252 bytes, SHA-256
+`8C5B3FD8ECBE3E54A05D8E7651D5A385BFB344F3C8B141F1AF2C93BB708560A4`.
+
+STILL UNVERIFIED: the `[Run]` "Launch {#MyAppName} now" checkbox (`Flags: postinstall skipifsilent
+nowait`) is always skipped by `/VERYSILENT`, by design, so it has never actually run; it uses the
+identical invocation already proven in the main installer's own `[Run]` entry, so risk is low, but it
+has not been observed firing on this specific script. Nobody outside this machine has run this
+installer yet; Brandon's actual machine is still the first real test of the whole thing end to end.
+
+Companion change, not part of the installer itself: `app/VERSION` (currently `1.0.1`, bumped in
+lockstep with both `.iss` files' `MyAppVersion`) plus a `/api/update/check` endpoint in server.py and
+a small dismissible banner in the UI. This is a NOTIFY-ONLY design, deliberately: it calls GitHub's
+public `releases/latest` API (unauthenticated, fine at this volume), compares tags, and if newer,
+shows a banner linking to the release page. It never downloads or applies anything itself -- a new
+version is something the owner PUSHES (tags and publishes a GitHub Release), the app only tells the
+user one exists. Verified live: `check_for_update()` was run against the real GitHub API from the
+real base-env python (returned `update_available: False`, since nothing has been published to
+Releases yet, matching the still-nothing-published state recorded above), and the banner itself was
+verified by starting the real server with `check_for_update` monkeypatched to force a fake newer
+version, loading the real page in a browser, confirming the banner rendered with a working release
+link, and confirming the Dismiss control actually hides it. Silent-auto-apply (no click, no user
+awareness of what changed) was deliberately NOT built; that is a bigger, riskier ask than what was
+requested, and this project's whole installer history argues for proving each step before trusting it.
+

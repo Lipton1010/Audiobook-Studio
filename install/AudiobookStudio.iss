@@ -47,7 +47,7 @@
 
 #define MyAppName "Audiobook Studio"
 #define MyAppDirName "AudiobookStudio"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "Audiobook Studio"
 
 [Setup]
@@ -111,6 +111,11 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 ; plus the voice clip that CLAUDE.md says must never be distributed.
 Source: "..\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; \
     Excludes: "*.pdf,*.wav,*.mp3,*.flac,*.ogg,*.m4a,*.m4b,*.aac,*.jpg,*.jpeg,*.pyc,__pycache__,.git,.claude,\tests\*,\app\jobs\*,\app\voices\*,\app\config.json,\app\*.log,\audiobooks\*,\ab_samples\*,\source_pdfs\*,\samples\Voice_Sample\*,\tools\*,\Output\*,\install\*.exe,\install_log.txt,\install_warnings.txt,\launcher_log.txt,\AUDIT_HANDOFF.md,\AUDIT_TRIAGE_HANDOFF.md"
+; Extracted to {tmp}, not installed permanently, purely to be invoked once by
+; the [Run] entry below. See that entry for why this is a separate step from
+; the wildcard copy above (merge-safety into a config.json setup.py may have
+; already written to).
+Source: "merge_webhook_config.py"; DestDir: "{tmp}"
 
 [Icons]
 ; pythonw.exe keeps the normal installed launch completely console-free.
@@ -134,8 +139,28 @@ Type: filesandordirs; Name: "{app}\install\__pycache__"
 
 [Run]
 ; setup.py is NOT here on purpose -- see the ordering note in the header. The
-; only [Run] entry is the optional launch, and it is suppressed if setup.py
-; failed, so nobody is invited to start an app whose env was never built.
+; only two [Run] entries are this webhook wiring and the optional launch.
+;
+; Wires up the Discord crash reporter (config.py's error_webhook_url) by
+; merging just that one key into config.json via merge_webhook_config.py
+; (real json.loads/dumps). [Run] entries fire strictly after ssPostInstall,
+; i.e. after RunSetupPy() has already run and possibly already written
+; chatterbox_python into config.json -- the same fact that requires setup.py
+; itself to NOT be a [Run] entry (see the header) also guarantees this step
+; can never race or get clobbered by that write. Not gated on
+; SetupPySucceeded: writing one JSON key has no dependency on whether the
+; (much heavier) environment build succeeded.
+;
+; THIS BUILD EMBEDS A LIVE WEBHOOK URL. Anyone with it can post to that
+; Discord channel. This repo is PUBLIC, so a build with this step must NEVER
+; be attached to a public GitHub Release -- only sent directly to specific
+; people. A future public release must omit this [Files]/[Run] pair, or bake
+; in an empty URL (config.py treats blank/missing as disabled).
+Filename: "{app}\runtime\miniconda3\python.exe"; \
+    Parameters: """{tmp}\merge_webhook_config.py"" ""{app}\app\config.json"" ""https://discord.com/api/webhooks/1541175653842558987/WzHMD2PFZVd7o4CLFrAgg7RmdqbwDuMYTnTDvq_4qJl7wnnkHxdRmXpEJduc6kVufvp4"""; \
+    Flags: runhidden
+; The optional launch, suppressed if setup.py failed so nobody is invited to
+; start an app whose environment was never built.
 Filename: "{app}\runtime\miniconda3\pythonw.exe"; Parameters: """{app}\app\launcher.py"""; \
     WorkingDir: "{app}\app"; Description: "Launch {#MyAppName} now"; \
     Flags: postinstall skipifsilent nowait; Check: SetupPySucceeded

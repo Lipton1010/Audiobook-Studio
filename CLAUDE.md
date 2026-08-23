@@ -228,6 +228,48 @@ core.autocrlf. A git run from a Linux shell or container reports ALL tracked fil
 into every one of them. Use `git diff --ignore-cr-at-eol` to see the real change set, and do git
 writes on Windows only.
 
+## GPU capability handling (added 2026-08-23, first friend-machine crash)
+
+Brandon (first outside tester) hit `torch.cuda.OutOfMemoryError` inside T3's batched forward pass
+on his own card; BATCH_TOKEN_BUDGET=1300 was only ever calibrated on the author's 4090. This closed
+the asymmetry the project used to have (voice and ffmpeg were preflighted with a clean 400 at job
+creation; a GPU problem was not, and surfaced as a raw torch traceback). Three layers, in server.py
+and narrate_worker.py:
+
+- `missing_gpu_error()` preflights job creation (alongside the existing voice/ffmpeg checks): no
+  NVIDIA GPU at all (nvidia-smi absent or failing) refuses the job with a clean message. It cannot
+  and does not try to predict OOM from a positive-but-small VRAM number; that is the next layer's job.
+- `scaled_batch_token_budget()` scales the batched engine's per-job token budget down linearly by
+  detected VRAM (ceiling stays 1300, never scaled up) unless AUDIOBOOK_BATCH_TOKEN_BUDGET is set.
+  This is a straight-line ESTIMATE off the single 4090 calibration point, not a measurement on any
+  other card, and ignores the model's own fixed load footprint, so treat it as lowering the odds of
+  a first-try OOM, not a guarantee.
+- narrate_worker's T3-generate and S3Gen-vocode calls now catch `torch.cuda.OutOfMemoryError`,
+  empty the cache, and retry the bucket as two halves, recursively down to one chunk. A single chunk
+  that still OOMs is a hard VRAM limit, not something a smaller batch fixes, so it propagates and
+  `main()` writes `job_dir/error.json` with a clean cause; `server.py` reads that back so the UI
+  shows the real reason instead of "a narration worker failed (exit codes [1]), see log".
+
+PROVEN, not just code-reviewed: a real CUDA OOM forced via `torch.cuda.set_per_process_memory_fraction`
+on the dev 4090 was actually caught by `main()` and wrote the exact expected error.json (2026-08-23).
+The bisection recursion itself (splits correctly, preserves chunk order, a truly-unrecoverable single
+chunk still raises rather than looping) was proven by monkeypatching `batched_narrate.batched_generate`
+/ `seqs_to_wavs_batched` to fail above N=1, not by finding a real memory ceiling that reproduces it
+exactly. `tests/test_gpu_oom_handling.py` covers the server.py-side pieces (scaling formula, preflight,
+error.json readback) since those import cleanly in the base env; the narrate_worker.py pieces cannot
+be unit-tested there (it needs torch/chatterbox, base env has neither) and are proven only by the two
+live checks above plus a real book completing end to end.
+STILL UNVERIFIED: whether the scaling formula actually keeps a real small card (e.g. 6-8 GB) under
+budget on the first try for a real book start to finish; only Brandon rerunning (or another sub-4090
+card) proves that.
+
+Optional crash reporter: `config.error_webhook_url` (env `AUDIOBOOK_ERROR_WEBHOOK_URL`, config.json
+field, gitignored like the rest of config.json) posts one structured Discord embed on any job failure
+(extraction or narration) -- error message, stage, engine, job title, GPU name/VRAM, OS -- and nothing
+else: no chunk text, no blocks.json, no log tail. Disabled by default on every install; must be opted
+into per machine, and the URL must never be committed. `_report_crash` swallows every exception itself
+so a Discord outage can never mask the real failure it is reporting on top of.
+
 ## Where the rest of the detail lives
 
 This file used to carry every measurement and audit inline, which cost ~37k tokens of context in

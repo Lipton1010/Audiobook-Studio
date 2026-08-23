@@ -37,6 +37,7 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+import torch
 
 # Watermarker stub, required on this stack
 import perth
@@ -68,7 +69,13 @@ AAC_BITRATE = "64k"  # mono 24 kHz narration; transparent for voice
 # longest chunks at N=4 (the sweet spot, ~9 GB headroom for model+desktop+
 # runaway margin), medium chunks at ~N=8, short at the N=12 cap. On a smaller
 # card, lower the budget (peak scales ~linearly with it). Overridable per job or
-# via env (AUDIOBOOK_BATCH_SIZE / AUDIOBOOK_BATCH_TOKEN_BUDGET).
+# via env (AUDIOBOOK_BATCH_SIZE / AUDIOBOOK_BATCH_TOKEN_BUDGET). Since 2026-08-23,
+# server.py's scaled_batch_token_budget() writes a VRAM-scaled value into each
+# job's config unless that env var is set, so these module constants are now
+# only the ceiling/fallback, not the value most jobs actually run with. Even
+# so, on a smaller card an actual OOM here is caught and retried at a smaller
+# batch (see _oom_bisect_generate/_oom_bisect_vocode below), and only fails
+# the job if a single chunk alone still doesn't fit.
 BATCH_SIZE = 12
 BATCH_TOKEN_BUDGET = 1300
 # Vocode a whole bucket in one S3Gen pass rather than row by row. The row-by-row
@@ -333,6 +340,48 @@ def _make_buckets(toks_sorted, max_batch, token_budget):
     return buckets
 
 
+def _oom_bisect_generate(model, conds, bucket, shard, exc):
+    """Recover from a T3-generate CUDA OOM by retrying the bucket as two
+    half-size buckets. A bucket of one chunk that still OOMs is a hard
+    VRAM limit that a smaller batch cannot work around, so it propagates
+    the original exception rather than looping forever."""
+    import torch as _torch
+    import batched_narrate as bn
+    if len(bucket) == 1:
+        raise exc
+    mid = len(bucket) // 2
+    seqs = []
+    for half in (bucket[:mid], bucket[mid:]):
+        try:
+            seqs.extend(bn.batched_generate(model, [t for _, t in half], conds))
+        except _torch.cuda.OutOfMemoryError as exc2:
+            _torch.cuda.empty_cache()
+            print(f"shard {shard}: T3 generate OOM again on a bucket of "
+                  f"{len(half)}, retrying smaller", flush=True)
+            seqs.extend(_oom_bisect_generate(model, conds, half, shard, exc2))
+    return seqs
+
+
+def _oom_bisect_vocode(model, conds, seqs, batch_s3gen, shard, exc):
+    """Same recovery as _oom_bisect_generate, for the S3Gen vocode step."""
+    import torch as _torch
+    import batched_narrate as bn
+    if len(seqs) == 1:
+        raise exc
+    mid = len(seqs) // 2
+    fn = bn.seqs_to_wavs_batched if batch_s3gen else bn.seqs_to_wavs
+    wavs = []
+    for half in (seqs[:mid], seqs[mid:]):
+        try:
+            wavs.extend(fn(model, conds, half))
+        except _torch.cuda.OutOfMemoryError as exc2:
+            _torch.cuda.empty_cache()
+            print(f"shard {shard}: S3Gen vocode OOM again on a bucket of "
+                  f"{len(half)}, retrying smaller", flush=True)
+            wavs.extend(_oom_bisect_vocode(model, conds, half, batch_s3gen, shard, exc2))
+    return wavs
+
+
 def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size,
                       token_budget=BATCH_TOKEN_BUDGET, batch_s3gen=BATCH_S3GEN):
     """
@@ -362,7 +411,13 @@ def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size
     for bnum, bucket in enumerate(buckets):
         _tmax = max(int(t.numel()) for _, t in bucket)
         _t0 = _time.time()
-        seqs = bn.batched_generate(model, [t for _, t in bucket], conds)
+        try:
+            seqs = bn.batched_generate(model, [t for _, t in bucket], conds)
+        except _torch.cuda.OutOfMemoryError as exc:
+            _torch.cuda.empty_cache()
+            print(f"shard {shard}: bucket {bnum+1}/{len(buckets)} N={len(bucket)} "
+                  f"T3 generate hit CUDA OOM, retrying in smaller pieces", flush=True)
+            seqs = _oom_bisect_generate(model, conds, bucket, shard, exc)
         _t3s = _time.time() - _t0
         original_tok_out = [len(s) for s in seqs]
         if any(n >= bn.MAX_NEW_TOKENS for n in original_tok_out):
@@ -386,8 +441,14 @@ def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size
                 on_retry=_log_retry,
             )
         _t0 = _time.time()
-        wavs = (bn.seqs_to_wavs_batched if batch_s3gen else bn.seqs_to_wavs)(
-            model, conds, seqs)
+        try:
+            wavs = (bn.seqs_to_wavs_batched if batch_s3gen else bn.seqs_to_wavs)(
+                model, conds, seqs)
+        except _torch.cuda.OutOfMemoryError as exc:
+            _torch.cuda.empty_cache()
+            print(f"shard {shard}: bucket {bnum+1}/{len(buckets)} N={len(bucket)} "
+                  f"S3Gen vocode hit CUDA OOM, retrying in smaller pieces", flush=True)
+            wavs = _oom_bisect_vocode(model, conds, seqs, batch_s3gen, shard, exc)
         _s3s = _time.time() - _t0
         # Per-bucket telemetry: without this a stall is invisible, since
         # segments are only written once a whole bucket finishes.
@@ -579,9 +640,26 @@ def main():
     batch_size = int(config.get("batch_size", BATCH_SIZE))
     token_budget = int(config.get("batch_token_budget", BATCH_TOKEN_BUDGET))
     batch_s3gen = bool(config.get("batch_s3gen", BATCH_S3GEN))
-    run_generate(job_dir, plan, config["reference_wav"], shard, args.num_shards,
-                 engine=engine, batch_size=batch_size, token_budget=token_budget,
-                 batch_s3gen=batch_s3gen)
+    try:
+        run_generate(job_dir, plan, config["reference_wav"], shard, args.num_shards,
+                     engine=engine, batch_size=batch_size, token_budget=token_budget,
+                     batch_s3gen=batch_s3gen)
+    except torch.cuda.OutOfMemoryError:
+        # Every recovery path (batch-size scaling, per-bucket bisection) was
+        # exhausted down to a single chunk. That is a hard VRAM limit, not
+        # something narrate_worker can batch its way around, so write a
+        # clean cause the server can surface instead of the raw traceback.
+        (job_dir / "error.json").write_text(json.dumps({
+            "reason": "gpu_oom",
+            "message": (
+                "GPU ran out of VRAM narrating this book, even one chunk at "
+                "a time. This GPU does not have enough free VRAM available "
+                "for Chatterbox narration right now. Close other programs "
+                "that use the GPU (games, other AI tools) and try resuming "
+                "the job, or use a GPU with more VRAM."
+            ),
+        }), encoding="utf-8")
+        raise
 
     # Manual single-worker convenience: `python narrate_worker.py <job>` with
     # no shard args generates everything and assembles in one pass. The server

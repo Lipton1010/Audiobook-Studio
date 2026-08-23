@@ -84,6 +84,7 @@
 <header>
   <h1>Audiobook <span>Studio</span></h1>
   <div class="sub">PDF in, narrated audiobook out. One GPU stage at a time.</div>
+  <div id="update-banner" style="display:none; margin-top:10px; padding:10px 14px; border:1px solid var(--accent2); border-radius:8px; font-size:13px; color:var(--text)"></div>
 </header>
 <main>
   <h2>Jobs</h2>
@@ -665,10 +666,30 @@ function esc(value) {
   }[c]));
 }
 
+async function checkForUpdate() {
+  // Best-effort only: no internet, GitHub down, or an empty releases page
+  // all just mean no banner, never an error the user needs to see.
+  try {
+    const r = await fetch('/api/update/check');
+    const j = await r.json();
+    if (!j.update_available) return;
+    const b = document.getElementById('update-banner');
+    b.style.display = 'block';
+    b.innerHTML = `A new version (${esc(j.latest)}) is available, you're on ${esc(j.current)}. `
+      + `<a class="button-link" href="${esc(j.release_url || '#')}" target="_blank" rel="noopener">View the release</a>`
+      + ` &middot; <a href="#" id="update-dismiss">Dismiss</a>`;
+    document.getElementById('update-dismiss').onclick = (e) => {
+      e.preventDefault();
+      b.style.display = 'none';
+    };
+  } catch (e) { /* best effort */ }
+}
+
 loadLibrary();
 loadVoices();
 loadFfmpeg();
 refreshJobs();
+checkForUpdate();
 setInterval(refreshJobs, 2500);
 </script>
 </body>
