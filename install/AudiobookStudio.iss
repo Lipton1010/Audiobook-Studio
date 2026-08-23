@@ -143,13 +143,29 @@ Type: filesandordirs; Name: "{app}\install\__pycache__"
 ;
 ; Wires up the Discord crash reporter (config.py's error_webhook_url) by
 ; merging just that one key into config.json via merge_webhook_config.py
-; (real json.loads/dumps). [Run] entries fire strictly after ssPostInstall,
-; i.e. after RunSetupPy() has already run and possibly already written
-; chatterbox_python into config.json -- the same fact that requires setup.py
-; itself to NOT be a [Run] entry (see the header) also guarantees this step
-; can never race or get clobbered by that write. Not gated on
-; SetupPySucceeded: writing one JSON key has no dependency on whether the
-; (much heavier) environment build succeeded.
+; (real json.loads/dumps).
+;
+; ORDERING, corrected 2026-08-23 after a real silent run proved the opposite
+; assumption wrong: a [Run] entry WITHOUT the postinstall flag (this one only
+; has runhidden) executes as the LAST step of the main install sequence,
+; which is BEFORE ssPostInstall's CurStepChanged fires -- i.e. BEFORE
+; RunSetupPy() has run. An instrumented build confirmed this directly: on a
+; fresh install, config.json did not exist yet when this step ran. Only
+; postinstall-flagged entries (the launch below) run later, on the Finished
+; page, which is also why /VERYSILENT always skips them.
+;
+; Despite running first, this cannot lose chatterbox_python: both writers are
+; independently merge-safe. This script preserves every existing key and
+; touches only error_webhook_url; setup.py's pin_chatterbox_python() (called
+; from RunSetupPy, which runs after this) reads the file back and adds only
+; chatterbox_python, never a blind overwrite. So whichever of the two runs
+; second still preserves what the first one wrote. That merge-safety, not
+; execution order, is what actually prevents the race -- do not re-order
+; these two steps on the assumption that order alone provides safety; if
+; either write path ever becomes a blind overwrite, this breaks silently on
+; the currently-lucky ordering. Not gated on SetupPySucceeded: writing one
+; JSON key has no dependency on whether the (much heavier) environment build
+; succeeded.
 ;
 ; THIS BUILD EMBEDS A LIVE WEBHOOK URL. Anyone with it can post to that
 ; Discord channel. This repo is PUBLIC, so a build with this step must NEVER
