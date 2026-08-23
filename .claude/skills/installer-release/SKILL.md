@@ -294,6 +294,79 @@ identical invocation already proven in the main installer's own `[Run]` entry, s
 has not been observed firing on this specific script. Nobody outside this machine has run this
 installer yet; Brandon's actual machine is still the first real test of the whole thing end to end.
 
+### Patch installer end-to-end proof, and a full-installer ordering bug found and fixed (2026-08-23)
+
+Continuation of the same day's work above. Two things this session set out to prove had not
+actually been proven yet, and one of them turned up a real bug in the reasoning, not the behavior.
+
+(V) FIRST: `SetupPySucceeded`-independent `[Run]` webhook merge in the PATCH installer. The earlier
+same-day test of `Setup_AudiobookStudio_Patch.exe` (test 3 in the log above) only exercised the
+`PrepareToInstall` safety check and file overwrite; its fake install had no real
+`runtime\miniconda3\python.exe`, so the `[Run]` entry that invokes `merge_webhook_config.py` had
+nothing to execute and never fired, silently, since Inno does not gate on it. This session built a
+fake install with a GENUINELY RUNNABLE stub interpreter: a real base conda `python.exe` needs far
+more than `python3*.dll`/`vcruntime*.dll` to start -- also `ucrtbase.dll`, `msvcp140*.dll`,
+`concrt140.dll`, the whole `api-ms-win-*` CRT shim set, and its stdlib (`Lib\`, `DLLs\`, minus
+`site-packages`, ~27 MB) -- or it exits `0xC0000135` (DLL not found) before reaching any script. With
+that in place, a real silent run of the patch installer against a fake existing install (stub
+`server.py`/`narrate_worker.py`, `config.json` with `chatterbox_python` + an unrelated `port` key)
+proved the whole chain for the first time: `server.py`/`narrate_worker.py` came out byte-identical to
+the repo source (not the stubs), and `config.json` ended up with BOTH `chatterbox_python` (preserved)
+AND `error_webhook_url` (added), `port` untouched. Fake install and its uninstall registry key were
+removed afterward.
+
+(V) SECOND, and this is the one that mattered: the same technique applied to the MAIN installer's
+identical `[Run]` webhook step surfaced a real bug in the code's own stated reasoning, though not in
+its actual behavior. Running the compiled installer against a fresh (no existing install) fake target
+initially showed `config.json` missing `error_webhook_url` after a successful `Process exit code: 0`.
+Instrumenting `merge_webhook_config.py` with a debug trace (written to a fixed side-channel log, since
+stdout is not captured for this `[Run]` entry) proved why: `path.exists()` was `False` at the moment
+the webhook-merge step ran on a fresh install, meaning it wrote a config.json containing ONLY
+`error_webhook_url`, before `chatterbox_python` had ever been written by `setup.py`.
+
+This directly contradicts the inline comment on that `[Run]` entry, which claimed "`[Run]` entries
+fire strictly after `ssPostInstall`, i.e. after `RunSetupPy()` has already run." That is backwards for
+an entry that lacks the `postinstall` flag (this one only has `runhidden`): per Inno's own execution
+model, a non-`postinstall` `[Run]` entry runs as the LAST step of the main install sequence, which is
+BEFORE `ssPostInstall`'s `CurStepChanged` fires -- only `postinstall`-flagged entries (the launch-now
+entry below it) run later, on the Finished page, which is also why `/VERYSILENT` always skips them.
+The file's OWN HEADER (written earlier, from the original setup.py-ordering bug) already states this
+correctly ("Inno processes `[Run]` as the LAST part of the actual installation, and fires
+`ssPostInstall` AFTER that"); the newer webhook-step comment contradicted the file's own established
+fact 100 lines above it.
+
+The first test run that surfaced this used a deliberately dumb test-only stub `setup.py` that did a
+blind overwrite of `config.json`, which produced a FALSE-POSITIVE "the webhook key gets silently
+dropped" result. Checking the real `setup.py`'s `pin_chatterbox_python()` (setup.py lines 372-392)
+showed it is NOT a blind overwrite: it reads any existing `config.json`, preserves every other key,
+and touches only `chatterbox_python`. Rewriting the test stub to faithfully replicate that merge logic
+(rather than a hardcoded blind write) and rerunning produced the correct final file with all three
+keys, regardless of which of the two writers ran first. So the ACTUAL behavior was already correct in
+production -- both writers are independently merge-safe -- but only by two independent pieces of code
+each happening to be careful, not because of the order the comment claimed. That is a fragile kind of
+correctness: it would break silently, with no error and exit code 0, if either write path ever became
+a blind overwrite in a future change.
+
+Fixed by rewriting the `[Run]` section's comment to state the true order (backed by the instrumented
+proof), explain that correctness currently depends on both writers being independently merge-safe, and
+flag that dependency explicitly so a future change to either write path does not quietly reintroduce
+data loss. This is a comment-only fix; no code behavior changed. Committed as `fdedfda`, and
+`install/build_installer.bat` was rerun from that commit: compiled cleanly, manifest independently
+re-checked (no PDF/audio/voice-clip/config.json entries, `merge_webhook_config.py` present), final
+SHA-256 `8e82d9f3b83d7c1f0c5714e8189a18da65453ba1398c234162b1213ac4470a62`.
+
+This is the same lesson this skill has now recorded for a fourth time, just in a new shape: a Pascal
+script -- or a comment describing one -- that reads correctly is not the same as one that has been
+run. The disposable-stub technique (stage a `git archive HEAD` copy, swap only `setup.py` for a fast
+stand-in that replicates the ONE real side effect under test, compile to a throwaway output name,
+pre-seed a real-but-minimal runnable interpreter) is reusable for testing any future `[Run]`/`[Code]`
+ordering question in either `.iss` file without paying for a real conda/torch build.
+
+STILL A FULL REAL END-TO-END RUN HAS NOT HAPPENED on this build: the owner deliberately chose the
+lighter disposable-stub check over a real conda/torch/ffmpeg run this session (tens of minutes, ~10 GB
+download). Brandon's actual machine, or a future real run on this one, remains the first full proof
+this exact artifact installs and narrates start to finish.
+
 Companion change, not part of the installer itself: `app/VERSION` (currently `1.0.1`, bumped in
 lockstep with both `.iss` files' `MyAppVersion`) plus a `/api/update/check` endpoint in server.py and
 a small dismissible banner in the UI. This is a NOTIFY-ONLY design, deliberately: it calls GitHub's
