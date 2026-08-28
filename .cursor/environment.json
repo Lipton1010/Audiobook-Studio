@@ -1,0 +1,17 @@
+{
+  "name": "Audiobook Studio",
+  "install": "python3 -m pip install --user -r install/requirements-base.txt",
+  "terminals": [
+    {
+      "name": "server",
+      "command": "cd app && python3 server.py",
+      "description": "Audiobook Studio web server (base-env: stdlib + PyMuPDF + requests). Serves the UI and pipeline API at http://localhost:8765. Text extraction (Path A/B tagging) runs here; Chatterbox narration requires an NVIDIA GPU and does not run in this Linux VM."
+    }
+  ],
+  "ports": [
+    {
+      "name": "Audiobook Studio web UI",
+      "port": 8765
+    }
+  ]
+}
