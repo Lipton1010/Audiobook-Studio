@@ -22,14 +22,14 @@
 ; the path. DisableDirPage=yes hides the directory page entirely: Welcome,
 ; then straight to Install, then Finished. Nothing to click wrong.
 ;
-; Build: "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" install\AudiobookStudio_Patch.iss
+; Build: install\build_installer.bat patch
 ;   -> Output\Setup_AudiobookStudio_Patch.exe
 ;
 ; Requires Audiobook Studio already installed via Setup_AudiobookStudio.exe.
 ;
 #define MyAppName "Audiobook Studio"
 #define MyAppDirName "AudiobookStudio"
-#define MyAppVersion "1.0.1"
+#define MyAppVersion "1.0.2"
 #define MyAppPublisher "Audiobook Studio"
 
 [Setup]

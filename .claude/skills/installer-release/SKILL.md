@@ -395,10 +395,12 @@ A current-source scan found zero live webhook URLs. The old credential is still 
 and after `3351d47`; revocation is the immediate security action and has NOT been confirmed in this
 record. No force-push, rewrite or GitHub Support request was started.
 
-The patch installer's explicit file set is expanded for the stabilization source: server.py,
+The reviewed stabilization source was committed as `19f74df`. The patch installer's explicit file
+set is expanded for the stabilization source: server.py,
 narrate_worker.py, gpu_oom.py, launcher.py, static/index.html, config.py, config.example.json and
-VERSION. It remains wildcard-free. No patch artifact has been compiled yet, because source must be
-reviewed, tested and committed first and the canonical installer builders consume clean HEAD only.
+VERSION. It remains wildcard-free. `app/VERSION` and both Inno `MyAppVersion` values are being bumped
+together to 1.0.2 in the release-prep follow-up. No patch artifact has been compiled yet; canonical
+installer builders consume clean HEAD only.
 
 Native-window source validation used the exact pinned pywebview 5.4 package in an ignored local test
 target with EdgeChromium and synthetic data. `ALLOW_DOWNLOADS=True` was set before window creation;

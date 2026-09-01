@@ -319,8 +319,10 @@ Local source fixes and proof, 2026-09-01:
   embedded JavaScript parsed. The earlier 12 temp-file failures were managed-sandbox errors before
   assertions, not product failures.
 
-Release status remains BLOCKED. No 1.0.2 installer has been built or sent, and no release has been
-published. After a clean-HEAD source commit, build only through `install\build_installer.bat`. The
+Release status remains BLOCKED. The reviewed stabilization source was committed as `19f74df`; the
+app and both installer definitions are now being prepared together as 1.0.2. No 1.0.2 installer has
+been built or sent, and no release has been published. Build only from clean HEAD through
+`install\build_installer.bat`. The
 next Brandon run must use a short synthetic or properly licensed sample, verify beta ZIP and audio
 downloads in the installed window, deliberately exercise recoverable OOM splitting on the 16 GB GPU,
 and observe clean shutdown before any complete-book job. The exact-build clean-machine checklist is

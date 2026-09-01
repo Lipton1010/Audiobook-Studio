@@ -1,5 +1,5 @@
 @echo off
-rem Build Setup_AudiobookStudio.exe from a CLEAN copy of the repo.
+rem Build a full or patch Audiobook Studio installer from a CLEAN copy of the repo.
 rem
 rem Why this exists: AudiobookStudio.iss packages "..\*", i.e. whatever is
 rem sitting in the source tree at compile time. Inno's Excludes are not
@@ -11,7 +11,8 @@ rem only emit files that are tracked in git, and no book, audio file, job
 rem folder, or local config is tracked.
 rem
 rem Requires: git, and Inno Setup 6 (ISCC.exe).
-rem Usage:    install\build_installer.bat        (run from the repo root)
+rem Usage:    install\build_installer.bat        (full installer; run from repo root)
+rem           install\build_installer.bat patch  (small update installer)
 rem
 rem This is a cmd batch file. Running it from PowerShell 7 is fine:
 rem     .\install\build_installer.bat
@@ -23,9 +24,23 @@ setlocal DisableDelayedExpansion
 
 cd /d "%~dp0.." || (echo ERROR: could not cd to the repo root. & exit /b 1)
 
+set "BUILD_KIND=%~1"
+if not defined BUILD_KIND set "BUILD_KIND=full"
+if /I "%BUILD_KIND%"=="full" (
+    set "ISS_NAME=AudiobookStudio.iss"
+    set "OUTPUT_BASE=Setup_AudiobookStudio"
+) else if /I "%BUILD_KIND%"=="patch" (
+    set "ISS_NAME=AudiobookStudio_Patch.iss"
+    set "OUTPUT_BASE=Setup_AudiobookStudio_Patch"
+) else (
+    echo ERROR: unknown build kind "%BUILD_KIND%".
+    echo Usage: install\build_installer.bat [full^|patch]
+    exit /b 1
+)
+
 set "STAGE=%TEMP%\audiobook_studio_build"
 set "OUTDIR=%CD%\Output"
-set "MANIFEST=%OUTDIR%\Setup_AudiobookStudio-manifest.txt"
+set "MANIFEST=%OUTDIR%\%OUTPUT_BASE%-manifest.txt"
 
 where git >nul 2>nul || (echo ERROR: git is not on PATH. & exit /b 1)
 
@@ -64,8 +79,8 @@ mkdir "%STAGE%" || exit /b 1
 git archive --format=tar HEAD | tar -x -C "%STAGE%"
 if errorlevel 1 (echo ERROR: git archive failed. & exit /b 1)
 
-if not exist "%STAGE%\install\AudiobookStudio.iss" (
-    echo ERROR: staged copy is missing install\AudiobookStudio.iss
+if not exist "%STAGE%\install\%ISS_NAME%" (
+    echo ERROR: staged copy is missing install\%ISS_NAME%
     exit /b 1
 )
 
@@ -74,7 +89,7 @@ rem this one, so remove it before compiling.
 if exist "%MANIFEST%" del /q "%MANIFEST%"
 
 echo Compiling ...
-"%ISCC%" /O"%OUTDIR%" "%STAGE%\install\AudiobookStudio.iss"
+"%ISCC%" /O"%OUTDIR%" "%STAGE%\install\%ISS_NAME%"
 if errorlevel 1 (echo ERROR: Inno Setup compile failed. & exit /b 1)
 
 rem ---------------------------------------------------------------------
@@ -95,7 +110,7 @@ rem config.example.json, which must NOT match.
 rem ---------------------------------------------------------------------
 if not exist "%MANIFEST%" (
     echo ERROR: Inno produced no manifest, so the contents cannot be verified.
-    echo Check that AudiobookStudio.iss still sets OutputManifestFile.
+    echo Check that %ISS_NAME% still sets OutputManifestFile.
     exit /b 1
 )
 
@@ -108,9 +123,9 @@ if not errorlevel 1 (
     echo ***********************************************************
     findstr /I /R /C:"\.pdf\>" /C:"\.wav\>" /C:"\.mp3\>" /C:"\.flac\>" /C:"\.ogg\>" /C:"\.m4a\>" /C:"\.m4b\>" /C:"\.aac\>" /C:"Voice_Sample" /C:"source_pdfs" /C:"app.config\.json" "%MANIFEST%"
     echo.
-    echo Delete Output\Setup_AudiobookStudio.exe and fix the [Files] Excludes
+    echo Delete Output\%OUTPUT_BASE%.exe and fix the installer file list
     echo before sending this to anyone.
-    del /q "%OUTDIR%\Setup_AudiobookStudio.exe" 2>nul
+    del /q "%OUTDIR%\%OUTPUT_BASE%.exe" 2>nul
     exit /b 1
 )
 
@@ -118,12 +133,12 @@ echo.
 echo Contents verified against %MANIFEST%
 echo   no PDFs, no audio, no voice clip, no local config.
 echo.
-echo Built: %OUTDIR%\Setup_AudiobookStudio.exe
+echo Built: %OUTDIR%\%OUTPUT_BASE%.exe
 echo.
 echo Before sending it to anyone, note the SHA-256 so the recipient can check
 echo it, and warn them that Windows SmartScreen will likely show a
 echo "Windows protected your PC" prompt because this build is not
 echo code-signed. They need "More info" then "Run anyway".
 echo.
-certutil -hashfile "%OUTDIR%\Setup_AudiobookStudio.exe" SHA256
+certutil -hashfile "%OUTDIR%\%OUTPUT_BASE%.exe" SHA256
 endlocal
