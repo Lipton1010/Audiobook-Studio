@@ -398,9 +398,11 @@ record. No force-push, rewrite or GitHub Support request was started.
 The reviewed stabilization source was committed as `19f74df`. The patch installer's explicit file
 set is expanded for the stabilization source: server.py,
 narrate_worker.py, gpu_oom.py, launcher.py, static/index.html, config.py, config.example.json and
-VERSION. It remains wildcard-free. `app/VERSION` and both Inno `MyAppVersion` values are being bumped
-together to 1.0.2 in the release-prep follow-up. No patch artifact has been compiled yet; canonical
-installer builders consume clean HEAD only.
+VERSION. It remains wildcard-free. `app/VERSION` and both Inno `MyAppVersion` values are locked
+together at 1.0.2 by a regression test. The canonical `install\build_installer.bat patch` path stages
+only committed files with `git archive HEAD`. A local clean-HEAD candidate compiled successfully;
+its eight-row manifest passed the prohibited-content check and the artifact contained no detectable
+Discord webhook endpoint. Record the exact retained artifact's commit, size and hash at handoff.
 
 Native-window source validation used the exact pinned pywebview 5.4 package in an ignored local test
 target with EdgeChromium and synthetic data. `ALLOW_DOWNLOADS=True` was set before window creation;

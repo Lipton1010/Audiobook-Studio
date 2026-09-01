@@ -17,10 +17,10 @@ the exact commit and installer artifact being published.
 
 ## Installer artifact
 
-- [ ] Build 1.0.2 only with `install\build_installer.bat`; never compile the Inno file directly.
-- [ ] The 1.0.2 build comes from clean `HEAD` and records its commit, byte size, and SHA-256.
-- [ ] The 1.0.2 Inno output manifest passes the prohibited-content and credential checks.
-- [ ] The built 1.0.2 executable is not committed to Git.
+- [x] Build 1.0.2 only with `install\build_installer.bat patch`; never compile the Inno file directly.
+- [x] The 1.0.2 build comes from clean `HEAD` and records its commit, byte size, and SHA-256 at handoff.
+- [x] The 1.0.2 Inno output manifest passes the prohibited-content check, and source/artifact credential scans pass.
+- [x] The built 1.0.2 executable is not committed to Git.
 
 ## Exact-build clean-machine validation
 

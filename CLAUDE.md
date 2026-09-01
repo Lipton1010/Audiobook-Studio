@@ -319,10 +319,12 @@ Local source fixes and proof, 2026-09-01:
   embedded JavaScript parsed. The earlier 12 temp-file failures were managed-sandbox errors before
   assertions, not product failures.
 
-Release status remains BLOCKED. The reviewed stabilization source was committed as `19f74df`; the
-app and both installer definitions are now being prepared together as 1.0.2. No 1.0.2 installer has
-been built or sent, and no release has been published. Build only from clean HEAD through
-`install\build_installer.bat`. The
+Release status remains BLOCKED. The reviewed stabilization source was committed as `19f74df`, and
+the 1.0.2 release preparation was committed separately. A local patch candidate has compiled from
+clean HEAD through `install\build_installer.bat patch`; its eight-row manifest passed the prohibited-
+content check and the artifact contains no detectable Discord webhook endpoint. The exact retained
+candidate's commit, byte size and SHA-256 are recorded at handoff rather than in its own source
+commit. No installer has been sent and no release has been published. The
 next Brandon run must use a short synthetic or properly licensed sample, verify beta ZIP and audio
 downloads in the installed window, deliberately exercise recoverable OOM splitting on the 16 GB GPU,
 and observe clean shutdown before any complete-book job. The exact-build clean-machine checklist is
