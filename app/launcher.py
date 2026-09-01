@@ -100,30 +100,11 @@ def _show_error(title, msg):
 
 
 def _kill_orphan_workers():
-    """Kill narration subprocesses on the way out.
-
-    server.py spawns narrate_worker.py with Popen, and Windows does NOT kill
-    children when the parent dies. server.mark_interrupted_jobs() reaps them on
-    the NEXT launch, which was tolerable when this was a console app: closing a
-    console is a deliberate act. A window with an X in the corner gets closed
-    casually, mid-narration, and until the next launch the orphan keeps a
-    Chatterbox model resident and the GPU pegged with nothing to show for it.
-
-    Kill the live handles first (fast, no dependency on the pid file being
-    current), then sweep every job's worker_pids.txt for anything missed.
-    """
-    for p in list(server._active_procs.get("procs") or []):
-        try:
-            if p.poll() is None:
-                p.kill()
-        except Exception:
-            pass
-    try:
-        for job_dir in server.JOBS_DIR.iterdir():
-            if job_dir.is_dir():
-                server._reap_worker_pids(job_dir)
-    except Exception:
-        pass
+    """Close the owned Job Object so no narration worker survives exit."""
+    with server._active_procs_lock:
+        procs = list(server._active_procs.get("procs") or [])
+    server._terminate_processes(procs)
+    server._close_worker_job()
 
 
 def _port_in_use(port):
@@ -182,6 +163,11 @@ def _wait_for_server(url, timeout=20.0):
     return False
 
 
+def _enable_webview_downloads(webview_module):
+    """Enable EdgeChromium's native Save dialog before creating the window."""
+    webview_module.settings["ALLOW_DOWNLOADS"] = True
+
+
 def main():
     url = f"http://127.0.0.1:{CFG.port}"
 
@@ -226,6 +212,9 @@ def main():
         return
 
     try:
+        # pywebview 5.4 defaults this to False; its EdgeChromium backend
+        # otherwise cancels every DownloadStarting event without feedback.
+        _enable_webview_downloads(webview)
         webview.create_window(title=WINDOW_TITLE, url=url,
                               width=1280, height=860, min_size=(900, 600))
         # NOTE: webview.start(icon=...) is accepted but IGNORED on Windows --

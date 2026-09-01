@@ -111,11 +111,6 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 ; plus the voice clip that CLAUDE.md says must never be distributed.
 Source: "..\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; \
     Excludes: "*.pdf,*.wav,*.mp3,*.flac,*.ogg,*.m4a,*.m4b,*.aac,*.jpg,*.jpeg,*.pyc,__pycache__,.git,.claude,\tests\*,\app\jobs\*,\app\voices\*,\app\config.json,\app\*.log,\audiobooks\*,\ab_samples\*,\source_pdfs\*,\samples\Voice_Sample\*,\tools\*,\Output\*,\install\*.exe,\install_log.txt,\install_warnings.txt,\launcher_log.txt,\AUDIT_HANDOFF.md,\AUDIT_TRIAGE_HANDOFF.md"
-; Extracted to {tmp}, not installed permanently, purely to be invoked once by
-; the [Run] entry below. See that entry for why this is a separate step from
-; the wildcard copy above (merge-safety into a config.json setup.py may have
-; already written to).
-Source: "merge_webhook_config.py"; DestDir: "{tmp}"
 
 [Icons]
 ; pythonw.exe keeps the normal installed launch completely console-free.
@@ -139,42 +134,10 @@ Type: filesandordirs; Name: "{app}\install\__pycache__"
 
 [Run]
 ; setup.py is NOT here on purpose -- see the ordering note in the header. The
-; only two [Run] entries are this webhook wiring and the optional launch.
-;
-; Wires up the Discord crash reporter (config.py's error_webhook_url) by
-; merging just that one key into config.json via merge_webhook_config.py
-; (real json.loads/dumps).
-;
-; ORDERING, corrected 2026-08-23 after a real silent run proved the opposite
-; assumption wrong: a [Run] entry WITHOUT the postinstall flag (this one only
-; has runhidden) executes as the LAST step of the main install sequence,
-; which is BEFORE ssPostInstall's CurStepChanged fires -- i.e. BEFORE
-; RunSetupPy() has run. An instrumented build confirmed this directly: on a
-; fresh install, config.json did not exist yet when this step ran. Only
-; postinstall-flagged entries (the launch below) run later, on the Finished
-; page, which is also why /VERYSILENT always skips them.
-;
-; Despite running first, this cannot lose chatterbox_python: both writers are
-; independently merge-safe. This script preserves every existing key and
-; touches only error_webhook_url; setup.py's pin_chatterbox_python() (called
-; from RunSetupPy, which runs after this) reads the file back and adds only
-; chatterbox_python, never a blind overwrite. So whichever of the two runs
-; second still preserves what the first one wrote. That merge-safety, not
-; execution order, is what actually prevents the race -- do not re-order
-; these two steps on the assumption that order alone provides safety; if
-; either write path ever becomes a blind overwrite, this breaks silently on
-; the currently-lucky ordering. Not gated on SetupPySucceeded: writing one
-; JSON key has no dependency on whether the (much heavier) environment build
-; succeeded.
-;
-; THIS BUILD EMBEDS A LIVE WEBHOOK URL. Anyone with it can post to that
-; Discord channel. This repo is PUBLIC, so a build with this step must NEVER
-; be attached to a public GitHub Release -- only sent directly to specific
-; people. A future public release must omit this [Files]/[Run] pair, or bake
-; in an empty URL (config.py treats blank/missing as disabled).
-Filename: "{app}\runtime\miniconda3\python.exe"; \
-    Parameters: """{tmp}\merge_webhook_config.py"" ""{app}\app\config.json"" ""https://discord.com/api/webhooks/1541175653842558987/WzHMD2PFZVd7o4CLFrAgg7RmdqbwDuMYTnTDvq_4qJl7wnnkHxdRmXpEJduc6kVufvp4"""; \
-    Flags: runhidden
+; only [Run] entry is the optional launch. Crash reporting is disabled by
+; default and may be configured locally through app\config.json or the
+; AUDIOBOOK_ERROR_WEBHOOK_URL environment variable. Installers must never
+; inject or embed a reporting credential.
 ; The optional launch, suppressed if setup.py failed so nobody is invited to
 ; start an app whose environment was never built.
 Filename: "{app}\runtime\miniconda3\pythonw.exe"; Parameters: """{app}\app\launcher.py"""; \

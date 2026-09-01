@@ -270,6 +270,62 @@ else: no chunk text, no blocks.json, no log tail. Disabled by default on every i
 into per machine, and the URL must never be committed. `_report_crash` swallows every exception itself
 so a Discord outage can never mask the real failure it is reporting on top of.
 
+## Emergency beta stabilization after Brandon's 2026-08-31 failure
+
+Field evidence supersedes the earlier assumption that the August 23 OOM catch covered Brandon's
+machine. His patched 1.0.1 install reported a batched narration failure for `Jurassic Park 8-31` on
+an RTX 4090 Laptop GPU with 16,376 MiB. Transformers' DynamicCache failed in `torch.cat` with a plain
+`RuntimeError("CUDA error: out of memory")`, not `torch.cuda.OutOfMemoryError`. The VRAM formula's
+starting budget was about 827 tokens and still OOMed. That budget remains an UNMEASURED ESTIMATE on
+his laptop; it was not lowered during this stabilization because runtime recovery is the safety
+mechanism. Only a controlled run on that laptop can justify a measured budget change.
+
+Local source fixes and proof, 2026-09-01:
+
+- `app/gpu_oom.py` is the single dependency-light classifier and ordered bisection implementation.
+  It accepts PyTorch's CUDA OOM class or a `RuntimeError` whose message contains both the standalone
+  word `CUDA` and `out of memory`. CPU OOMs, unqualified OOM strings and unrelated CUDA runtime
+  errors are not swallowed. Generation, recursive halves, S3Gen vocoding, capped-row isolated
+  retries, serial fallbacks and the top-level clean `error.json` path all use the classifier.
+  Recovery clears ended traceback frames, runs GC and calls `cuda.empty_cache()` best-effort; it does
+  not synchronize an asynchronously failing device or replace the original exception. A resumed run
+  removes stale `error.json` before generation. Tests reproduce Brandon's exact exception string,
+  prove left-to-right chunk order and prove a single-item hard OOM is re-raised.
+- Raw PID cleanup is retired. Every narration/assembly child is assigned by its live process handle
+  to a Windows Job Object configured with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. Assignment failure
+  stops the new process and refuses narration. Normal cancel still kills the exact live `Popen`
+  handles, launcher exit closes the Job Object, and a server crash closes it in the kernel. Legacy
+  `worker_pids.txt` files are only deleted and are never authority for `taskkill`. Cleanup runs in
+  `finally`, including spawn and cancel races. A real Windows child died when the job handle closed;
+  a test file containing the current unrelated test runner's live PID was removed without any kill
+  command. This removes the credible PID-reuse hazard but does NOT prove it caused Brandon's touchpad
+  failures. His memory of whether the touchpad stopped at job failure, app close or next launch would
+  be useful; do not ask him to reproduce it.
+- `launcher.py` sets pywebview 5.4's `ALLOW_DOWNLOADS=True` before creating the native window.
+  Download links also issue a parallel HEAD availability check and show inline/alert feedback for a
+  missing server file. The exact pinned pywebview 5.4 package was installed into an ignored isolated
+  test target and run with EdgeChromium against synthetic job data. Both `Download beta report` and
+  the WAV link opened native Save dialogs. The saved ZIP contained only the synthetic summary and
+  log; the downloaded 48,044-byte WAV was byte-for-byte identical to the synthetic source. This is
+  native-window proof of the source path, not proof of a not-yet-built 1.0.2 installer.
+- The installer designs no longer inject a crash-report credential and the one-shot merge helper is
+  removed. Crash reporting remains local opt-in through gitignored `app/config.json` or
+  `AUDIOBOOK_ERROR_WEBHOOK_URL`. A current working-tree scan found zero live Discord webhook URLs.
+  The credential introduced at `3351d47` still exists in public history and MUST be revoked. As of
+  this record, revocation has not been confirmed. No history rewrite, force-push or Support purge was
+  started; those remain a separate destructive decision requiring explicit approval.
+- The conclusive base-environment run used `C:\Users\paulm\miniconda3\python.exe` with a writable
+  project temp root: all 48 dependency-free tests passed. Changed Python files compiled and the
+  embedded JavaScript parsed. The earlier 12 temp-file failures were managed-sandbox errors before
+  assertions, not product failures.
+
+Release status remains BLOCKED. No 1.0.2 installer has been built or sent, and no release has been
+published. After a clean-HEAD source commit, build only through `install\build_installer.bat`. The
+next Brandon run must use a short synthetic or properly licensed sample, verify beta ZIP and audio
+downloads in the installed window, deliberately exercise recoverable OOM splitting on the 16 GB GPU,
+and observe clean shutdown before any complete-book job. The exact-build clean-machine checklist is
+still mandatory for a public release.
+
 ## Where the rest of the detail lives
 
 This file used to carry every measurement and audit inline, which cost ~37k tokens of context in

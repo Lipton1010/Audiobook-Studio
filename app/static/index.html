@@ -601,6 +601,7 @@ function renderJob(j) {
   betaLog.href = `/api/jobs/${j.id}/beta-log`;
   betaLog.download = '';
   betaLog.textContent = 'Download beta report';
+  monitorDownload(betaLog, 'beta report');
   row.appendChild(betaLog);
   row.appendChild(btn(openLogs.has(j.id) ? 'Hide log' : 'Show log', '', () => {
     openLogs.has(j.id) ? openLogs.delete(j.id) : openLogs.add(j.id);
@@ -621,6 +622,7 @@ function renderJob(j) {
       download.href = audio.src;
       download.download = o.name;
       download.textContent = `Download ${o.name} (${fmtBytes(o.bytes)})`;
+      monitorDownload(download, o.name);
       p.append(audio, download);
       players.appendChild(p);
     }
@@ -650,6 +652,32 @@ async function openOutputFolder(jobId) {
   } catch (e) {
     alert(e.message || 'Could not open the output folder.');
   }
+}
+
+function monitorDownload(anchor, label) {
+  // Keep the real link activation as the original user gesture so pywebview's
+  // EdgeChromium DownloadStarting handler opens its native Save dialog. The
+  // parallel HEAD check gives the user visible feedback if the server can no
+  // longer provide the file instead of leaving another silent no-op.
+  anchor.addEventListener('click', () => {
+    const card = anchor.closest('.job');
+    let status = card && card.querySelector('.download-status');
+    if (!status && card) {
+      status = document.createElement('div');
+      status.className = 'detail download-status';
+      status.style.marginTop = '8px';
+      card.appendChild(status);
+    }
+    if (status) status.textContent = `Opening the Save dialog for ${label}...`;
+    fetch(anchor.href, {method: 'HEAD', cache: 'no-store'}).then(response => {
+      if (!response.ok) throw new Error(`server returned ${response.status}`);
+      if (status) status.textContent = `${label} is ready; complete the Save dialog to save it.`;
+    }).catch(error => {
+      const message = `Could not download ${label}: ${error.message}`;
+      if (status) status.textContent = message;
+      alert(message);
+    });
+  });
 }
 
 function bar(frac) {

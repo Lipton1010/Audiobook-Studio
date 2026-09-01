@@ -34,4 +34,39 @@ The current local UX change is uncommitted and no installer was rebuilt. `New au
 (V, user report and local source inspection 2026-07-29) Sphere finished, was copied through Google Drive to the owner's iPhone, and sounds as though it begins mid-sentence. The owner manually entered page 18 after observing that the story appeared to start on page 18. The exact Sphere job state, first extracted block, chapter count and final log are not available away from the HP Omen. Current source treats the range as 1-based inclusive and loads `page_from - 1`, so entering 18 selects the eighteenth physical page in the PDF file; there is no source-level off-by-one at that boundary. The m4b does not carry source-PDF page numbers, so an audiobook player's `page 1` label cannot establish which PDF page supplied the audio. It remains unverified whether the PDF viewer's displayed page 18 was a logical/printed page label that differs from physical file page 18, whether page 18 itself begins with continuation text, or whether Path A omitted/reordered its opening text. Preserve the Sphere job and segments for inspection.
 
 (V, owner listening report and local source inspection 2026-07-29) The owner considers The Shining's narration quality unacceptable and does not want time spent repairing that output. Dialogue exchanges in particular sound phony, the narrator's delivery of dialogue feels wrong, and some pauses are unnaturally short. Exact timestamps and comparison clips have not yet been captured, so do not assign one cause. Current Path A emits dialogue as ordinary `body` blocks, not dialogue-aware blocks. The worker independently packs body text into chunks up to 400 characters, uses 150 ms between chunks and 400 ms between extracted blocks, and calls Chatterbox 0.1.7 with its default generation controls (`exaggeration=0.5`, `cfg_weight=0.5`, `temperature=0.8`). Neither the serial nor batched path applies speaker-specific dialogue direction. Chapter repair is deprioritized. Before another full novel, run short controlled listening comparisons that independently vary the licensed reference voice, paragraph/dialogue boundaries, pause profile and model controls; do not change validated full-book narration settings from intuition alone.
+
+### Brandon laptop emergency failure and local stabilization (2026-09-01)
+
+(V, webhook report supplied by the installed patch) Brandon's `Jurassic Park 8-31` batched job on an
+NVIDIA GeForce RTX 4090 Laptop GPU (16,376 MiB), Windows 11 build 26200, failed with worker exit code
+1. The traceback ended in Transformers Llama/DynamicCache `torch.cat` with
+`RuntimeError: CUDA error: out of memory`. The patch was active because its crash report arrived.
+The VRAM formula selected roughly 827 tokens, but the old catch recognized only
+`torch.cuda.OutOfMemoryError`, so no bisection or clean `error.json` occurred. This proves the catch
+was too narrow; it does not measure a safe starting budget on this laptop.
+
+(V, local source tests) A conservative shared classifier now accepts the PyTorch OOM type and the
+exact CUDA-qualified RuntimeError while rejecting CPU/unqualified OOM text and unrelated CUDA
+runtime failures. Ordered generation/vocoder bisection, capped-row retries, serial fallbacks and the
+top-level clean error path use it. Regression tests reproduce the exact field string, preserve order
+and resume behavior, and re-raise a one-item hard limit. The 16 GB budget formula remains an estimate
+until the laptop measures it; runtime bisection is the safety mechanism.
+
+(V, local Windows execution) Raw stale-PID `taskkill` is removed. Narration children are assigned by
+handle to a kill-on-close Windows Job Object; legacy PID files are deleted without acting on their
+numbers. A real owned test child terminated on Job Object close, and a stale file containing the
+live unrelated test runner PID caused no kill call. This removes a credible mechanism for unrelated
+process termination but does NOT prove it caused the touchpad failures. Brandon's remembered timing
+at job failure, app close or next launch would be useful without another reproduction attempt.
+
+(V, local native pywebview 5.4 execution) EdgeChromium opened real Windows Save dialogs for both a
+synthetic beta-report ZIP and synthetic WAV after `ALLOW_DOWNLOADS` was enabled. The saved ZIP held
+only the synthetic summary and job log; the 48,044-byte WAV matched its served source exactly. HEAD
+checks now provide inline and alert feedback when a server-side download is unavailable. This was an
+isolated source-path run, not the not-yet-built 1.0.2 installer.
+
+(V, full local suite) All 48 tests passed with the project base Miniconda Python and a writable
+project temp root. The next physical validation must be a short synthetic or properly licensed
+sample, confirm both installed-window downloads, exercise OOM recovery on the 16 GB GPU and observe
+safe shutdown. Do not begin with the complete Jurassic Park job. Nothing has been sent to Brandon.
 

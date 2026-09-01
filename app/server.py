@@ -77,6 +77,117 @@ AUDIO_MIME = {".m4b": "audio/mp4", ".mp3": "audio/mpeg", ".wav": "audio/wav"}
 MAX_PDF_BYTES = 2 * 1024 * 1024 * 1024
 WINDOWS_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 
+
+class _WindowsWorkerJob:
+    """Own narration subprocesses by handle, never by a reusable numeric PID.
+
+    Windows does not automatically terminate children when their parent exits.
+    A Job Object with KILL_ON_JOB_CLOSE does, including when this server crashes
+    and the kernel closes its handles. Assignment uses Popen's live process
+    handle, so it cannot target a different process after PID reuse.
+    """
+
+    def __init__(self):
+        self.handle = None
+        if os.name != "nt":
+            return
+
+        import ctypes
+        from ctypes import wintypes
+
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_longlong),
+                ("PerJobUserTimeLimit", ctypes.c_longlong),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_ulonglong),
+                ("WriteOperationCount", ctypes.c_ulonglong),
+                ("OtherOperationCount", ctypes.c_ulonglong),
+                ("ReadTransferCount", ctypes.c_ulonglong),
+                ("WriteTransferCount", ctypes.c_ulonglong),
+                ("OtherTransferCount", ctypes.c_ulonglong),
+            ]
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+        ]
+        kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        handle = kernel32.CreateJobObjectW(None, None)
+        if not handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = 0x00002000  # KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(handle, 9, ctypes.byref(info), ctypes.sizeof(info)):
+            error = ctypes.get_last_error()
+            kernel32.CloseHandle(handle)
+            raise ctypes.WinError(error)
+        self.handle = handle
+        self._kernel32 = kernel32
+
+    def assign(self, proc):
+        if self.handle is None:
+            return
+        import ctypes
+        if not self._kernel32.AssignProcessToJobObject(self.handle, proc._handle):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    def close(self):
+        if self.handle is not None:
+            self._kernel32.CloseHandle(self.handle)
+            self.handle = None
+
+
+_worker_job = None
+_worker_job_lock = threading.Lock()
+
+
+def _assign_worker_to_job(proc):
+    """Assign a newly spawned worker to this server's kill-on-close job."""
+    global _worker_job
+    if os.name != "nt":
+        return
+    with _worker_job_lock:
+        if _worker_job is None:
+            _worker_job = _WindowsWorkerJob()
+        _worker_job.assign(proc)
+
+
+def _close_worker_job():
+    """Terminate every still-running owned worker without consulting PIDs."""
+    global _worker_job
+    with _worker_job_lock:
+        job, _worker_job = _worker_job, None
+    if job is not None:
+        job.close()
+
 # Bumping the number of narration processes to fit the GPU. Each Chatterbox
 # worker loads its own model copy and, measured on this stack, holds ~9-10 GB
 # of VRAM, so worker count is (usable VRAM / per-worker budget), clamped.
@@ -729,6 +840,7 @@ _queue = []
 _queue_cv = threading.Condition()
 _cancel_flags = {}
 _active_procs = {"procs": [], "job_id": None}
+_active_procs_lock = threading.Lock()
 
 
 def enqueue(job_id):
@@ -747,12 +859,38 @@ def request_cancel(job_id):
             if st and st["status"] == "queued":
                 st["status"] = "canceled"
                 save_state(st)
-    if _active_procs["job_id"] == job_id:
-        for p in _active_procs["procs"]:
-            try:
+    with _active_procs_lock:
+        procs = (list(_active_procs["procs"])
+                 if _active_procs["job_id"] == job_id else [])
+    _terminate_processes(procs)
+
+
+def _set_active_processes(job_id, procs):
+    with _active_procs_lock:
+        _active_procs["job_id"] = job_id
+        _active_procs["procs"] = list(procs)
+
+
+def _clear_active_processes(job_id):
+    with _active_procs_lock:
+        if _active_procs["job_id"] == job_id:
+            _active_procs["procs"] = []
+            _active_procs["job_id"] = None
+
+
+def _terminate_processes(procs):
+    """Best-effort handle-based shutdown for processes this run owns."""
+    for p in list(procs):
+        try:
+            if p.poll() is None:
                 p.kill()
-            except Exception:
-                pass
+        except Exception:
+            pass
+    for p in list(procs):
+        try:
+            p.wait(timeout=10)
+        except Exception:
+            pass
 
 
 def _cancelled(job_id):
@@ -1028,37 +1166,26 @@ def _ensure_segment_cache_stat(st, job_dir):
         save_state(st)
 
 
-def _write_worker_pids(job_dir, procs):
-    (job_dir / "worker_pids.txt").write_text(
-        "\n".join(str(p.pid) for p in procs), encoding="utf-8"
-    )
-
-
-def _reap_worker_pids(job_dir):
-    """Kill any narration workers left over from a previous server process
-    (Windows does not terminate children when the parent dies)."""
+def _discard_legacy_worker_pid_file(job_dir):
+    """Remove unsafe pre-1.0.2 metadata without acting on reusable PIDs."""
     pf = job_dir / "worker_pids.txt"
-    if not pf.exists():
-        return
-    for line in pf.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line.isdigit():
-            continue
-        try:
-            subprocess.run(["taskkill", "/F", "/PID", line],
-                           capture_output=True, timeout=10,
-                           creationflags=WINDOWS_NO_WINDOW)
-        except Exception:
-            pass
     pf.unlink(missing_ok=True)
 
 
 def _spawn_worker(job_dir, logf, extra_args):
-    return subprocess.Popen(
+    proc = subprocess.Popen(
         [CHATTERBOX_PY, str(APP_DIR / "narrate_worker.py"), str(job_dir), *extra_args],
         stdout=logf, stderr=subprocess.STDOUT, cwd=str(APP_DIR),
         creationflags=WINDOWS_NO_WINDOW,
     )
+    try:
+        _assign_worker_to_job(proc)
+    except Exception:
+        # Never continue with an unowned GPU worker. If this server exits, that
+        # process could otherwise survive with no safe way to identify it.
+        _terminate_processes([proc])
+        raise
+    return proc
 
 
 def _narration_failure_message(job_dir, codes):
@@ -1112,39 +1239,43 @@ def run_narration(st):
     save_state(st)
     log_line(job_id, f"narrating with {n} parallel worker(s); {baseline} segments already present")
 
-    with open(job_dir / "log.txt", "a", encoding="utf-8") as logf:
-        # Generation: N shard processes covering disjoint chunks.
-        procs = [_spawn_worker(job_dir, logf, ["--shard", str(k), "--num-shards", str(n)])
-                 for k in range(n)]
-        _write_worker_pids(job_dir, procs)
-        _active_procs["procs"] = procs
-        _active_procs["job_id"] = job_id
-        codes = [p.wait() for p in procs]
-        _active_procs["procs"] = []
-        _active_procs["job_id"] = None
+    owned = []
+    try:
+        with open(job_dir / "log.txt", "a", encoding="utf-8") as logf:
+            # Generation: N shard processes covering disjoint chunks.
+            procs = []
+            for k in range(n):
+                proc = _spawn_worker(
+                    job_dir, logf, ["--shard", str(k), "--num-shards", str(n)]
+                )
+                procs.append(proc)
+                owned.append(proc)
+                _set_active_processes(job_id, procs)
+                if _cancel_flags.pop(job_id, False):
+                    raise _Cancelled()
+            codes = [p.wait() for p in procs]
+            _clear_active_processes(job_id)
 
-        if _cancel_flags.pop(job_id, False):
-            raise _Cancelled()
-        if any(c != 0 for c in codes):
-            raise RuntimeError(_narration_failure_message(job_dir, codes))
+            if _cancel_flags.pop(job_id, False):
+                raise _Cancelled()
+            if any(c != 0 for c in codes):
+                raise RuntimeError(_narration_failure_message(job_dir, codes))
 
-        # Assembly: one process, no model load. Register it BEFORE the cancel
-        # check so a cancel arriving in this window still kills it.
-        log_line(job_id, "generation complete, assembling")
-        ap = _spawn_worker(job_dir, logf, ["--assemble"])
-        _active_procs["procs"] = [ap]
-        _active_procs["job_id"] = job_id
-        _write_worker_pids(job_dir, [ap])
-        if _cancel_flags.pop(job_id, False):
-            ap.kill()
-            _active_procs["procs"] = []
-            _active_procs["job_id"] = None
-            raise _Cancelled()
-        acode = ap.wait()
-        _active_procs["procs"] = []
-        _active_procs["job_id"] = None
-
-    (job_dir / "worker_pids.txt").unlink(missing_ok=True)
+            # Assembly: one process, no model load. Register it BEFORE the cancel
+            # check so a cancel arriving in this window still kills it.
+            log_line(job_id, "generation complete, assembling")
+            ap = _spawn_worker(job_dir, logf, ["--assemble"])
+            owned.append(ap)
+            _set_active_processes(job_id, [ap])
+            if _cancel_flags.pop(job_id, False):
+                ap.kill()
+                raise _Cancelled()
+            acode = ap.wait()
+            _clear_active_processes(job_id)
+    finally:
+        _terminate_processes(owned)
+        _clear_active_processes(job_id)
+        _discard_legacy_worker_pid_file(job_dir)
 
     if _cancel_flags.pop(job_id, False):
         raise _Cancelled()
@@ -1316,6 +1447,10 @@ def _json_response(handler, obj, code=200):
     handler.wfile.write(body)
 
 
+def _safe_download_name(filename):
+    return re.sub(r'[^A-Za-z0-9 .()_\-]', '_', filename).strip() or "download.txt"
+
+
 def _tail_text_lines(path, count=30, chunk_bytes=65536):
     """Read only enough of a potentially huge UTF-8 log to return its tail."""
     path = Path(path)
@@ -1463,6 +1598,46 @@ class Handler(BaseHTTPRequestHandler):
     def _read_json(self):
         length = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(length) or b"{}")
+
+    def do_HEAD(self):
+        """Cheap availability check used for visible download feedback."""
+        path = urlparse(self.path).path
+        try:
+            if re.fullmatch(r"/api/jobs/[0-9a-f-]+/beta-log", path):
+                job_id = path.split("/")[3]
+                st = load_state(job_id)
+                if not st:
+                    self.send_error(404)
+                    return
+                filename = _safe_download_name(
+                    (st.get("title") or "audiobook") + " - beta test report.zip"
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+                self.end_headers()
+            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/audio/.+\.(wav|m4b|mp3)", path):
+                job_id = path.split("/")[3]
+                fname = unquote(path.split("/audio/", 1)[1])
+                out_dir = (JOBS_DIR / job_id / "output").resolve()
+                target = (out_dir / fname).resolve()
+                if (target.parent != out_dir or target.suffix.lower() not in AUDIO_EXTS
+                        or not target.is_file()):
+                    self.send_error(404)
+                    return
+                self.send_response(200)
+                self.send_header(
+                    "Content-Type",
+                    AUDIO_MIME.get(target.suffix.lower(), "application/octet-stream"),
+                )
+                filename = _safe_download_name(target.name)
+                self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+                self.send_header("Content-Length", str(target.stat().st_size))
+                self.end_headers()
+            else:
+                self.send_error(404)
+        except Exception:
+            self.send_error(500)
 
     def do_GET(self):
         path = urlparse(self.path).path
@@ -1661,7 +1836,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _serve_download(self, data, filename, ctype):
-        safe_name = re.sub(r'[^A-Za-z0-9 .()_\-]', '_', filename).strip() or "download.txt"
+        safe_name = _safe_download_name(filename)
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Disposition", f'attachment; filename="{safe_name}"')
@@ -1707,11 +1882,14 @@ class Handler(BaseHTTPRequestHandler):
 
 def mark_interrupted_jobs():
     for st in list_jobs():
+        # Delete unsafe legacy metadata for every job state. It is never
+        # authority to terminate a process, even if the job already failed.
+        _discard_legacy_worker_pid_file(JOBS_DIR / st["id"])
         if st["status"] in ("extracting", "tagging", "narrating", "queued"):
-            # Kill any workers this job's previous server orphaned before we
-            # let it resume, so they cannot contend for the GPU or collide on
-            # segment temp files with a fresh worker set.
-            _reap_worker_pids(JOBS_DIR / st["id"])
+            # New builds cannot orphan workers: the owning Job Object is
+            # killed when the old server handle closes. Old PID metadata is
+            # untrusted because Windows may have reused the number, so only
+            # discard it; never taskkill an unknown process.
             st["status"] = "interrupted"
             save_state(st)
 

@@ -382,3 +382,29 @@ link, and confirming the Dismiss control actually hides it. Silent-auto-apply (n
 awareness of what changed) was deliberately NOT built; that is a bigger, riskier ask than what was
 requested, and this project's whole installer history argues for proving each step before trusting it.
 
+### Emergency 1.0.2 source stabilization; installer still unbuilt (2026-09-01)
+
+Brandon's patched 1.0.1 install exposed three installer/runtime assumptions at once: the embedded
+Discord credential was public, pywebview 5.4 silently canceled downloads because `ALLOW_DOWNLOADS`
+was never enabled, and the raw `worker_pids.txt` exit sweep could target a reused unrelated PID.
+
+The main and patch Inno scripts no longer extract or invoke `merge_webhook_config.py`, no longer
+contain a reporting credential, and the helper was removed. Crash reporting remains disabled unless
+the machine owner configures gitignored `app/config.json` or `AUDIOBOOK_ERROR_WEBHOOK_URL` locally.
+A current-source scan found zero live webhook URLs. The old credential is still in public history at
+and after `3351d47`; revocation is the immediate security action and has NOT been confirmed in this
+record. No force-push, rewrite or GitHub Support request was started.
+
+The patch installer's explicit file set is expanded for the stabilization source: server.py,
+narrate_worker.py, gpu_oom.py, launcher.py, static/index.html, config.py, config.example.json and
+VERSION. It remains wildcard-free. No patch artifact has been compiled yet, because source must be
+reviewed, tested and committed first and the canonical installer builders consume clean HEAD only.
+
+Native-window source validation used the exact pinned pywebview 5.4 package in an ignored local test
+target with EdgeChromium and synthetic data. `ALLOW_DOWNLOADS=True` was set before window creation;
+both the beta ZIP and WAV controls opened Windows Save dialogs. The ZIP contained only the synthetic
+summary/log and the 48,044-byte WAV download matched its source SHA-256 exactly. This proves the
+pywebview path in source, not a future installer artifact. Four focused download tests and the full
+48-test suite passed in the project base Miniconda environment. The 1.0.2 exact-build clean-machine
+and physical beta gates remain open, so nothing may be published or sent yet.
+

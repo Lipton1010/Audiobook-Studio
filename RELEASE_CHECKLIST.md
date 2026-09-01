@@ -5,9 +5,11 @@ the exact commit and installer artifact being published.
 
 ## Source and privacy
 
-- [x] `git status --short --branch` is clean and synchronized with the intended remote.
+- [ ] The exact 1.0.2 candidate `git status --short --branch` is clean and synchronized with the intended remote.
 - [x] Dependency-free regression tests pass: `python -m unittest discover -s tests -v`.
 - [x] Python and embedded JavaScript syntax checks pass.
+- [x] Current source and installer designs contain no live crash-report credential; reporting is local opt-in and disabled by default.
+- [ ] The formerly embedded Discord webhook has been revoked at the provider. Revocation is separate from source removal.
 - [x] The two former `ab_samples` excerpt files are absent from every rewritten Git ref.
 - [x] A recoverable pre-rewrite Git bundle exists outside the published history.
 - [x] No PDF, generated audio, voice sample, job data, local config, or private audition text is tracked.
@@ -15,10 +17,10 @@ the exact commit and installer artifact being published.
 
 ## Installer artifact
 
-- [x] Build only with `install\build_installer.bat`; never compile the Inno file directly.
-- [x] The build comes from clean `HEAD` and records its commit, byte size, and SHA-256.
-- [x] The Inno output manifest passes the prohibited-content checks.
-- [x] The built executable is not committed to Git.
+- [ ] Build 1.0.2 only with `install\build_installer.bat`; never compile the Inno file directly.
+- [ ] The 1.0.2 build comes from clean `HEAD` and records its commit, byte size, and SHA-256.
+- [ ] The 1.0.2 Inno output manifest passes the prohibited-content and credential checks.
+- [ ] The built 1.0.2 executable is not committed to Git.
 
 ## Exact-build clean-machine validation
 
@@ -29,6 +31,9 @@ the exact commit and installer artifact being published.
 - [ ] Confirm `install_log.txt` exists and the diagnostic logs are usable.
 - [ ] Import a real PDF through the UI and confirm the recommended start page.
 - [ ] Generate a short CUDA narration with the installed build and verify the final audio.
+- [ ] In the installed pywebview window, save and inspect both a beta-report ZIP and finished audio.
+- [ ] On a 16 GB NVIDIA GPU, force or naturally reach a recoverable batched OOM and confirm ordered bisection/resume succeeds.
+- [ ] Close the app during a synthetic narration and confirm no owned GPU worker survives and no unrelated process is terminated.
 - [ ] Confirm M4B chapter navigation and the completed-job segment-cache cleanup action.
 - [ ] Uninstall and verify user books, voices, jobs, and audiobooks are preserved as documented.
 

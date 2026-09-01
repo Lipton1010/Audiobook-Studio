@@ -1,13 +1,12 @@
 ; Audiobook Studio PATCH installer.
 ;
-; Ships a small code fix onto an EXISTING install: GPU out-of-memory handling
-; (auto-scaled batch budget, bisecting retry, clean error instead of a raw
-; CUDA traceback) plus the optional Discord crash reporter, added 2026-08-23
-; after the first outside tester (Brandon) hit an unhandled OOM crash.
+; Ships a small code fix onto an EXISTING install. Crash reporting remains
+; disabled by default and can only be configured locally; this installer must
+; never embed or inject a reporting credential.
 ;
 ; This does NOT touch conda, torch, ffmpeg, or the model weights at all --
-; only 5 small files (app/server.py, app/narrate_worker.py, app/config.py,
-; app/config.example.json, app/VERSION), all explicitly named, never a
+; only 8 small files (the changed app Python/UI files, config schema, and
+; VERSION), all explicitly named, never a
 ; wildcard, so there is no risk of sweeping up a book PDF or the voice clip
 ; the way the main installer's `..\*` source spec has to guard against.
 ;
@@ -28,20 +27,6 @@
 ;
 ; Requires Audiobook Studio already installed via Setup_AudiobookStudio.exe.
 ;
-; ALSO wires up the Discord crash reporter (config.py's error_webhook_url) by
-; merging just that one key into the recipient's existing config.json via
-; merge_webhook_config.py (real json.loads/dumps, not hand-rolled Pascal
-; parsing) -- config.json commonly already holds chatterbox_python, written
-; by setup.py at that machine's original install, and a blind file overwrite
-; here would have destroyed it, trading the GPU crash for a worse one.
-;
-; THIS BUILD EMBEDS A LIVE WEBHOOK URL (see the [Run] section below). It is
-; meant to be sent directly to people who already have the app installed
-; (Brandon and others), NEVER attached to a public GitHub Release: this repo
-; is public, and anyone with the URL can post to that Discord channel.
-; A future public release build must omit the merge_webhook_config.py step
-; and its [Files] entry entirely, or pass an empty/placeholder URL.
-
 #define MyAppName "Audiobook Studio"
 #define MyAppDirName "AudiobookStudio"
 #define MyAppVersion "1.0.1"
@@ -77,19 +62,14 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Files]
 Source: "..\app\server.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\narrate_worker.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\gpu_oom.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\launcher.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\static\index.html"; DestDir: "{app}\app\static"; Flags: ignoreversion
 Source: "..\app\config.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\config.example.json"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\VERSION"; DestDir: "{app}\app"; Flags: ignoreversion
-Source: "merge_webhook_config.py"; DestDir: "{tmp}"
 
 [Run]
-; Wires up the crash reporter without touching any other key in
-; config.json. Runs before the optional launch below, silently (runhidden),
-; and does not gate on success: a reporter that fails to configure is a
-; nice-to-have miss, never a reason to fail the actual code-fix install.
-Filename: "{app}\runtime\miniconda3\python.exe"; \
-    Parameters: """{tmp}\merge_webhook_config.py"" ""{app}\app\config.json"" ""https://discord.com/api/webhooks/1541175653842558987/WzHMD2PFZVd7o4CLFrAgg7RmdqbwDuMYTnTDvq_4qJl7wnnkHxdRmXpEJduc6kVufvp4"""; \
-    Flags: runhidden
 ; No Check needed here (unlike the main installer's SetupPySucceeded): a file
 ; copy either happened or the wizard already stopped, there is no partial
 ; setup.py state to gate on.
