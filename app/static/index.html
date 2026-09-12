@@ -4,154 +4,85 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Audiobook Studio</title>
+<script>try { const requestedTheme = new URLSearchParams(location.search).get('theme'); document.documentElement.dataset.theme = requestedTheme === 'dark' || requestedTheme === 'light' ? requestedTheme : (localStorage.getItem('audiobook-studio-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')); } catch (e) {}</script>
 <style>
-  :root {
-    --bg: #14161a; --panel: #1d2026; --panel2: #24282f; --line: #32363e;
-    --text: #e8e9eb; --dim: #9aa0aa; --accent: #e8a33d; --accent2: #5fb2ff;
-    --ok: #5fce7f; --bad: #f08080; --control: #808792;
-    color-scheme: dark;
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-         font: 1rem/1.5 "Segoe UI", system-ui, sans-serif; }
-  a { color: var(--text); text-underline-offset: 3px; }
-  header { padding: 18px 28px; border-bottom: 1px solid var(--line);
-           display: flex; align-items: baseline; gap: 8px 24px; flex-wrap: wrap; }
-  header h1 { margin: 0; font-size: 1.25rem; }
-  header h1 span { color: var(--accent); }
-  header .sub { color: var(--dim); font-size: .875rem; }
-  main { max-width: 1120px; margin: 0 auto; padding: 32px 28px 64px; }
-  section + section { margin-top: 40px; }
-  h2 { font-size: 1.35rem; color: var(--text); margin: 0 0 16px; }
-  .grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
-  .card { background: var(--panel); border: 1px solid var(--line);
-          border-radius: 10px; padding: 16px; }
-  .card .name { font-weight: 600; font-size: 1.125rem; margin-bottom: 4px; overflow-wrap: anywhere; }
-  .card .meta { color: var(--dim); font-size: .875rem; margin-bottom: 12px; }
-  button { background: var(--panel2); color: var(--text); border: 1px solid var(--control);
-           border-radius: 6px; padding: 9px 14px; font: inherit; font-size: .875rem; cursor: pointer; min-height: 44px; }
-  button:hover { border-color: var(--accent); }
-  a.button-link { display: inline-flex; align-items: center; background: var(--panel2);
-           color: var(--text); border: 1px solid var(--control); border-radius: 6px;
-           padding: 9px 14px; font-size: .875rem; min-height: 44px; line-height: normal;
-           text-decoration: none; cursor: pointer; }
-  a.button-link:hover { border-color: var(--accent); }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #1a1408; font-weight: 600; }
-  button:disabled { cursor: not-allowed; opacity: .65; }
-  :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
-  button:active, a.button-link:active { filter: brightness(.9); }
-  button.danger:hover { border-color: var(--bad); color: var(--bad); }
-  .job { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-         padding: 16px 18px; margin-bottom: 14px; }
-  .job .row1 { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .job .title { font-weight: 600; font-size: 1.125rem; overflow-wrap: anywhere; }
-  .badge { font-size: .75rem; padding: 2px 7px; border-radius: 4px;
-           border: 1px solid var(--control); color: var(--dim); }
-  .badge.running { color: var(--accent); border-color: var(--accent); }
-  .badge.done { color: var(--ok); border-color: var(--ok); }
-  .badge.failed, .badge.interrupted { color: var(--bad); border-color: var(--bad); }
-  .spacer { flex: 1; }
-  .bar { height: 7px; background: var(--panel2); border-radius: 4px; overflow: hidden; margin: 10px 0 4px; }
-  .bar i { display: block; height: 100%; background: var(--accent2); border-radius: 4px;
-           }
-  .job .detail { color: var(--dim); font-size: .875rem; }
-  .job .players { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
-  .job .players .p { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-  .job .players audio { flex: 1 1 260px; width: 100%; min-width: 0; height: 44px; }
-  .job .players a { color: var(--text); font-size: .875rem; min-height: 44px; display: inline-flex; align-items: center; overflow-wrap: anywhere; }
-  pre.log { background: #101216; border: 1px solid var(--line); border-radius: 8px;
-            padding: 10px 12px; font-size: .8125rem; color: var(--dim);
-            max-height: 180px; overflow: auto; white-space: pre-wrap; }
-  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line);
-           border-radius: 12px; padding: 24px; width: 520px; max-width: calc(100% - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; }
-  dialog::backdrop { background: rgba(0,0,0,.55); }
-  dialog h3 { margin: 0 0 4px; overflow-wrap: anywhere; }
-  dialog .meta { color: var(--dim); font-size: .875rem; margin-bottom: 16px; overflow-wrap: anywhere; }
-  label { display: block; font-size: .875rem; color: var(--dim); margin: 12px 0 4px; }
-  input[type=number], input[type=text], select {
-    background: var(--panel2); color: var(--text); border: 1px solid var(--control);
-    border-radius: 6px; padding: 9px 10px; width: 100%; min-height: 44px; font: inherit; }
-  input[type=text] { width: 100%; }
-  .radio-row { display: flex; gap: 10px; margin-top: 4px; flex-wrap: wrap; }
-  .radio-row label { display: flex; align-items: center; gap: 7px; margin: 0;
-    background: var(--panel2); border: 1px solid var(--control); border-radius: 6px;
-    padding: 9px 12px; cursor: pointer; flex: 1; color: var(--text); font-size: .875rem; }
-  .radio-row label.sel { border-color: var(--accent); }
-  .radio-row .hint { color: var(--dim); font-size: .8125rem; }
-  .dlg-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 22px; }
-  .pagerow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-  .empty { color: var(--dim); padding: 20px; border: 1px dashed var(--line); border-radius: 8px; grid-column: 1 / -1; }
-  .err { color: var(--bad); font-size: .875rem; margin-top: 8px; overflow-wrap: anywhere; }
-  .err:empty { display: none; }
-  .upload-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-  input[type=file] { flex: 1 1 240px; min-width: 0; width: 100%; font: inherit; font-size: .875rem; color: var(--dim); }
-  input::file-selector-button { background: var(--panel2); color: var(--text); border: 1px solid var(--control); border-radius: 6px; min-height: 44px; padding: 8px 12px; margin-right: 12px; cursor: pointer; }
-  .upload-panel { margin-bottom: 16px; }
-  .help { color: var(--dim); font-size: .875rem; margin: 10px 0 0; }
-  .voice-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; flex-wrap: wrap; }
-  .voice-row + .voice-row { border-top: 1px solid var(--line); }
-  .voice-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-  .job-meta { margin: 6px 0; }
-  .job-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-  .job .detail { overflow-wrap: anywhere; }
-  fieldset { border: 0; margin: 16px 0 0; padding: 0; min-width: 0; }
-  legend { color: var(--dim); font-size: .875rem; margin-bottom: 4px; }
-  details { margin-top: 12px; }
-  summary { cursor: pointer; color: var(--text); min-height: 44px; padding: 10px 0; }
-  #update-banner { flex-basis: 100%; }
-  @media (min-width: 720px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-  @media (max-width: 540px) {
-    header { padding: 16px; }
-    main { padding: 24px 16px 48px; }
-    section + section { margin-top: 32px; }
-    .card, .job { padding: 16px; }
-    .upload-row > button { width: 100%; }
-    dialog { padding: 20px; }
-    .radio-row { flex-direction: column; }
-    .dlg-actions { flex-wrap: wrap; }
-  }
+  :root { color-scheme: light; --blue:#215BC6; --blue-strong:#1649a8; --focus:#215BC6; --warm:#F6F3E9; --paper:#fffdf8; --canvas:#eeece4; --navy:#15223A; --ink:#1c2a42; --muted:#56657D; --line:#d9dbe0; --control-line:#8791A1; --soft-blue:#e7efff; --yellow:#F8C75D; --yellow-soft:#fff3cf; --ok:#176b4d; --ok-bg:#dcefe6; --bad:#aa3d3d; --bad-bg:#fde9e6; --shadow:0 18px 48px rgba(21,34,58,.10); }
+  [data-theme="dark"] { color-scheme: dark; --blue:#86ADFF; --blue-strong:#adc6ff; --focus:#F8C75D; --warm:#161b26; --paper:#202737; --canvas:#10151e; --navy:#f6f3e9; --ink:#f6f3e9; --muted:#b5c0d2; --line:#3a4559; --control-line:#727F96; --soft-blue:#1c3158; --yellow:#f8c75d; --yellow-soft:#473918; --ok:#8ee0b7; --ok-bg:#193f34; --bad:#ffb5ad; --bad-bg:#532b31; --shadow:0 18px 48px rgba(0,0,0,.28); }
+  * { box-sizing:border-box; }
+  body { min-width:320px; margin:0; background:var(--canvas); color:var(--ink); font:16px/1.5 "Segoe UI",system-ui,sans-serif; }
+  button,input,select { font:inherit; } button { cursor:pointer; } button:disabled { cursor:not-allowed; opacity:.62; }
+  :focus-visible { outline:3px solid var(--focus); outline-offset:3px; }
+  .app-shell { min-height:100dvh; display:grid; grid-template-columns:270px minmax(0,1fr); }
+  .sidebar { position:sticky; top:0; height:100dvh; background:var(--paper); border-right:1px solid var(--line); padding:26px 18px 20px; display:flex; flex-direction:column; gap:24px; }
+  .brand { color:var(--navy); text-decoration:none; display:flex; align-items:center; gap:11px; font-size:1.22rem; font-weight:750; letter-spacing:-.035em; }
+  .brand img { width:38px; height:38px; }
+  .tagline { margin:1px 8px 0; color:var(--muted); font:italic 15px/1.35 Georgia,serif; }
+  .nav { display:grid; gap:5px; }
+  .nav button { display:flex; align-items:center; gap:12px; width:100%; min-height:46px; padding:10px 12px; border:0; border-radius:10px; background:transparent; color:var(--ink); text-align:left; font-weight:650; }
+  .nav button:hover { background:var(--soft-blue); } .nav button[aria-current="page"] { background:var(--soft-blue); color:var(--blue); }
+  .nav-icon { width:24px; color:var(--blue); font-weight:800; text-align:center; } .nav-count { margin-left:auto; padding:1px 8px; border-radius:99px; background:var(--yellow-soft); color:var(--navy); font-size:.78rem; font-variant-numeric:tabular-nums; }
+  .side-bottom { margin-top:auto; display:grid; gap:13px; }
+  .storage { padding:14px; border-radius:12px; background:var(--yellow-soft); color:var(--ink); font-size:.82rem; } .storage strong,.storage span { display:block; } .storage span { margin-top:4px; color:var(--muted); overflow-wrap:anywhere; }
+  .theme-switch { display:grid; grid-template-columns:1fr 1fr; padding:4px; border:1px solid var(--line); border-radius:11px; background:var(--canvas); } .theme-switch button { border:0; border-radius:7px; min-height:44px; background:transparent; color:var(--ink); font-size:.85rem; } .theme-switch button[aria-pressed="true"] { background:var(--paper); box-shadow:0 1px 4px rgba(0,0,0,.13); }
+  .workspace { min-width:0; } .topbar { min-height:76px; padding:18px clamp(20px,4vw,54px); border-bottom:1px solid var(--line); background:color-mix(in srgb,var(--paper) 92%,transparent); display:flex; align-items:center; gap:14px; } .topbar .crumb { color:var(--muted); font-size:.9rem; } .topbar .spacer { flex:1; }
+  main { max-width:1440px; margin:0 auto; padding:clamp(24px,4vw,52px); } .screen { display:none; } .screen.active { display:block; } .screen-heading { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin-bottom:26px; } h1,h2,h3,p { margin-top:0; } .screen-heading h1 { margin-bottom:3px; color:var(--navy); font-size:clamp(1.8rem,3vw,2.5rem); letter-spacing:-.055em; line-height:1.1; } .screen-heading p { margin:0; color:var(--muted); }
+  button,.button-link { min-height:44px; padding:9px 14px; border:1px solid var(--control-line); border-radius:9px; background:var(--paper); color:var(--ink); font-weight:650; text-decoration:none; } button:hover,.button-link:hover { border-color:var(--blue); } button.primary { border-color:var(--blue); background:var(--blue); color:#fff; } [data-theme="dark"] button.primary { color:#15223A; } button.primary:hover { background:var(--blue-strong); } button.danger { color:var(--bad); } button.danger:hover { border-color:var(--bad); background:var(--bad-bg); }
+  .panel,.card,.job { background:var(--paper); border:1px solid var(--line); border-radius:16px; box-shadow:0 1px 0 rgba(21,34,58,.02); } .panel { padding:clamp(18px,2.4vw,28px); } .section-title { margin:0 0 5px; color:var(--navy); font-size:1.15rem; letter-spacing:-.025em; } .section-intro,.help,.meta,.detail { color:var(--muted); font-size:.9rem; }
+  .create-callout { display:flex; align-items:center; gap:18px; padding:20px; margin-bottom:24px; border:1px solid color-mix(in srgb,var(--blue) 30%,var(--line)); border-radius:15px; background:var(--soft-blue); } .create-callout .mark { flex:0 0 auto; width:44px; height:44px; padding:8px; border-radius:12px; background:var(--paper); } .create-callout h2 { margin:0 0 3px; font-size:1.05rem; color:var(--navy); } .create-callout p { margin:0; color:var(--muted); font-size:.9rem; } .create-callout button { margin-left:auto; white-space:nowrap; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px; } .card { padding:20px; display:flex; flex-direction:column; align-items:flex-start; min-height:176px; } .card .book-symbol { width:38px; height:52px; margin-bottom:15px; border-radius:6px 10px 10px 6px; border-left:4px solid var(--blue); background:var(--soft-blue); } .card .name { color:var(--navy); font:700 1.18rem/1.23 Georgia,serif; overflow-wrap:anywhere; } .card .meta { margin:7px 0 17px; } .card .primary { width:100%; margin-top:auto; }
+  .upload-panel { margin-bottom:18px; } .upload-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; } .upload-drop { border:2px dashed color-mix(in srgb,var(--blue) 34%,var(--line)); background:var(--soft-blue); } input[type=file] { flex:1 1 240px; min-width:0; width:100%; color:var(--muted); font-size:.9rem; } input::file-selector-button { min-height:44px; margin-right:10px; padding:7px 11px; border:1px solid var(--control-line); border-radius:8px; background:var(--paper); color:var(--ink); font-weight:650; cursor:pointer; }
+  .job { padding:22px; margin-bottom:15px; } .job .row1 { display:flex; align-items:center; gap:10px; flex-wrap:wrap; } .job .title { color:var(--navy); font:700 1.3rem/1.2 Georgia,serif; overflow-wrap:anywhere; } .badge { padding:3px 9px; border-radius:999px; background:var(--yellow-soft); color:var(--navy); font-size:.77rem; font-weight:750; text-transform:capitalize; } .badge.running { background:var(--yellow); color:#15223A; } .badge.done { background:var(--ok-bg); color:var(--ok); } .badge.failed,.badge.interrupted { background:var(--bad-bg); color:var(--bad); } .job-meta { margin:8px 0; } .bar { height:9px; margin:15px 0 7px; overflow:hidden; border:1px solid var(--control-line); border-radius:999px; background:var(--canvas); } .bar i { display:block; height:100%; border-radius:inherit; background:var(--blue); } .job-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:18px; padding-top:16px; border-top:1px solid var(--line); } .job .players { display:grid; gap:9px; margin-top:15px; } .job .players .p { display:flex; align-items:center; gap:12px; flex-wrap:wrap; } .job .players audio { flex:1 1 250px; height:40px; max-width:100%; } .job .players a { font-size:.86rem; }
+  .voice-row { display:flex; align-items:center; gap:14px; padding:17px 0; flex-wrap:wrap; } .voice-row+.voice-row { border-top:1px solid var(--line); } .voice-name { flex:1; min-width:180px; color:var(--navy); font-weight:700; } .voice-symbol { display:grid; place-items:center; width:35px; height:35px; border-radius:50%; background:var(--soft-blue); color:var(--blue); font-weight:800; }
+  .empty { padding:34px 20px; border:1px dashed var(--line); border-radius:14px; color:var(--muted); text-align:center; grid-column:1 / -1; } .err { margin-top:10px; color:var(--bad); font-size:.9rem; overflow-wrap:anywhere; } .err:empty { display:none; } pre.log { max-height:210px; overflow:auto; padding:13px; border:1px solid var(--line); border-radius:10px; background:var(--canvas); color:var(--muted); white-space:pre-wrap; font-size:.8rem; }
+  dialog { width:min(580px,calc(100% - 32px)); max-height:calc(100dvh - 32px); overflow:auto; padding:28px; border:1px solid var(--line); border-radius:18px; background:var(--paper); color:var(--ink); box-shadow:var(--shadow); } dialog::backdrop { background:rgba(8,15,28,.62); } dialog h3 { color:var(--navy); font:700 1.55rem/1.15 Georgia,serif; overflow-wrap:anywhere; } dialog .meta { margin-bottom:18px; } label,legend { display:block; margin:15px 0 5px; color:var(--muted); font-size:.87rem; font-weight:650; } input[type=number],input[type=text],select { width:100%; min-height:44px; padding:9px 11px; border:1px solid var(--control-line); border-radius:9px; background:var(--canvas); color:var(--ink); } fieldset { min-width:0; margin:17px 0 0; padding:0; border:0; } .radio-row { display:flex; gap:10px; flex-wrap:wrap; } .radio-row label { flex:1 1 200px; display:flex; gap:8px; margin:0; padding:10px; border:1px solid var(--control-line); border-radius:10px; color:var(--ink); cursor:pointer; } .radio-row label.sel { border-color:var(--blue); background:var(--soft-blue); } .radio-row .hint { color:var(--muted); font-size:.79rem; } .pagerow { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; } .dlg-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:25px; }
+  details { margin-top:12px; } summary { min-height:36px; padding:7px 0; color:var(--ink); cursor:pointer; font-weight:650; } #update-banner { margin-bottom:18px; padding:12px 14px; border:1px solid var(--blue); border-radius:11px; background:var(--soft-blue); color:var(--ink); }
+  @media (max-width:760px) { .app-shell { display:block; } .sidebar { position:sticky; top:0; z-index:5; height:auto; padding:12px 16px; border-right:0; border-bottom:1px solid var(--line); gap:8px; } .sidebar-head { display:flex; align-items:center; gap:12px; } .brand img { width:29px; height:29px; } .tagline,.storage { display:none; } .nav { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); overflow:visible; padding-bottom:2px; } .nav button { width:100%; min-width:0; min-height:44px; justify-content:center; gap:5px; padding:6px; font-size:.78rem; } .nav-icon { width:auto; } .side-bottom { display:block; margin:0; } .theme-switch { width:150px; margin-left:auto; } .topbar { display:none; } main { padding:24px 16px 42px; } .screen-heading { align-items:flex-start; flex-direction:column; margin-bottom:20px; } .create-callout { align-items:flex-start; flex-wrap:wrap; } .create-callout button { margin-left:62px; } }
+  @media (max-width:480px) { .nav button { font-size:.83rem; } .nav-count { display:none; } .create-callout button { margin-left:0; width:100%; } .upload-row > button,.dlg-actions button { width:100%; } .pagerow { grid-template-columns:1fr; } .radio-row { display:grid; } }
 </style>
 </head>
 <body>
-<header>
-  <h1>Audiobook <span>Studio</span></h1>
-  <div class="sub">Your books, ready to listen.</div>
-  <div id="update-banner" style="display:none; margin-top:10px; padding:10px 14px; border:1px solid var(--accent2); border-radius:8px; font-size:13px; color:var(--text)"></div>
-</header>
-<main>
-  <section aria-labelledby="jobs-heading">
-  <h2 id="jobs-heading">Audiobooks</h2>
-  <div id="jobs-err" class="err" role="status"></div>
-  <div id="jobs"><div class="empty" data-jobs-loading>Loading audiobooks...</div></div>
-  </section>
-  <section aria-labelledby="library-heading">
-  <h2 id="library-heading">PDF library</h2>
-  <div class="card upload-panel">
-    <div class="upload-row">
-      <input type="file" id="pdf-file" aria-label="Choose a PDF" aria-describedby="pdf-help pdf-err" accept=".pdf,application/pdf">
-      <button class="primary" id="pdf-upload-btn" onclick="uploadPdf()">Add PDF to library</button>
+<div class="app-shell">
+  <aside class="sidebar" aria-label="Audiobook Studio navigation">
+    <div class="sidebar-head">
+      <a class="brand" href="#audiobooks" onclick="showScreen('audiobooks')"><img src="/storybird-mark.svg" alt=""><span>Storybird</span></a>
+      <p class="tagline">A page takes flight and finds its voice.</p>
     </div>
-    <p class="help" id="pdf-help">Add a PDF you own, then choose a voice and page range.</p>
-    <details><summary>Where your PDFs are stored</summary><p class="help">Imported PDFs are copied into the app's library. When an audiobook finishes, its PDF moves to Processed PDFs and leaves this list.</p></details>
-    <div class="err" id="pdf-err" role="status"></div>
-  </div>
-  <div id="library" class="grid"></div>
-  </section>
-  <section aria-labelledby="voices-heading">
-  <h2 id="voices-heading">Narrator voices</h2>
-  <div class="card">
-    <div id="voices"><div class="empty">Loading voices...</div></div>
-    <details><summary>Add a narrator voice</summary>
-    <div class="upload-row">
-      <input type="file" id="voice-file" aria-label="Choose a voice sample" aria-describedby="voice-help voice-err" accept=".wav,.mp3,.flac,.ogg">
-      <button id="voice-upload-btn" onclick="uploadVoice()">Upload voice</button>
+    <nav class="nav" aria-label="Main sections">
+      <button type="button" data-screen="library" onclick="showScreen('library')"><span class="nav-icon" aria-hidden="true">▤</span>Library<span class="nav-count" id="library-count">…</span></button>
+      <button type="button" data-screen="audiobooks" aria-current="page" onclick="showScreen('audiobooks')"><span class="nav-icon" aria-hidden="true">◉</span>Audiobooks<span class="nav-count" id="job-count">…</span></button>
+      <button type="button" data-screen="voices" onclick="showScreen('voices')"><span class="nav-icon" aria-hidden="true">♬</span>Narrator voices<span class="nav-count" id="voice-count">…</span></button>
+    </nav>
+    <div class="side-bottom">
+      <div class="storage"><strong>Local library</strong><span>Books and finished audiobooks stay on this computer.</span></div>
+      <div class="theme-switch" aria-label="Color theme"><button type="button" data-theme-choice="light" aria-pressed="true" onclick="setTheme('light')">Light</button><button type="button" data-theme-choice="dark" aria-pressed="false" onclick="setTheme('dark')">Dark</button></div>
     </div>
-    <p class="help" id="voice-help">Use a clean 10 to 20 second clip of a voice you have rights to use. Longer clips are trimmed to 20 seconds.</p>
-    <div class="err" id="voice-err" role="status"></div>
-    </details>
+  </aside>
+  <div class="workspace">
+    <header class="topbar"><span class="crumb">Audiobook Studio</span><span class="spacer"></span><span class="crumb" id="topbar-state">Your local audiobook workspace</span></header>
+    <main>
+      <div id="update-banner" style="display:none" role="status"></div>
+      <section class="screen active" id="audiobooks-screen" aria-labelledby="jobs-heading">
+        <div class="screen-heading"><div><h1 id="jobs-heading">Audiobooks</h1><p>Follow progress, return to a paused narration, or listen to a finished book.</p></div><button class="primary" type="button" onclick="showScreen('library'); document.getElementById('pdf-file').focus()">New audiobook</button></div>
+        <div id="jobs-err" class="err" role="status"></div>
+        <div id="jobs"><div class="empty" data-jobs-loading>Loading audiobooks...</div></div>
+      </section>
+      <section class="screen" id="library-screen" aria-labelledby="library-heading">
+        <div class="screen-heading"><div><h1 id="library-heading">Library</h1><p>Add a PDF, then choose its voice and page range when you are ready to narrate.</p></div></div>
+        <div class="panel upload-panel upload-drop">
+          <h2 class="section-title">Add a PDF</h2><p class="section-intro">Choose a PDF you own. It is copied into your local library.</p>
+          <div class="upload-row"><input type="file" id="pdf-file" aria-label="Choose a PDF" aria-describedby="pdf-help pdf-err" accept=".pdf,application/pdf"><button class="primary" id="pdf-upload-btn" onclick="uploadPdf()">Add to library</button></div>
+          <p class="help" id="pdf-help">After an audiobook finishes, its source PDF moves to Processed PDFs.</p><div class="err" id="pdf-err" role="status"></div>
+        </div>
+        <div id="library" class="grid"></div>
+      </section>
+      <section class="screen" id="voices-screen" aria-labelledby="voices-heading">
+        <div class="screen-heading"><div><h1 id="voices-heading">Narrator voices</h1><p>Choose the voice for each audiobook. Samples are stored locally.</p></div></div>
+        <div class="panel"><div id="voices"><div class="empty">Loading narrator voices...</div></div></div>
+        <div class="panel upload-drop" style="margin-top:18px"><h2 class="section-title">Add a narrator voice</h2><p class="section-intro">Use a clean 10 to 20 second sample you have the rights to use.</p><div class="upload-row"><input type="file" id="voice-file" aria-label="Choose a voice sample" aria-describedby="voice-help voice-err" accept=".wav,.mp3,.flac,.ogg"><button class="primary" id="voice-upload-btn" onclick="uploadVoice()">Upload voice</button></div><p class="help" id="voice-help">Longer clips are trimmed to 20 seconds during conversion.</p><div class="err" id="voice-err" role="status"></div></div>
+      </section>
+    </main>
   </div>
-  </section>
-</main>
+</div>
 
 <dialog id="dlg" aria-labelledby="dlg-title" aria-describedby="dlg-meta">
   <form id="job-form">
@@ -198,6 +129,59 @@
 const dlg = document.getElementById('dlg');
 let dlgBook = null;
 let library = [];
+
+function showScreen(name) {
+  document.querySelectorAll('.screen').forEach(screen => {
+    screen.classList.toggle('active', screen.id === `${name}-screen`);
+  });
+  document.querySelectorAll('[data-screen]').forEach(button => {
+    const current = button.dataset.screen === name;
+    if (current) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  });
+  document.getElementById('topbar-state').textContent = name === 'library' ? 'Your local PDF library'
+    : name === 'voices' ? 'Narrator voices stored locally' : 'Your local audiobook workspace';
+  history.replaceState(null, '', `#${name}`);
+}
+
+function setTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  document.querySelectorAll('[data-theme-choice]').forEach(button => {
+    button.setAttribute('aria-pressed', String(button.dataset.themeChoice === theme));
+  });
+  try { localStorage.setItem('audiobook-studio-theme', theme); } catch (e) { /* browser storage is optional */ }
+}
+
+function restoreTheme() {
+  const requested = new URLSearchParams(location.search).get('theme');
+  if (requested === 'light' || requested === 'dark') { setTheme(requested); return; }
+  let saved = null;
+  try { saved = localStorage.getItem('audiobook-studio-theme'); } catch (e) { /* use system preference */ }
+  setTheme(saved || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+}
+
+function updateCount(id, count, singular, plural) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = `${count} ${count === 1 ? singular : plural}`;
+}
+
+function bindDropZone(inputId, upload) {
+  const input = document.getElementById(inputId);
+  const zone = input.closest('.upload-drop');
+  ['dragenter', 'dragover'].forEach(event => zone.addEventListener(event, e => {
+    e.preventDefault(); zone.style.borderColor = 'var(--blue)';
+  }));
+  ['dragleave', 'drop'].forEach(event => zone.addEventListener(event, e => {
+    e.preventDefault(); zone.style.borderColor = '';
+  }));
+  zone.addEventListener('drop', event => {
+    const files = event.dataTransfer?.files;
+    if (!files?.length) return;
+    input.files = files;
+    upload();
+  });
+}
+
 document.getElementById('job-form').addEventListener('submit', event => {
   event.preventDefault();
   createJob();
@@ -252,19 +236,23 @@ async function loadLibrary() {
     empty.className = 'empty';
     empty.textContent = 'No books yet. Use Add PDF to library above.';
     el.replaceChildren(empty);
+    updateCount('library-count', 0, 'book', 'books');
     return;
   }
+  updateCount('library-count', library.length, 'book', 'books');
   el.replaceChildren();
   for (const b of library) {
     const card = document.createElement('div');
     card.className = 'card';
+    const symbol = document.createElement('div');
+    symbol.className = 'book-symbol';
     const name = document.createElement('div');
     name.className = 'name';
     name.textContent = b.name;
     const meta = document.createElement('div');
     meta.className = 'meta';
     meta.textContent = bookMeta(b);
-    card.append(name, meta);
+    card.append(symbol, name, meta);
     const btn = document.createElement('button');
     btn.className = 'primary';
     btn.textContent = 'Create audiobook';
@@ -335,13 +323,18 @@ async function loadVoices() {
     empty.textContent = 'No narrator voices yet. Add a voice sample below.';
     list.appendChild(empty);
   }
+  updateCount('voice-count', voices.length, 'voice', 'voices');
   for (const v of voices) {
     const row = document.createElement('div');
     row.className = 'voice-row';
+    const symbol = document.createElement('span');
+    symbol.className = 'voice-symbol';
+    symbol.setAttribute('aria-hidden', 'true');
+    symbol.textContent = '♪';
     const name = document.createElement('span');
     name.className = 'voice-name';
     name.textContent = v.name + (v.available === false ? ' (sample missing)' : '');
-    row.appendChild(name);
+    row.append(symbol, name);
     if (!v.builtin) {
       row.appendChild(btn('Delete', 'danger', async () => {
         if (confirm(`Delete voice "${v.name}"?`)) {
@@ -584,6 +577,7 @@ async function refreshJobs() {
       }
       jobNodes.clear();
       knownJobStatuses = new Map();
+      updateCount('job-count', 0, 'job', 'jobs');
       return;
     }
     const details = await Promise.all(jobs.map(j =>
@@ -592,6 +586,8 @@ async function refreshJobs() {
         if (!r.ok) throw new Error(detail.error || 'Could not load a job.');
         return detail;
       })));
+
+    updateCount('job-count', details.filter(j => ['queued','extracting','tagging','narrating'].includes(j.status)).length, 'live', 'live');
 
     const newlyDone = details.some(j =>
       knownJobStatuses.has(j.id) && knownJobStatuses.get(j.id) !== 'done' && j.status === 'done');
@@ -650,7 +646,7 @@ function renderJob(j) {
   } else if (j.status === 'narrating' && j.narrate_progress) {
     const p = j.narrate_progress;
     progressHtml = bar(p.total ? p.done / p.total : 0);
-    detail = [`Narrating: chunk ${p.done} / ${p.total}`, fmtEta(p.eta_sec), p.message].filter(Boolean).join(' · ');
+    detail = [p.total ? `Narrating: chunk ${p.done} / ${p.total}` : '', fmtEta(p.eta_sec), p.message].filter(Boolean).join(' · ');
   } else if (j.status === 'narrating') {
     detail = 'Narration starting (model loading)...';
   } else if (j.status === 'queued') {
@@ -758,6 +754,12 @@ function renderJob(j) {
     pre.dataset.jobId = j.id;
     pre.textContent = j.log_tail.join('\n');
     div.appendChild(pre);
+  } else if (openLogs.has(j.id)) {
+    const note = document.createElement('div');
+    note.className = 'detail';
+    note.style.marginTop = '12px';
+    note.textContent = 'No log entries are available yet.';
+    div.appendChild(note);
   }
   return div;
 }
@@ -847,6 +849,11 @@ async function checkForUpdate() {
   } catch (e) { /* best effort */ }
 }
 
+restoreTheme();
+bindDropZone('pdf-file', uploadPdf);
+bindDropZone('voice-file', uploadVoice);
+const requestedScreen = location.hash.slice(1);
+if (['library', 'audiobooks', 'voices'].includes(requestedScreen)) showScreen(requestedScreen);
 loadLibrary();
 loadVoices();
 loadFfmpeg();

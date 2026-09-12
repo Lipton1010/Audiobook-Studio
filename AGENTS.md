@@ -21,6 +21,14 @@ Hard project rules:
 6. Run `python -m unittest discover -s tests -v` before a release commit.
 7. Build installers only with `install\build_installer.bat` from clean `HEAD`.
 8. Do not publish a release until `RELEASE_CHECKLIST.md` is fully satisfied.
+9. Every successful installer or patch build must finish with the owner's authorized
+   Google Drive beta handoff in `install/BETA_HANDOFF.md`, using filenames such as
+   `Patch_AudiobookStudio_1.0.4.exe` and `Installer_AudiobookStudio_1.0.4.exe`,
+   with no timestamp or hash suffix, and archiving superseded installers under
+   `Old, do not use`. Apply this naming rule starting with the next version;
+   leave existing 1.0.3 uploads unchanged.
+   Do this within the build task; never create polling or recurring token usage.
+   Keep only the current full installer and patch EXEs at the top of `Output`.
 
 ## Graft on this Windows checkout
 

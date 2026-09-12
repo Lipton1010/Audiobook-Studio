@@ -83,6 +83,7 @@ tests also passed with the base Miniconda Python and project-local test temp roo
 | `app/static/index.html` | No HTML parser; its embedded JavaScript and CSS are also absent |
 | `install/AudiobookStudio.iss`, `install/AudiobookStudio_Patch.iss` | No Inno Setup parser |
 | `Start_Audiobook_Studio.bat`, `setup.bat`, `install/build_installer.bat` | No batch parser |
+| `install/record_installer.ps1`, `tests/test_installer_record.ps1` | PowerShell handoff tooling; outside this Python graph |
 | `app/config.example.json`, `opencode.json`, `.cursor/environment.json` | No JSON parser; dot directories are also skipped |
 | `install/requirements-base.txt`, `install/requirements-chatterbox.txt` | No plain-text parser |
 | `samples/Modelfile`, `app/VERSION` | No matching parser for these extensionless files |

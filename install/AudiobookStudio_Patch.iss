@@ -29,7 +29,7 @@
 ;
 #define MyAppName "Audiobook Studio"
 #define MyAppDirName "AudiobookStudio"
-#define MyAppVersion "1.0.3"
+#define MyAppVersion "1.0.4"
 #define MyAppPublisher "Audiobook Studio"
 
 [Setup]
@@ -72,6 +72,7 @@ Source: "..\app\gpu_oom.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\launcher.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\managed_runtime.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\static\index.html"; DestDir: "{app}\app\static"; Flags: ignoreversion
+Source: "..\app\static\storybird-mark.svg"; DestDir: "{app}\app\static"; Flags: ignoreversion
 Source: "..\app\config.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\config.example.json"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\VERSION"; DestDir: "{app}\app"; Flags: ignoreversion

@@ -74,9 +74,11 @@ if errorlevel 1 (
 )
 
 echo Staging a clean copy of HEAD in %STAGE% ...
+for /f %%H in ('git rev-parse HEAD') do set "BUILD_COMMIT=%%H"
+if not defined BUILD_COMMIT (echo ERROR: cannot identify HEAD. & exit /b 1)
 if exist "%STAGE%" rmdir /s /q "%STAGE%"
 mkdir "%STAGE%" || exit /b 1
-git archive --format=tar HEAD | tar -x -C "%STAGE%"
+git archive --format=tar %BUILD_COMMIT% | tar -x -C "%STAGE%"
 if errorlevel 1 (echo ERROR: git archive failed. & exit /b 1)
 
 if not exist "%STAGE%\install\%ISS_NAME%" (
@@ -87,6 +89,8 @@ if not exist "%STAGE%\install\%ISS_NAME%" (
 rem A stale manifest from a previous build would be read as if it described
 rem this one, so remove it before compiling.
 if exist "%MANIFEST%" del /q "%MANIFEST%"
+if exist "%OUTDIR%\%OUTPUT_BASE%-build.json" del /q "%OUTDIR%\%OUTPUT_BASE%-build.json"
+if exist "%OUTDIR%\00_CURRENT_INSTALLERS.txt" del /q "%OUTDIR%\00_CURRENT_INSTALLERS.txt"
 
 echo Compiling ...
 "%ISCC%" /O"%OUTDIR%" "%STAGE%\install\%ISS_NAME%"
@@ -129,11 +133,16 @@ if not errorlevel 1 (
     exit /b 1
 )
 
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0record_installer.ps1" -OutputDirectory "%OUTDIR%" -Artifact "%OUTPUT_BASE%" -Commit "%BUILD_COMMIT%"
+if errorlevel 1 (echo ERROR: could not record build identity. Do not hand off this build. & exit /b 1)
+
 echo.
 echo Contents verified against %MANIFEST%
 echo   no PDFs, no audio, no voice clip, no local config.
 echo.
 echo Built: %OUTDIR%\%OUTPUT_BASE%.exe
+echo Drive upload is a required handoff step: follow install\BETA_HANDOFF.md.
+echo This batch records the build but does not upload it or run background checks.
 echo.
 echo Before sending it to anyone, note the SHA-256 so the recipient can check
 echo it, and warn them that Windows SmartScreen will likely show a

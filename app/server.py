@@ -45,9 +45,9 @@ except OSError:
 # GitHub Release), the app only checks and shows a link, it never downloads
 # or applies anything itself.
 GITHUB_REPO = "Lipton1010/Audiobook-Studio"
-JOBS_DIR = APP_DIR / "jobs"
+JOBS_DIR = Path(os.environ.get("AUDIOBOOK_JOBS_DIR", APP_DIR / "jobs"))
 STATIC_DIR = APP_DIR / "static"
-VOICES_DIR = APP_DIR / "voices"
+VOICES_DIR = Path(os.environ.get("AUDIOBOOK_VOICES_DIR", APP_DIR / "voices"))
 
 # Machine-specific settings now come from config.py (env > config.json >
 # auto-detect > original default), so the app is portable across machines
@@ -1681,6 +1681,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/" or path == "/index.html":
                 self._serve_file(STATIC_DIR / "index.html", "text/html; charset=utf-8")
+            elif path == "/storybird-mark.svg":
+                self._serve_file(STATIC_DIR / "storybird-mark.svg", "image/svg+xml")
             elif path == "/api/library":
                 _json_response(self, {"items": scan_library()})
             elif path == "/api/voices":
