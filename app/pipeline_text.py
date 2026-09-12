@@ -248,6 +248,55 @@ def tag_blocks(raw_text):
     return blocks
 
 
+COPYRIGHT_PRIMARY_RE = re.compile(
+    r"^\s*(?:copyright\s*(?:©|\(c\))?\s*|©\s*)(?:19|20)\d{2}\b",
+    re.IGNORECASE,
+)
+RIGHTS_LINE_RE = re.compile(
+    r"^\s*(?:all rights reserved\.?|isbn(?:-1[03])?\s*[:#]?\s*[\d-]+|"
+    r"library of congress(?:\s+cataloging)?.*|no part of (?:this )?(?:book|publication).*|"
+    r"(?:reproduction|reproduced).*permission.*|printed in\s+\w+.*)\s*$",
+    re.IGNORECASE,
+)
+
+
+def is_copyright_notice(text):
+    """Return true only for structured publication-rights boilerplate.
+
+    A bare mention of copyright can be ordinary prose, so it is never enough.
+    The cue must be an anchored copyright statement with a publication year.
+    """
+    normalized = re.sub(r"\s+", " ", text or " ").strip()
+    if not COPYRIGHT_PRIMARY_RE.match(normalized) or len(normalized) > 220:
+        return False
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", normalized) if part.strip()]
+    # A fused OCR/PDF paragraph can begin with a notice and continue directly
+    # into the book. Leave that block intact rather than risking its prose.
+    return all(index == 0 or RIGHTS_LINE_RE.match(sentence)
+               for index, sentence in enumerate(sentences))
+
+
+def filter_copyright_blocks(blocks):
+    """Drop publication notices while preserving ordinary text and provenance."""
+    notices = [is_copyright_notice(block.get("text", "")) for block in blocks]
+    rights_lines = [bool(RIGHTS_LINE_RE.match(block.get("text", ""))) for block in blocks]
+    # A genuinely boilerplate page often wraps its notice into several blocks.
+    # Remove every block only when its primary notice has multiple independent
+    # publication markers and every block is itself publication boilerplate.
+    only_boilerplate = bool(blocks) and all(
+        notice or rights for notice, rights in zip(notices, rights_lines)
+    )
+    if any(notices) and sum(rights_lines) >= 2 and only_boilerplate:
+        return []
+    filtered = []
+    for index, block in enumerate(blocks):
+        adjacent_notice = any(notices[max(0, index - 3):index + 4])
+        if notices[index] or (adjacent_notice and rights_lines[index]):
+            continue
+        filtered.append(block)
+    return filtered
+
+
 def stitch_pages(pages_of_blocks):
     """
     Merge per-page block lists into one list. If a page ends with a body
@@ -591,7 +640,9 @@ def extract_path_a(pdf_path, page_from, page_to, progress_cb=None):
                 paras = _verse_page_paragraphs([(x0, t) for x0, _, t in lines])
             else:
                 paras = _prose_page_paragraphs(lines, leading)
-            pages.append(paragraphs_to_blocks(paras, source_page=pno + 1))
+            pages.append(filter_copyright_blocks(
+                paragraphs_to_blocks(paras, source_page=pno + 1)
+            ))
             if progress_cb:
                 progress_cb(idx + 1, total)
         return stitch_pages(pages), mode

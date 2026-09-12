@@ -384,6 +384,20 @@ downloads in the installed window, deliberately exercise recoverable OOM splitti
 and observe clean shutdown before any complete-book job. The exact-build clean-machine checklist is
 still mandatory for a public release.
 
+## Local library follow-up (2026-09-12)
+
+- Finished jobs now render as collapsed, cover-led tiles after active work. Their existing playback,
+  download, output-folder, delete, beta-report, log, and cache controls remain available after
+  expansion. A completed job can store a local PNG/JPEG/WebP cover override in its job folder;
+  this never rewrites audio, segments, blocks, config, or job state. Existing extracted covers are
+  reused, with the moved processed PDF as a fallback.
+- The create-audiobook dialog now renders a selected PDF page in memory for page-range selection.
+  It uses an opaque library token, CPU-only PyMuPDF rendering, page bounds, and no job/queue/OCR/TTS
+  mutation. Copyright filtering is conservative and applies only to future Path A and Path B
+  extraction before stitching. It removes anchored, year-bearing publication notices and adjacent
+  rights lines while preserving ordinary discussion, mixed pages, and source-page provenance. It
+  does not alter existing blocks, cached segments, or finished audio.
+
 ## Where the rest of the detail lives
 
 This file used to carry every measurement and audit inline, which cost ~37k tokens of context in

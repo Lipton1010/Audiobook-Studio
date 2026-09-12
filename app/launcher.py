@@ -1,15 +1,13 @@
 """
-Audiobook Studio desktop launcher.
+Storybird desktop launcher.
 
 Runs in the BASE conda env (same one as server.py: stdlib + fitz + requests,
 plus pywebview added by the installer). Starts server.py's HTTP server on a
 background thread, then opens a native desktop window pointed at it, so the
 app feels like a real program instead of "open your browser to localhost".
 
-Falls back to opening the system browser if pywebview or the OS WebView
-runtime is not available (e.g. someone runs this on a machine where the
-installer's webview step failed) rather than dying with no way to use the
-app at all.
+Shows a clear desktop-app error if pywebview or the OS WebView runtime is not
+available. A desktop shortcut must not silently turn into a browser launch.
 """
 import atexit
 import json
@@ -19,7 +17,6 @@ import threading
 import time
 import traceback
 import urllib.request
-import webbrowser
 from pathlib import Path
 
 from managed_runtime import configure_managed_runtime
@@ -47,8 +44,9 @@ sys.path.insert(0, str(APP_DIR))
 from config import CFG  # noqa: E402
 import server  # noqa: E402
 
-WINDOW_TITLE = "Audiobook Studio"
+WINDOW_TITLE = "Storybird"
 ICON_PATH = APP_DIR / "icon.ico"
+APP_USER_MODEL_ID = "Storybird.Desktop"
 # Under the installer there is no console to read, so anything worth debugging
 # has to land in a file the user can be asked for by name.
 
@@ -144,6 +142,46 @@ def _enable_webview_downloads(webview_module):
     webview_module.settings["ALLOW_DOWNLOADS"] = True
 
 
+def _set_windows_app_id():
+    """Keep the running window grouped with the Storybird shortcut."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+    except Exception as e:
+        _log(f"[launcher] Could not set AppUserModelID: {e}")
+
+
+def _set_windows_window_icon(window):
+    """pywebview's WinForms backend otherwise uses pythonw.exe's icon."""
+    if sys.platform != "win32" or not ICON_PATH.exists():
+        return
+    try:
+        if not window.events.shown.wait(20) or window.native is None:
+            raise RuntimeError("native window was not ready")
+        import clr
+        clr.AddReference("System.Drawing")
+        from System.Drawing import Icon
+        window.native.Icon = Icon(str(ICON_PATH))
+    except Exception as e:
+        _log(f"[launcher] Could not set native window icon: {e}")
+
+
+def _open_native_window(webview_module, url):
+    """Create and run Storybird's pywebview window."""
+    # pywebview 5.4 defaults this to False; its EdgeChromium backend otherwise
+    # cancels every DownloadStarting event without feedback.
+    _enable_webview_downloads(webview_module)
+    _set_windows_app_id()
+    window = webview_module.create_window(title=WINDOW_TITLE, url=url,
+                                          width=1280, height=860, min_size=(900, 600))
+    # pywebview 5.4 ignores icon= on Windows, but accepts it on GTK/QT.
+    # The callback updates its WinForms form once that native window is shown.
+    start_kwargs = {"icon": str(ICON_PATH)} if ICON_PATH.exists() else {}
+    webview_module.start(_set_windows_window_icon, args=(window,), **start_kwargs)
+
+
 def main():
     url = f"http://127.0.0.1:{CFG.port}"
 
@@ -151,13 +189,13 @@ def main():
         if _is_our_app(url):
             # Don't start a second server or reap the first one's workers; just
             # surface the instance that's already there.
-            print(f"[launcher] Audiobook Studio is already running at {url}; "
+            print(f"[launcher] Storybird is already running at {url}; "
                   "opening a window onto the existing instance.")
         else:
             _show_error(
-                "Audiobook Studio could not start",
+                "Storybird could not start",
                 f"Another program is already using port {CFG.port} on this "
-                f"computer, so Audiobook Studio cannot start.\n\n"
+                f"computer, so Storybird cannot start.\n\n"
                 f"Close whatever else is using it and try again, or pick a "
                 f"different port by setting \"port\" in app\\config.json.\n\n"
                 f"Details were written to:\n{LOG_PATH}")
@@ -171,7 +209,7 @@ def main():
                 "The server did not respond within 20 seconds and did not "
                 "report an error.")
             _show_error(
-                "Audiobook Studio could not start",
+                "Storybird could not start",
                 "The app's server did not start.\n\n"
                 "Please send this file to whoever set this up for you:\n"
                 f"{LOG_PATH}\n\n"
@@ -180,50 +218,25 @@ def main():
 
     try:
         import webview
-    except ImportError:
-        print("[launcher] pywebview not installed; falling back to system browser.")
-        print("  Install it in the base env with:  pip install pywebview==5.4")
-        webbrowser.open(url)
-        _block_forever()
+    except ImportError as e:
+        _show_error(
+            "Storybird desktop window is unavailable",
+            "Storybird needs its pywebview desktop component, but it is not "
+            "installed in the Python environment used by this shortcut.\n\n"
+            "Run setup again, then reopen Storybird.\n\n"
+            f"Details were written to:\n{LOG_PATH}")
+        _log(f"[launcher] pywebview import failed: {e}")
         return
 
     try:
-        # pywebview 5.4 defaults this to False; its EdgeChromium backend
-        # otherwise cancels every DownloadStarting event without feedback.
-        _enable_webview_downloads(webview)
-        webview.create_window(title=WINDOW_TITLE, url=url,
-                              width=1280, height=860, min_size=(900, 600))
-        # NOTE: webview.start(icon=...) is accepted but IGNORED on Windows --
-        # pywebview 5.4 documents it as GTK/QT only, so the window shows the
-        # default Python icon. Passing it anyway is harmless and becomes
-        # correct if that ever changes; the Start Menu shortcut carries
-        # app/icon.ico regardless, which is what the user actually sees.
-        start_kwargs = {}
-        if ICON_PATH.exists():
-            start_kwargs["icon"] = str(ICON_PATH)
-        webview.start(**start_kwargs)
+        _open_native_window(webview, url)
     except Exception as e:
-        # Most likely cause on Windows: the WebView2 runtime isn't installed.
-        # It ships with Windows 10/11 by default, but some stripped-down or
-        # older installs won't have it. Don't strand the user with no app.
-        print(f"[launcher] Native window failed ({e}); falling back to system browser.")
-        print("[launcher] If this keeps happening, install the WebView2 runtime:")
-        print("  https://developer.microsoft.com/microsoft-edge/webview2/")
-        webbrowser.open(url)
-        _block_forever()
-
-
-def _block_forever():
-    # Keep the process alive so the background server thread keeps serving
-    # after we fall back to a browser tab (no window to keep the process up).
-    print("\n  Audiobook Studio is running in your browser.")
-    print("  Leave this window open while you use it. Close it (or press Ctrl+C)")
-    print("  when you're done.\n")
-    try:
-        while True:
-            time.sleep(3600)
-    except KeyboardInterrupt:
-        pass
+        _log(f"[launcher] Native window failed: {e}")
+        _show_error(
+            "Storybird could not open its desktop window",
+            "Storybird could not start its native desktop window.\n\n"
+            "Install or repair Microsoft Edge WebView2, then reopen Storybird.\n\n"
+            f"Details were written to:\n{LOG_PATH}")
 
 
 if __name__ == "__main__":

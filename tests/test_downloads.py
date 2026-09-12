@@ -24,6 +24,34 @@ class WebviewDownloadSettingTests(unittest.TestCase):
         self.assertTrue(fake_webview.settings["ALLOW_DOWNLOADS"])
 
 
+class NativeWindowTests(unittest.TestCase):
+    def test_native_window_uses_storybird_title_and_enabled_downloads(self):
+        calls = {}
+        window = types.SimpleNamespace()
+
+        def create_window(**kwargs):
+            calls["window"] = kwargs
+            return window
+
+        def start(*args, **kwargs):
+            calls["start"] = (args, kwargs)
+
+        fake_webview = types.SimpleNamespace(
+            settings={"ALLOW_DOWNLOADS": False},
+            create_window=create_window,
+            start=start,
+        )
+        with mock.patch.object(launcher, "_set_windows_app_id") as set_app_id:
+            launcher._open_native_window(fake_webview, "http://127.0.0.1:8765")
+
+        self.assertTrue(fake_webview.settings["ALLOW_DOWNLOADS"])
+        set_app_id.assert_called_once_with()
+        self.assertEqual(calls["window"]["title"], "Storybird")
+        self.assertEqual(calls["window"]["url"], "http://127.0.0.1:8765")
+        self.assertEqual(calls["start"][0], (launcher._set_windows_window_icon,))
+        self.assertEqual(calls["start"][1]["args"], (window,))
+
+
 class DownloadHeadTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

@@ -3,11 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Audiobook Studio</title>
+<title>Storybird</title>
+<link rel="icon" href="/storybird-mark.svg?v=1" type="image/svg+xml">
 <script>try { const requestedTheme = new URLSearchParams(location.search).get('theme'); document.documentElement.dataset.theme = requestedTheme === 'dark' || requestedTheme === 'light' ? requestedTheme : (localStorage.getItem('audiobook-studio-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')); } catch (e) {}</script>
 <style>
   :root { color-scheme: light; --blue:#215BC6; --blue-strong:#1649a8; --focus:#215BC6; --warm:#F6F3E9; --paper:#fffdf8; --canvas:#eeece4; --navy:#15223A; --ink:#1c2a42; --muted:#56657D; --line:#d9dbe0; --control-line:#8791A1; --soft-blue:#e7efff; --yellow:#F8C75D; --yellow-soft:#fff3cf; --ok:#176b4d; --ok-bg:#dcefe6; --bad:#aa3d3d; --bad-bg:#fde9e6; --shadow:0 18px 48px rgba(21,34,58,.10); }
-  [data-theme="dark"] { color-scheme: dark; --blue:#86ADFF; --blue-strong:#adc6ff; --focus:#F8C75D; --warm:#161b26; --paper:#202737; --canvas:#10151e; --navy:#f6f3e9; --ink:#f6f3e9; --muted:#b5c0d2; --line:#3a4559; --control-line:#727F96; --soft-blue:#1c3158; --yellow:#f8c75d; --yellow-soft:#473918; --ok:#8ee0b7; --ok-bg:#193f34; --bad:#ffb5ad; --bad-bg:#532b31; --shadow:0 18px 48px rgba(0,0,0,.28); }
+  [data-theme="dark"] { color-scheme: dark; --blue:#86ADFF; --blue-strong:#adc6ff; --focus:#F8C75D; --warm:#111925; --paper:#19263b; --canvas:#0d1521; --navy:#f6f3e9; --ink:#f6f3e9; --muted:#b9c5d8; --line:#3e4d65; --control-line:#7b899f; --soft-blue:#203b68; --yellow:#f8c75d; --yellow-soft:#483b1e; --ok:#8ee0b7; --ok-bg:#193f34; --bad:#ffb5ad; --bad-bg:#532b31; --shadow:0 18px 48px rgba(0,0,0,.30); }
   * { box-sizing:border-box; }
   body { min-width:320px; margin:0; background:var(--canvas); color:var(--ink); font:16px/1.5 "Segoe UI",system-ui,sans-serif; }
   button,input,select { font:inherit; } button { cursor:pointer; } button:disabled { cursor:not-allowed; opacity:.62; }
@@ -20,7 +21,7 @@
   .nav { display:grid; gap:5px; }
   .nav button { display:flex; align-items:center; gap:12px; width:100%; min-height:46px; padding:10px 12px; border:0; border-radius:10px; background:transparent; color:var(--ink); text-align:left; font-weight:650; }
   .nav button:hover { background:var(--soft-blue); } .nav button[aria-current="page"] { background:var(--soft-blue); color:var(--blue); }
-  .nav-icon { width:24px; color:var(--blue); font-weight:800; text-align:center; } .nav-count { margin-left:auto; padding:1px 8px; border-radius:99px; background:var(--yellow-soft); color:var(--navy); font-size:.78rem; font-variant-numeric:tabular-nums; }
+  .nav-icon { width:24px; color:var(--blue); font-weight:800; text-align:center; }
   .side-bottom { margin-top:auto; display:grid; gap:13px; }
   .storage { padding:14px; border-radius:12px; background:var(--yellow-soft); color:var(--ink); font-size:.82rem; } .storage strong,.storage span { display:block; } .storage span { margin-top:4px; color:var(--muted); overflow-wrap:anywhere; }
   .theme-switch { display:grid; grid-template-columns:1fr 1fr; padding:4px; border:1px solid var(--line); border-radius:11px; background:var(--canvas); } .theme-switch button { border:0; border-radius:7px; min-height:44px; background:transparent; color:var(--ink); font-size:.85rem; } .theme-switch button[aria-pressed="true"] { background:var(--paper); box-shadow:0 1px 4px rgba(0,0,0,.13); }
@@ -28,8 +29,10 @@
   main { max-width:1440px; margin:0 auto; padding:clamp(24px,4vw,52px); } .screen { display:none; } .screen.active { display:block; } .screen-heading { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin-bottom:26px; } h1,h2,h3,p { margin-top:0; } .screen-heading h1 { margin-bottom:3px; color:var(--navy); font-size:clamp(1.8rem,3vw,2.5rem); letter-spacing:-.055em; line-height:1.1; } .screen-heading p { margin:0; color:var(--muted); }
   button,.button-link { min-height:44px; padding:9px 14px; border:1px solid var(--control-line); border-radius:9px; background:var(--paper); color:var(--ink); font-weight:650; text-decoration:none; } button:hover,.button-link:hover { border-color:var(--blue); } button.primary { border-color:var(--blue); background:var(--blue); color:#fff; } [data-theme="dark"] button.primary { color:#15223A; } button.primary:hover { background:var(--blue-strong); } button.danger { color:var(--bad); } button.danger:hover { border-color:var(--bad); background:var(--bad-bg); }
   .panel,.card,.job { background:var(--paper); border:1px solid var(--line); border-radius:16px; box-shadow:0 1px 0 rgba(21,34,58,.02); } .panel { padding:clamp(18px,2.4vw,28px); } .section-title { margin:0 0 5px; color:var(--navy); font-size:1.15rem; letter-spacing:-.025em; } .section-intro,.help,.meta,.detail { color:var(--muted); font-size:.9rem; }
+  .pdf-preview { margin-top:14px; padding:12px; border:1px solid var(--line); border-radius:11px; background:var(--canvas); } .pdf-preview-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; } .pdf-preview-bar button { min-height:38px; padding:6px 10px; } .pdf-preview-status { color:var(--muted); font-size:.86rem; } .pdf-preview img { display:block; width:min(100%,560px); max-height:42vh; margin:10px auto 0; border:1px solid var(--line); background:var(--paper); object-fit:contain; } .pdf-preview .err { margin-top:8px; }
+  #jobs { display:flex; flex-wrap:wrap; gap:16px; } #jobs > .job:not(.completed-tile) { flex:1 0 100%; } .completed-tile { flex:0 1 220px; min-width:190px; margin-top:16px; overflow:hidden; } .completed-summary { display:grid; justify-items:center; gap:10px; width:100%; min-height:310px; padding:14px; border:0; border-radius:14px; text-align:center; background:transparent; color:var(--ink); } .completed-summary:hover { background:var(--soft-blue); } .completed-cover { width:154px; height:208px; object-fit:cover; border:1px solid var(--control-line); border-radius:9px; background:var(--soft-blue); box-shadow:0 4px 12px rgba(21,34,58,.13); } .completed-summary .title { display:block; color:var(--navy); font:700 1.08rem/1.2 Georgia,serif; overflow-wrap:anywhere; } .completed-summary .detail { display:block; margin-top:4px; } .cover-change { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:12px 0; }
   .create-callout { display:flex; align-items:center; gap:18px; padding:20px; margin-bottom:24px; border:1px solid color-mix(in srgb,var(--blue) 30%,var(--line)); border-radius:15px; background:var(--soft-blue); } .create-callout .mark { flex:0 0 auto; width:44px; height:44px; padding:8px; border-radius:12px; background:var(--paper); } .create-callout h2 { margin:0 0 3px; font-size:1.05rem; color:var(--navy); } .create-callout p { margin:0; color:var(--muted); font-size:.9rem; } .create-callout button { margin-left:auto; white-space:nowrap; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px; } .card { padding:20px; display:flex; flex-direction:column; align-items:flex-start; min-height:176px; } .card .book-symbol { width:38px; height:52px; margin-bottom:15px; border-radius:6px 10px 10px 6px; border-left:4px solid var(--blue); background:var(--soft-blue); } .card .name { color:var(--navy); font:700 1.18rem/1.23 Georgia,serif; overflow-wrap:anywhere; } .card .meta { margin:7px 0 17px; } .card .primary { width:100%; margin-top:auto; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px; } .card { padding:20px; display:flex; flex-direction:column; align-items:flex-start; min-height:176px; } .card .book-head { display:flex; align-items:flex-start; gap:14px; width:100%; } .card .book-cover { flex:0 0 62px; width:62px; height:88px; border:1px solid var(--control-line); border-radius:7px; background:var(--soft-blue); object-fit:cover; } .card .book-copy { min-width:0; } .card .name { color:var(--navy); font:700 1.18rem/1.23 Georgia,serif; overflow-wrap:anywhere; } .card .meta { margin:7px 0 17px; } .card .primary { width:100%; margin-top:auto; }
   .upload-panel { margin-bottom:18px; } .upload-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; } .upload-drop { border:2px dashed color-mix(in srgb,var(--blue) 34%,var(--line)); background:var(--soft-blue); } input[type=file] { flex:1 1 240px; min-width:0; width:100%; color:var(--muted); font-size:.9rem; } input::file-selector-button { min-height:44px; margin-right:10px; padding:7px 11px; border:1px solid var(--control-line); border-radius:8px; background:var(--paper); color:var(--ink); font-weight:650; cursor:pointer; }
   .job { padding:22px; margin-bottom:15px; } .job .row1 { display:flex; align-items:center; gap:10px; flex-wrap:wrap; } .job .title { color:var(--navy); font:700 1.3rem/1.2 Georgia,serif; overflow-wrap:anywhere; } .badge { padding:3px 9px; border-radius:999px; background:var(--yellow-soft); color:var(--navy); font-size:.77rem; font-weight:750; text-transform:capitalize; } .badge.running { background:var(--yellow); color:#15223A; } .badge.done { background:var(--ok-bg); color:var(--ok); } .badge.failed,.badge.interrupted { background:var(--bad-bg); color:var(--bad); } .job-meta { margin:8px 0; } .bar { height:9px; margin:15px 0 7px; overflow:hidden; border:1px solid var(--control-line); border-radius:999px; background:var(--canvas); } .bar i { display:block; height:100%; border-radius:inherit; background:var(--blue); } .job-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:18px; padding-top:16px; border-top:1px solid var(--line); } .job .players { display:grid; gap:9px; margin-top:15px; } .job .players .p { display:flex; align-items:center; gap:12px; flex-wrap:wrap; } .job .players audio { flex:1 1 250px; height:40px; max-width:100%; } .job .players a { font-size:.86rem; }
   .voice-row { display:flex; align-items:center; gap:14px; padding:17px 0; flex-wrap:wrap; } .voice-row+.voice-row { border-top:1px solid var(--line); } .voice-name { flex:1; min-width:180px; color:var(--navy); font-weight:700; } .voice-symbol { display:grid; place-items:center; width:35px; height:35px; border-radius:50%; background:var(--soft-blue); color:var(--blue); font-weight:800; }
@@ -37,20 +40,20 @@
   dialog { width:min(580px,calc(100% - 32px)); max-height:calc(100dvh - 32px); overflow:auto; padding:28px; border:1px solid var(--line); border-radius:18px; background:var(--paper); color:var(--ink); box-shadow:var(--shadow); } dialog::backdrop { background:rgba(8,15,28,.62); } dialog h3 { color:var(--navy); font:700 1.55rem/1.15 Georgia,serif; overflow-wrap:anywhere; } dialog .meta { margin-bottom:18px; } label,legend { display:block; margin:15px 0 5px; color:var(--muted); font-size:.87rem; font-weight:650; } input[type=number],input[type=text],select { width:100%; min-height:44px; padding:9px 11px; border:1px solid var(--control-line); border-radius:9px; background:var(--canvas); color:var(--ink); } fieldset { min-width:0; margin:17px 0 0; padding:0; border:0; } .radio-row { display:flex; gap:10px; flex-wrap:wrap; } .radio-row label { flex:1 1 200px; display:flex; gap:8px; margin:0; padding:10px; border:1px solid var(--control-line); border-radius:10px; color:var(--ink); cursor:pointer; } .radio-row label.sel { border-color:var(--blue); background:var(--soft-blue); } .radio-row .hint { color:var(--muted); font-size:.79rem; } .pagerow { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; } .dlg-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:25px; }
   details { margin-top:12px; } summary { min-height:36px; padding:7px 0; color:var(--ink); cursor:pointer; font-weight:650; } #update-banner { margin-bottom:18px; padding:12px 14px; border:1px solid var(--blue); border-radius:11px; background:var(--soft-blue); color:var(--ink); }
   @media (max-width:760px) { .app-shell { display:block; } .sidebar { position:sticky; top:0; z-index:5; height:auto; padding:12px 16px; border-right:0; border-bottom:1px solid var(--line); gap:8px; } .sidebar-head { display:flex; align-items:center; gap:12px; } .brand img { width:29px; height:29px; } .tagline,.storage { display:none; } .nav { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); overflow:visible; padding-bottom:2px; } .nav button { width:100%; min-width:0; min-height:44px; justify-content:center; gap:5px; padding:6px; font-size:.78rem; } .nav-icon { width:auto; } .side-bottom { display:block; margin:0; } .theme-switch { width:150px; margin-left:auto; } .topbar { display:none; } main { padding:24px 16px 42px; } .screen-heading { align-items:flex-start; flex-direction:column; margin-bottom:20px; } .create-callout { align-items:flex-start; flex-wrap:wrap; } .create-callout button { margin-left:62px; } }
-  @media (max-width:480px) { .nav button { font-size:.83rem; } .nav-count { display:none; } .create-callout button { margin-left:0; width:100%; } .upload-row > button,.dlg-actions button { width:100%; } .pagerow { grid-template-columns:1fr; } .radio-row { display:grid; } }
+  @media (max-width:480px) { .nav button { font-size:.83rem; } .create-callout button { margin-left:0; width:100%; } .upload-row > button,.dlg-actions button { width:100%; } .pagerow { grid-template-columns:1fr; } .radio-row { display:grid; } }
 </style>
 </head>
 <body>
 <div class="app-shell">
-  <aside class="sidebar" aria-label="Audiobook Studio navigation">
+  <aside class="sidebar" aria-label="Storybird navigation">
     <div class="sidebar-head">
-      <a class="brand" href="#audiobooks" onclick="showScreen('audiobooks')"><img src="/storybird-mark.svg" alt=""><span>Storybird</span></a>
+      <a class="brand" href="#audiobooks" onclick="showScreen('audiobooks')"><img src="/storybird-mark.svg?v=1" width="38" height="38" alt=""><span>Storybird</span></a>
       <p class="tagline">A page takes flight and finds its voice.</p>
     </div>
     <nav class="nav" aria-label="Main sections">
-      <button type="button" data-screen="library" onclick="showScreen('library')"><span class="nav-icon" aria-hidden="true">▤</span>Library<span class="nav-count" id="library-count">…</span></button>
-      <button type="button" data-screen="audiobooks" aria-current="page" onclick="showScreen('audiobooks')"><span class="nav-icon" aria-hidden="true">◉</span>Audiobooks<span class="nav-count" id="job-count">…</span></button>
-      <button type="button" data-screen="voices" onclick="showScreen('voices')"><span class="nav-icon" aria-hidden="true">♬</span>Narrator voices<span class="nav-count" id="voice-count">…</span></button>
+      <button type="button" data-screen="library" onclick="showScreen('library')"><span class="nav-icon" aria-hidden="true">▤</span>Library</button>
+      <button type="button" data-screen="audiobooks" aria-current="page" onclick="showScreen('audiobooks')"><span class="nav-icon" aria-hidden="true">◉</span>Audiobooks</button>
+      <button type="button" data-screen="voices" onclick="showScreen('voices')"><span class="nav-icon" aria-hidden="true">♬</span>Narrator voices</button>
     </nav>
     <div class="side-bottom">
       <div class="storage"><strong>Local library</strong><span>Books and finished audiobooks stay on this computer.</span></div>
@@ -58,7 +61,7 @@
     </div>
   </aside>
   <div class="workspace">
-    <header class="topbar"><span class="crumb">Audiobook Studio</span><span class="spacer"></span><span class="crumb" id="topbar-state">Your local audiobook workspace</span></header>
+    <header class="topbar"><span class="crumb">Storybird</span><span class="spacer"></span><span class="crumb" id="topbar-state">Your local audiobook workspace</span></header>
     <main>
       <div id="update-banner" style="display:none" role="status"></div>
       <section class="screen active" id="audiobooks-screen" aria-labelledby="jobs-heading">
@@ -116,6 +119,11 @@
   <div class="pagerow">
     <div><label for="f-from">First page</label><input type="number" id="f-from" min="1" required></div>
     <div><label for="f-to">Last page</label><input type="number" id="f-to" min="1" required></div>
+  </div>
+  <div class="pdf-preview" aria-live="polite">
+    <div class="pdf-preview-bar"><button type="button" id="preview-prev">Previous page</button><span class="pdf-preview-status" id="preview-status">PDF preview</span><button type="button" id="preview-next">Next page</button></div>
+    <img id="preview-image" alt="Selected PDF page preview" hidden>
+    <div class="err" id="preview-err" role="status"></div>
   </div></fieldset>
   <div class="err" id="dlg-err" role="alert"></div>
   <div class="dlg-actions">
@@ -129,6 +137,8 @@
 const dlg = document.getElementById('dlg');
 let dlgBook = null;
 let library = [];
+let previewPage = 1;
+let previewRequest = null;
 
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach(screen => {
@@ -158,11 +168,6 @@ function restoreTheme() {
   let saved = null;
   try { saved = localStorage.getItem('audiobook-studio-theme'); } catch (e) { /* use system preference */ }
   setTheme(saved || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
-}
-
-function updateCount(id, count, singular, plural) {
-  const el = document.getElementById(id);
-  if (el) el.textContent = `${count} ${count === 1 ? singular : plural}`;
 }
 
 function bindDropZone(inputId, upload) {
@@ -236,23 +241,36 @@ async function loadLibrary() {
     empty.className = 'empty';
     empty.textContent = 'No books yet. Use Add PDF to library above.';
     el.replaceChildren(empty);
-    updateCount('library-count', 0, 'book', 'books');
     return;
   }
-  updateCount('library-count', library.length, 'book', 'books');
   el.replaceChildren();
   for (const b of library) {
     const card = document.createElement('div');
     card.className = 'card';
-    const symbol = document.createElement('div');
-    symbol.className = 'book-symbol';
+    const head = document.createElement('div');
+    head.className = 'book-head';
+    const cover = document.createElement('img');
+    cover.className = 'book-cover';
+    cover.width = 62;
+    cover.height = 88;
+    cover.alt = '';
+    cover.src = b.cover_url || '/storybird-library-book.svg';
+    cover.addEventListener('error', () => {
+      if (cover.dataset.fallback) return;
+      cover.dataset.fallback = 'true';
+      cover.src = '/storybird-library-book.svg';
+    });
+    const copy = document.createElement('div');
+    copy.className = 'book-copy';
     const name = document.createElement('div');
     name.className = 'name';
     name.textContent = b.name;
     const meta = document.createElement('div');
     meta.className = 'meta';
     meta.textContent = bookMeta(b);
-    card.append(symbol, name, meta);
+    copy.append(name, meta);
+    head.append(cover, copy);
+    card.append(head);
     const btn = document.createElement('button');
     btn.className = 'primary';
     btn.textContent = 'Create audiobook';
@@ -276,7 +294,82 @@ function openDlg(book) {
   document.querySelector(`input[name=path][value=${book.suggested_path}]`).checked = true;
   markPath();
   dlg.showModal();
+  setPreviewPage(Number(document.getElementById('f-from').value) || 1);
 }
+
+function clampDialogPage(value) {
+  return Math.max(1, Math.min(Number(dlgBook?.pages) || 1, Number(value) || 1));
+}
+
+function setPreviewPage(value, syncStart = true) {
+  if (!dlgBook) return;
+  previewPage = clampDialogPage(value);
+  const first = document.getElementById('f-from');
+  const last = document.getElementById('f-to');
+  if (syncStart) {
+    first.value = previewPage;
+    if (+last.value < previewPage) last.value = previewPage;
+  }
+  document.getElementById('preview-prev').disabled = previewPage <= 1;
+  document.getElementById('preview-next').disabled = previewPage >= dlgBook.pages;
+  document.getElementById('preview-status').textContent = `PDF page ${previewPage} of ${dlgBook.pages}`;
+  loadPreview();
+}
+
+async function loadPreview() {
+  if (!dlgBook) return;
+  const image = document.getElementById('preview-image');
+  const error = document.getElementById('preview-err');
+  const requestedBook = dlgBook;
+  const requestedPage = previewPage;
+  previewRequest?.abort();
+  previewRequest = new AbortController();
+  error.textContent = '';
+  image.hidden = true;
+  document.getElementById('preview-status').textContent = `Loading PDF page ${requestedPage} of ${requestedBook.pages}…`;
+  try {
+    const token = requestedBook.cover_url.split('/').pop();
+    const response = await fetch(`/api/library/preview/${token}?page=${requestedPage}`, {
+      cache: 'no-store', signal: previewRequest.signal,
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error || 'Could not render this PDF page.');
+    }
+    const objectUrl = URL.createObjectURL(await response.blob());
+    if (dlgBook !== requestedBook || previewPage !== requestedPage) {
+      URL.revokeObjectURL(objectUrl);
+      return;
+    }
+    if (image.dataset.objectUrl) URL.revokeObjectURL(image.dataset.objectUrl);
+    image.dataset.objectUrl = objectUrl;
+    image.src = objectUrl;
+    image.hidden = false;
+    document.getElementById('preview-status').textContent = `PDF page ${requestedPage} of ${requestedBook.pages}`;
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    image.hidden = true;
+    error.textContent = e.message || 'Could not render this PDF page.';
+    document.getElementById('preview-status').textContent = `PDF page ${requestedPage} of ${requestedBook.pages}`;
+  }
+}
+
+dlg.addEventListener('close', () => {
+  previewRequest?.abort();
+  const image = document.getElementById('preview-image');
+  if (image.dataset.objectUrl) URL.revokeObjectURL(image.dataset.objectUrl);
+  delete image.dataset.objectUrl;
+  image.removeAttribute('src');
+  image.hidden = true;
+});
+
+document.getElementById('preview-prev').addEventListener('click', () => setPreviewPage(previewPage - 1));
+document.getElementById('preview-next').addEventListener('click', () => setPreviewPage(previewPage + 1));
+document.getElementById('f-from').addEventListener('change', event => setPreviewPage(event.target.value));
+document.getElementById('f-to').addEventListener('change', event => {
+  const first = document.getElementById('f-from');
+  if (+event.target.value < +first.value) event.target.value = first.value;
+});
 document.getElementById('path-row').addEventListener('change', markPath);
 function markPath() {
   const v = document.querySelector('input[name=path]:checked')?.value;
@@ -323,7 +416,6 @@ async function loadVoices() {
     empty.textContent = 'No narrator voices yet. Add a voice sample below.';
     list.appendChild(empty);
   }
-  updateCount('voice-count', voices.length, 'voice', 'voices');
   for (const v of voices) {
     const row = document.createElement('div');
     row.className = 'voice-row';
@@ -519,6 +611,7 @@ async function createJob() {
 }
 
 const openLogs = new Set();
+const expandedFinished = new Set();
 const jobNodes = new Map();
 let knownJobStatuses = new Map();
 let refreshInFlight = false;
@@ -535,7 +628,7 @@ function captureViewState() {
   });
   const focused = document.activeElement;
   const job = focused.closest('.job');
-  const controls = job ? Array.from(job.querySelectorAll('button, a')) : [];
+  const controls = job ? Array.from(job.querySelectorAll('button, a, input')) : [];
   return {x: window.scrollX, y: window.scrollY, logs, focused,
     jobId: job?.dataset.jobId, controlIndex: controls.indexOf(focused)};
 }
@@ -551,7 +644,7 @@ function restoreViewState(state) {
     window.scrollTo(state.x, state.y);
     if (!state.focused.isConnected && state.controlIndex >= 0) {
       const job = jobNodes.get(state.jobId)?.node;
-      job?.querySelectorAll('button, a')[state.controlIndex]?.focus({preventScroll: true});
+      job?.querySelectorAll('button, a, input')[state.controlIndex]?.focus({preventScroll: true});
     }
   });
 }
@@ -577,7 +670,6 @@ async function refreshJobs() {
       }
       jobNodes.clear();
       knownJobStatuses = new Map();
-      updateCount('job-count', 0, 'job', 'jobs');
       return;
     }
     const details = await Promise.all(jobs.map(j =>
@@ -587,15 +679,14 @@ async function refreshJobs() {
         return detail;
       })));
 
-    updateCount('job-count', details.filter(j => ['queued','extracting','tagging','narrating'].includes(j.status)).length, 'live', 'live');
-
     const newlyDone = details.some(j =>
       knownJobStatuses.has(j.id) && knownJobStatuses.get(j.id) !== 'done' && j.status === 'done');
     knownJobStatuses = new Map(details.map(j => [j.id, j.status]));
+    details.sort((a, b) => (a.status === 'done') - (b.status === 'done'));
 
     const wanted = new Set(details.map(j => j.id));
     details.forEach((j, index) => {
-      const renderKey = JSON.stringify(j) + `|log=${openLogs.has(j.id)}`;
+      const renderKey = JSON.stringify(j) + `|log=${openLogs.has(j.id)}|expanded=${expandedFinished.has(j.id)}`;
       let entry = jobNodes.get(j.id);
       if (!entry || entry.key !== renderKey) {
         const replacement = renderJob(j);
@@ -631,9 +722,45 @@ async function refreshJobs() {
   }
 }
 
+function completedTile(j) {
+  const tile = document.createElement('div');
+  tile.className = 'job completed-tile';
+  tile.dataset.jobId = j.id;
+  const summary = btn('Show options', '', () => {
+    expandedFinished.add(j.id);
+    refreshJobs();
+  });
+  summary.className = 'completed-summary';
+  summary.setAttribute('aria-expanded', 'false');
+  const cover = document.createElement('img');
+  cover.className = 'completed-cover';
+  cover.alt = '';
+  cover.src = j.cover_url || '/storybird-library-book.svg';
+  cover.addEventListener('error', () => {
+    if (cover.dataset.fallback) return;
+    cover.dataset.fallback = 'true';
+    cover.src = '/storybird-library-book.svg';
+  });
+  const copy = document.createElement('span');
+  const title = document.createElement('span');
+  title.className = 'title';
+  title.textContent = j.title;
+  const detail = document.createElement('span');
+  detail.className = 'detail';
+  detail.textContent = `Completed · pages ${j.page_from} to ${j.page_to}`;
+  copy.append(title, detail);
+  const hint = document.createElement('span');
+  hint.className = 'detail';
+  hint.textContent = 'Show options';
+  summary.replaceChildren(cover, copy, hint);
+  tile.appendChild(summary);
+  return tile;
+}
+
 function renderJob(j) {
+  if (j.status === 'done' && !expandedFinished.has(j.id)) return completedTile(j);
   const div = document.createElement('div');
-  div.className = 'job';
+  div.className = j.status === 'done' ? 'job completed-expanded' : 'job';
   div.dataset.jobId = j.id;
   const running = ['queued','extracting','tagging','narrating'].includes(j.status);
   const badgeCls = running ? 'running' : (j.status === 'done' ? 'done' : j.status);
@@ -662,8 +789,7 @@ function renderJob(j) {
   }
 
   const pages = `pages ${j.page_from} to ${j.page_to}`;
-  div.innerHTML = `
-    <div class="row1">
+  div.innerHTML = `<div class="row1">
       <span class="title">${esc(j.title)}</span>
       <span class="badge ${badgeCls}">${esc(j.status)}</span>
     </div>
@@ -688,6 +814,11 @@ function renderJob(j) {
     }));
   }
   if (j.status === 'done') {
+    const collapse = btn('Collapse', '', () => {
+      expandedFinished.delete(j.id);
+      refreshJobs();
+    });
+    row.appendChild(collapse);
     if (j.audiobook_dir) {
       row.appendChild(btn('Open output folder', '', () => openOutputFolder(j.id)));
     }
@@ -709,6 +840,20 @@ function renderJob(j) {
         await jobAction(j.id, 'delete');
       }
     }));
+    const change = document.createElement('div');
+    change.className = 'cover-change';
+    const label = document.createElement('label');
+    label.textContent = 'Change cover';
+    label.htmlFor = `cover-${j.id}`;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.id = `cover-${j.id}`;
+    input.accept = 'image/png,image/jpeg,image/webp';
+    input.addEventListener('change', () => uploadCover(j.id, input));
+    const status = document.createElement('span');
+    status.className = 'detail cover-status';
+    change.append(label, input, status);
+    div.appendChild(change);
   }
   const betaLog = document.createElement('a');
   betaLog.className = 'button-link';
@@ -762,6 +907,26 @@ function renderJob(j) {
     div.appendChild(note);
   }
   return div;
+}
+
+async function uploadCover(jobId, input) {
+  const status = input.closest('.cover-change').querySelector('.cover-status');
+  const file = input.files[0];
+  if (!file) return;
+  status.textContent = 'Saving cover…';
+  input.disabled = true;
+  try {
+    const response = await fetch(`/api/jobs/${jobId}/cover`, {method: 'POST', body: file});
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || 'Could not save the cover.');
+    status.textContent = 'Cover updated.';
+    input.value = '';
+    await refreshJobs();
+  } catch (e) {
+    status.textContent = e.message || 'Could not save the cover.';
+  } finally {
+    input.disabled = false;
+  }
 }
 
 async function openOutputFolder(jobId) {

@@ -1,5 +1,5 @@
 """
-Audiobook Studio server. Runs in the base miniconda env (stdlib +
+Storybird server. Runs in the base miniconda env (stdlib +
 PyMuPDF + requests only, no Flask, nothing installed anywhere).
 
     python server.py            -> http://localhost:8765
@@ -76,6 +76,10 @@ PORT = CFG.port
 AUDIO_EXTS = {".m4b", ".mp3", ".wav"}
 AUDIO_MIME = {".m4b": "audio/mp4", ".mp3": "audio/mpeg", ".wav": "audio/wav"}
 MAX_PDF_BYTES = 2 * 1024 * 1024 * 1024
+MAX_COVER_BYTES = 20 * 1024 * 1024
+MAX_COVER_PIXELS = 24_000_000
+MAX_PREVIEW_PIXELS = 6_000_000
+IMAGE_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
 WINDOWS_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 
 
@@ -605,11 +609,17 @@ def _library_item(pdf_path):
         "path": str(pdf_path),
         "name": pdf_path.stem,
         "folder": str(pdf_path.parent),
+        "cover_url": "/api/library/cover/" + _library_cover_token(pdf_path),
         "pages": pages,
         "suggested_path": suggest_path(pdf_path, pages) if pages else "B",
         "suggested_page_from": suggested_start,
         "suggested_start_reason": start_reason,
     }
+
+
+def _library_cover_token(pdf_path):
+    """Return an opaque, stable identifier for a PDF in the local library."""
+    return hashlib.sha256(str(Path(pdf_path).resolve()).encode("utf-8")).hexdigest()[:24]
 
 
 _pdf_import_lock = threading.Lock()
@@ -759,9 +769,8 @@ def extract_book_meta(pdf_path, title, job_dir):
     return meta, cover_path, outline
 
 
-def scan_library():
+def _library_pdfs():
     seen = set()
-    items = []
     roots = list(LIBRARY_ROOTS)
     if not any(Path(root).resolve() == PDF_IMPORT_DIR.resolve() for root in roots):
         roots.append(PDF_IMPORT_DIR)
@@ -775,8 +784,102 @@ def scan_library():
             if key in seen:
                 continue
             seen.add(key)
-            items.append(_library_item(p))
-    return items
+            yield p
+
+
+def scan_library():
+    return [_library_item(pdf_path) for pdf_path in _library_pdfs()]
+
+
+def _library_pdf_for_cover(token):
+    """Resolve only an opaque token back to an active library PDF."""
+    if not re.fullmatch(r"[0-9a-f]{24}", token):
+        return None
+    for pdf_path in _library_pdfs():
+        if _library_cover_token(pdf_path) == token:
+            return pdf_path
+    return None
+
+
+def _render_library_cover(pdf_path):
+    """Render the first page at thumbnail size in the CPU-only base process."""
+    with fitz.open(pdf_path) as doc:
+        if doc.page_count < 1:
+            raise ValueError("PDF has no pages")
+        pixmap = doc.load_page(0).get_pixmap(dpi=72, alpha=False)
+        return pixmap.tobytes("png")
+
+
+def _render_library_preview(pdf_path, page_number):
+    """Render one PDF page in memory for the setup dialog's CPU-only preview."""
+    with fitz.open(pdf_path) as doc:
+        if not 1 <= page_number <= doc.page_count:
+            raise ValueError("PDF page is outside the available range")
+        page = doc.load_page(page_number - 1)
+        width, height = page.rect.width, page.rect.height
+        if width <= 0 or height <= 0:
+            raise ValueError("PDF page has no visible area")
+        scale = min(96 / 72, (MAX_PREVIEW_PIXELS / (width * height)) ** 0.5)
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+        return pixmap.tobytes("png")
+
+
+def _job_cover_source(st):
+    """Return (kind, path) for a job-owned cover without exposing paths to UI."""
+    job_dir = JOBS_DIR / st["id"]
+    override = job_dir / "cover_override.png"
+    if override.is_file():
+        return "image", override
+    for cover in job_dir.glob("cover.*"):
+        if cover.suffix.lower() in IMAGE_MIME and cover.is_file():
+            return "image", cover
+    for raw_pdf in (st.get("processed_pdf_path"), st.get("pdf_path")):
+        if raw_pdf:
+            pdf_path = Path(raw_pdf)
+            allowed_roots = [PROCESSED_PDF_DIR, PDF_IMPORT_DIR, *LIBRARY_ROOTS]
+            if pdf_path.is_file() and any(_path_is_within(pdf_path, root) for root in allowed_roots):
+                return "pdf", pdf_path
+    return None, None
+
+
+def _job_cover_url(st):
+    _kind, source = _job_cover_source(st)
+    version = source.stat().st_mtime_ns if source else 0
+    return f"/api/jobs/{st['id']}/cover?v={version}"
+
+
+def _job_cover_bytes(st):
+    kind, source = _job_cover_source(st)
+    if kind == "image":
+        return source.read_bytes(), IMAGE_MIME[source.suffix.lower()]
+    if kind == "pdf":
+        return _render_library_cover(source), "image/png"
+    raise FileNotFoundError("cover not found")
+
+
+def _validated_cover_png(raw):
+    """Decode a local raster upload and normalize it to a bounded PNG."""
+    if not raw or len(raw) > MAX_COVER_BYTES:
+        raise ValueError("Choose an image smaller than 20 MB.")
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        image_type = "png"
+    elif raw.startswith(b"\xff\xd8\xff"):
+        image_type = "jpeg"
+    elif raw.startswith(b"RIFF") and raw[8:12] == b"WEBP":
+        image_type = "webp"
+    else:
+        raise ValueError("Choose a PNG, JPEG, or WebP image.")
+    try:
+        with fitz.open(stream=raw, filetype=image_type) as doc:
+            page = doc.load_page(0)
+            if page.rect.width * page.rect.height > MAX_COVER_PIXELS:
+                raise ValueError("Choose an image under 24 megapixels.")
+            pixmap = page.get_pixmap(alpha=False)
+            return pixmap.tobytes("png")
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("That image could not be opened.") from exc
 
 
 def _path_is_within(path, root):
@@ -955,7 +1058,7 @@ def run_extraction(st):
                     pt.rasterize_page(pdf, pno, str(img_path))
                 md = ocr_page(str(img_path))
                 md_path.write_text(md, encoding="utf-8")
-            tagged = pt.tag_blocks(md)
+            tagged = pt.filter_copyright_blocks(pt.tag_blocks(md))
             for block in tagged:
                 block["source_page"] = pno + 1
             page_blocks.append(tagged)
@@ -1345,7 +1448,7 @@ def _report_crash(st, stage, exc):
         return
     payload = {
         "embeds": [{
-            "title": f"Audiobook Studio job failed: {stage}",
+            "title": f"Storybird job failed: {stage}",
             "color": 15548997,
             "fields": [
                 {"name": "Error", "value": str(exc)[:1000] or "(empty)", "inline": False},
@@ -1532,6 +1635,7 @@ def job_detail(job_id):
         for b in blocks:
             counts[b["type"]] = counts.get(b["type"], 0) + 1
         st["block_counts"] = counts
+    st["cover_url"] = _job_cover_url(st)
     return st
 
 
@@ -1564,7 +1668,7 @@ def beta_test_report(job_id):
     log_path = job_dir / "log.txt"
     log_bytes = log_path.stat().st_size if log_path.exists() else 0
     report = [
-        "Audiobook Studio beta test report",
+        "Storybird beta test report",
         f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S %Z')}",
         f"Computer: {platform.node() or '(unknown)'}",
         f"Windows/platform: {platform.platform()}",
@@ -1681,8 +1785,51 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/" or path == "/index.html":
                 self._serve_file(STATIC_DIR / "index.html", "text/html; charset=utf-8")
-            elif path == "/storybird-mark.svg":
-                self._serve_file(STATIC_DIR / "storybird-mark.svg", "image/svg+xml")
+            elif path in ("/storybird-mark.svg", "/storybird-library-book.svg"):
+                self._serve_file(STATIC_DIR / path.lstrip("/"), "image/svg+xml")
+            elif re.fullmatch(r"/api/library/cover/[0-9a-f]{24}", path):
+                pdf_path = _library_pdf_for_cover(path.rsplit("/", 1)[1])
+                if pdf_path is None:
+                    self.send_error(404)
+                else:
+                    try:
+                        image = _render_library_cover(pdf_path)
+                    except Exception:
+                        self.send_error(500)
+                    else:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "image/png")
+                        self.send_header("Content-Length", str(len(image)))
+                        self.send_header("Cache-Control", "private, max-age=3600")
+                        self.end_headers()
+                        self.wfile.write(image)
+            elif re.fullmatch(r"/api/library/preview/[0-9a-f]{24}", path):
+                from urllib.parse import parse_qs
+
+                pdf_path = _library_pdf_for_cover(path.rsplit("/", 1)[1])
+                page_values = parse_qs(urlparse(self.path).query).get("page", [])
+                try:
+                    page_number = int(page_values[0])
+                except (IndexError, TypeError, ValueError):
+                    page_number = 0
+                if pdf_path is None:
+                    self.send_error(404)
+                elif page_number < 1:
+                    _json_response(self, {"error": "Choose a PDF page starting at 1."}, 400)
+                else:
+                    try:
+                        image = _render_library_preview(pdf_path, page_number)
+                    except ValueError as exc:
+                        _json_response(self, {"error": str(exc)}, 400)
+                    except Exception:
+                        self.send_error(500)
+                    else:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "image/png")
+                        self.send_header("Content-Length", str(len(image)))
+                        self.send_header("Cache-Control", "private, no-store")
+                        self.end_headers()
+                        self.wfile.write(image)
             elif path == "/api/library":
                 _json_response(self, {"items": scan_library()})
             elif path == "/api/voices":
@@ -1696,6 +1843,24 @@ class Handler(BaseHTTPRequestHandler):
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+", path):
                 st = job_detail(path.rsplit("/", 1)[1])
                 _json_response(self, st if st else {"error": "not found"}, 200 if st else 404)
+            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/cover", path):
+                st = load_state(path.split("/")[3])
+                if not st:
+                    self.send_error(404)
+                else:
+                    try:
+                        image, content_type = _job_cover_bytes(st)
+                    except FileNotFoundError:
+                        self.send_error(404)
+                    except Exception:
+                        self.send_error(500)
+                    else:
+                        self.send_response(200)
+                        self.send_header("Content-Type", content_type)
+                        self.send_header("Content-Length", str(len(image)))
+                        self.send_header("Cache-Control", "private, no-store")
+                        self.end_headers()
+                        self.wfile.write(image)
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/blocks", path):
                 job_id = path.split("/")[3]
                 bl = JOBS_DIR / job_id / "blocks.json"
@@ -1801,13 +1966,18 @@ class Handler(BaseHTTPRequestHandler):
                 job_dir = JOBS_DIR / job_id
                 job_dir.mkdir()
                 n = page_count(body["pdf_path"]) or 1
+                page_from = int(body.get("page_from", 1))
+                page_to = int(body.get("page_to", n))
+                if not 1 <= page_from <= page_to <= n:
+                    _json_response(self, {"error": f"Choose pages from 1 through {n}, with the first page before the last."}, 400)
+                    return
                 st = {
                     "id": job_id,
                     "title": body.get("title") or Path(body["pdf_path"]).stem,
                     "pdf_path": body["pdf_path"],
                     "path": body.get("path", "B"),
-                    "page_from": max(1, int(body.get("page_from", 1))),
-                    "page_to": min(n, int(body.get("page_to", n))),
+                    "page_from": page_from,
+                    "page_to": page_to,
                     "voice": body.get("voice") or DEFAULT_VOICE,
                     "format": body.get("format") if body.get("format") in ("m4b", "mp3", "wav") else "m4b",
                     "engine": body.get("engine") if body.get("engine") in ("parallel", "batched") else DEFAULT_ENGINE,
@@ -1818,6 +1988,30 @@ class Handler(BaseHTTPRequestHandler):
                 log_line(job_id, f"created: {st['title']} path {st['path']} pages {st['page_from']}..{st['page_to']}")
                 enqueue(job_id)
                 _json_response(self, st)
+            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/cover", path):
+                job_id = path.split("/")[3]
+                st = load_state(job_id)
+                if not st:
+                    _json_response(self, {"error": "not found"}, 404)
+                    return
+                if st.get("status") != "done":
+                    _json_response(self, {"error": "A cover can be changed after the audiobook finishes."}, 400)
+                    return
+                length = int(self.headers.get("Content-Length", 0))
+                if not 0 < length <= MAX_COVER_BYTES:
+                    _json_response(self, {"error": "Choose an image smaller than 20 MB."}, 400)
+                    return
+                try:
+                    raw = self.rfile.read(length)
+                    png = _validated_cover_png(raw)
+                    job_dir = JOBS_DIR / job_id
+                    target = job_dir / "cover_override.png"
+                    temp = job_dir / "cover_override.tmp"
+                    temp.write_bytes(png)
+                    os.replace(temp, target)
+                    _json_response(self, {"ok": True, "cover_url": _job_cover_url(st)})
+                except ValueError as exc:
+                    _json_response(self, {"error": str(exc)}, 400)
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/cancel", path):
                 job_id = path.split("/")[3]
                 request_cancel(job_id)
@@ -1939,7 +2133,7 @@ def main():
     mark_interrupted_jobs()
     threading.Thread(target=worker_loop, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"Audiobook Studio running at http://localhost:{PORT}")
+    print(f"Storybird running at http://localhost:{PORT}")
     print(f"  chatterbox python: {CHATTERBOX_PY}")
     print(f"  audiobooks dir:    {AUDIOBOOKS_DIR}")
     print(f"  library roots:     {', '.join(str(r) for r in LIBRARY_ROOTS) or '(none)'}")

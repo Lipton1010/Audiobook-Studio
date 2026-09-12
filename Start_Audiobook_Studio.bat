@@ -1,5 +1,5 @@
 @echo off
-title Audiobook Studio
+title Storybird
 setlocal DisableDelayedExpansion
 
 rem One-click installs keep their private Python environment and every large
@@ -59,10 +59,9 @@ if not defined BASEPY (
 )
 
 rem launcher.py starts the server on a background thread and opens a native
-rem app window (falls back to your browser if pywebview / WebView2 aren't
-rem available). It reads the port itself via config.py, so nothing here
-rem needs to guess it.
-echo Starting Audiobook Studio...
+rem app window. It reads the port itself via config.py, so nothing here needs
+rem to guess it.
+echo Starting Storybird...
 echo Using base Python: %BASEPY%
 if exist "%RUNTIME_ROOT%\miniconda3\pythonw.exe" (
     start "" "%RUNTIME_ROOT%\miniconda3\pythonw.exe" launcher.py
