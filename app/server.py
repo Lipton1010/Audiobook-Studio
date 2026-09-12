@@ -33,6 +33,7 @@ import requests
 
 import pipeline_text as pt
 from config import CFG
+from narration_eta import PROGRESS_FILENAME
 
 APP_DIR = Path(__file__).parent
 try:
@@ -1226,6 +1227,7 @@ def run_narration(st):
     }
     (job_dir / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
     ensure_segments_fresh(job_dir, st)
+    (job_dir / PROGRESS_FILENAME).unlink(missing_ok=True)
 
     # The batched engine fills the GPU by batching sequences, so extra processes
     # would only time-slice against each other (Windows has no CUDA MPS).
@@ -1419,9 +1421,20 @@ def _narration_progress(job_dir, st):
     baseline = st.get("narrate_baseline_done", 0)
     this_run = done - baseline
     eta = None
-    if total and done < total and elapsed > 0 and this_run > 0:
+    if st.get("engine") == "batched":
+        try:
+            progress = json.loads(
+                (job_dir / PROGRESS_FILENAME).read_text(encoding="utf-8")
+            )
+            worker_eta = progress.get("eta_sec")
+            if worker_eta is not None and float(worker_eta) >= 0:
+                eta = float(worker_eta)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            pass
+    elif total and done < total and elapsed > 0 and this_run > 0:
         eta = (total - done) * (elapsed / this_run)
     if total and done >= total:
+        eta = None
         message = "assembling"
     elif done == 0:
         message = f"loading model ({n} worker{'s' if n > 1 else ''})"

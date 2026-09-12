@@ -6,8 +6,8 @@
 ;
 ; This does NOT touch conda, torch, ffmpeg, or the model weights at all --
 ; only explicitly named small files (the changed app Python/UI files, config schema, and
-; VERSION), all explicitly named, never a
-; wildcard, so there is no risk of sweeping up a book PDF or the voice clip
+; VERSION), all explicitly named, never a wildcard, so there is no risk of
+; sweeping up a book PDF or the voice clip
 ; the way the main installer's `..\*` source spec has to guard against.
 ;
 ; Deliberately has NO conda/ffmpeg/weights Pascal Script at all -- that is
@@ -62,6 +62,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Files]
 Source: "..\app\server.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\narrate_worker.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\narration_eta.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\gpu_oom.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\launcher.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\managed_runtime.py"; DestDir: "{app}\app"; Flags: ignoreversion

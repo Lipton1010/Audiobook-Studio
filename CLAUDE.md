@@ -120,6 +120,14 @@ ALLOCATOR STALL, undiagnosed. ~0.2% of buckets take 10-20x longer than neighbour
 at low reserved VRAM. Matches the cudaFree-and-retry signature that `empty_cache()` in
 batched_generate exists to avoid. A few percent of runtime, no correctness impact.
 
+BATCHED ETA is based on bucket workload, not chunk count. Chunks run shortest-to-longest and later
+buckets also hold fewer rows, so a whole-run chunks/second average becomes increasingly optimistic.
+The worker fits elapsed bucket time against each bucket's input-token maximum after 20 samples and
+forecasts the known remaining bucket plan through `narration_progress.json`. The server uses the old
+chunk-rate estimate only for the unsorted parallel engine. Replayed against all 179 buckets of the
+2026-09-12 Annihilation run, the new estimate was 4-9% high from bucket 100 onward; the old estimate
+was 52-65% low at the same checkpoints and displayed "under a minute" with five buckets still left.
+
 PARAGRAPH DETECTION IS ADAPTIVE AND IMPLEMENTED (2026-08-03, app/pipeline_text.py).
 `detect_paragraph_style` probes 24 pages and returns "indent" or "gap"; the vertical-gap fallback
 fires only when indented lines are rare. Verse cannot see the change by construction. Verified:

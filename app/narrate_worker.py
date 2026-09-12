@@ -53,6 +53,7 @@ perth.PerthImplicitWatermarker = _NoWatermark
 from chatterbox.tts import ChatterboxTTS
 from assembly_metadata import outline_chapter_marks
 from gpu_oom import bisect_cuda_oom, is_cuda_oom, recover_cuda_after_oom
+from narration_eta import PROGRESS_FILENAME, estimate_remaining_seconds, write_progress
 from narration_safety import repair_capped_sequences
 
 CHAR_CEILING = 400
@@ -346,6 +347,22 @@ def _make_buckets(toks_sorted, max_batch, token_budget):
     return buckets
 
 
+def _write_batched_progress(path, completed, buckets, elapsed_sec):
+    remaining_tmax = [
+        max(int(tokens.numel()) for _, tokens in bucket)
+        for bucket in buckets[len(completed):]
+    ]
+    eta = estimate_remaining_seconds(completed, remaining_tmax)
+    payload = {
+        "done_buckets": len(completed),
+        "total_buckets": len(buckets),
+        "elapsed_sec": round(elapsed_sec, 1),
+        "eta_sec": round(eta, 1) if eta is not None else None,
+    }
+    if not write_progress(path, payload):
+        print("could not update narration ETA; narration is continuing", flush=True)
+
+
 def _oom_bisect_generate(model, conds, bucket, shard):
     """Generate a bucket, recursively bisecting classified CUDA OOMs."""
     import torch as _torch
@@ -402,8 +419,13 @@ def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size
     toks = [(i, bn.tokenize_chunk(model, plan[i]["text"]).cpu()) for i in todo]
     toks.sort(key=lambda it: it[1].numel())
     buckets = _make_buckets(toks, batch_size, token_budget)
+    progress_path = seg_dir.parent / PROGRESS_FILENAME
+    completed_buckets = []
+    progress_started = _time.monotonic()
+    _write_batched_progress(progress_path, completed_buckets, buckets, 0.0)
     done = 0
     for bnum, bucket in enumerate(buckets):
+        _bucket_started = _time.monotonic()
         _tmax = max(int(t.numel()) for _, t in bucket)
         _t0 = _time.time()
         seqs = _oom_bisect_generate(model, conds, bucket, shard)
@@ -457,6 +479,13 @@ def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size
                 wav = wav.squeeze().cpu().numpy()
             _write_segment(seg_dir, i, wav, sr, shard)
             done += 1
+        completed_buckets.append((_tmax, _time.monotonic() - _bucket_started))
+        _write_batched_progress(
+            progress_path,
+            completed_buckets,
+            buckets,
+            _time.monotonic() - progress_started,
+        )
         print(f"shard {shard}: {done}/{len(toks)} generated", flush=True)
 
 
