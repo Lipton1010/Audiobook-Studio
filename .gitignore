@@ -9,10 +9,42 @@ __pycache__/
 *.mp3
 *.flac
 *.ogg
+*.m4a
+*.m4b
+*.aac
+*.aiff
+*.opus
+*.epub
+*.mobi
+*.azw
+*.azw3
 *.jpg
 app/jobs/
 app/voices/
 audiobooks/
+source_pdfs/
+processed_pdfs/
+# Sample scripts and Modelfile remain source; these subfolders hold book/voice data.
+/samples/L_D_M/
+/samples/Novel sample/
+/samples/The Odyssey/
+/samples/Voice_Sample/
+
+# Runtime environments, model caches, and generated build/test output.
+.venv/
+venv/
+envs/
+runtime/
+miniconda3/
+chatterbox/
+fish-speech/
+dnd-transcribe/
+node_modules/
+.cache/
+.pytest_cache/
+.test-tmp/
+build/
+dist/
 
 # Machine-specific config stays local; only config.example.json is tracked.
 app/config.json

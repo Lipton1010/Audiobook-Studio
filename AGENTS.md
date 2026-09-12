@@ -22,6 +22,20 @@ Hard project rules:
 7. Build installers only with `install\build_installer.bat` from clean `HEAD`.
 8. Do not publish a release until `RELEASE_CHECKLIST.md` is fully satisfied.
 
+## Graft on this Windows checkout
+
+Run Graft with native Windows process access. In the Codex managed sandbox,
+Node's `spawnSync git` can fail with EPERM. Graft 0.16.0 then falls back to a
+filesystem walk that does not honor `.gitignore`, reaches protected generated
+output, and serves a stale graph. Request execution outside that sandbox for
+Graft commands when this occurs; do not change output permissions or delete data.
+
+The root `.gitignore` is the shared Git/Graft exclusion policy when Git can run.
+Use `graft build --no-reuse` for a full reparse, then `graft check`. Queries refresh
+the structural graph after source edits; markdown cards require `graft build`.
+See `GRAFT_INDEX.md` for verified coverage and parser limitations. Do not infer
+whole-repository coverage from a clean graph check alone.
+
 <!-- graft:start -->
 ## Graft — repo context graph
 

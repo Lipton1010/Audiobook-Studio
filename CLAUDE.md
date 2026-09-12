@@ -55,6 +55,15 @@ Read body text and section headings. Never read captions, figure/table labels, o
 
 ## Current validated state
 
+2026-09-12 Graft indexing repair: native Windows process access is required when
+the Codex sandbox blocks Node's Git subprocess. That failure made Graft ignore
+Git exclusions during its filesystem fallback and serve a stale 41-file graph.
+The exclusion policy now covers generated output, runtime environments, books,
+and audio. A full reparse indexed all 47 current Python files; source addition,
+edit, and removal each triggered automatic refresh. Files and permissions in
+the protected output tree were preserved. See GRAFT_INDEX.md for evidence,
+unsupported file types, and the remaining upstream sandbox/fallback limitation.
+
 2026-09-12 narration safety update, candidate 1.0.3: a Jurassic Park run stalled after 336
 segments with about 22.36 GiB dedicated and 3.86 GiB shared GPU memory in use. Canceled at the
 user's request; all 336 completed segments remain resumable. The original stochastic trigger
