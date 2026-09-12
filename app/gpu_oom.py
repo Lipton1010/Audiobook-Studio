@@ -9,6 +9,26 @@ import re
 import traceback
 
 
+def configure_memory_limit(torch_module, workers=1):
+    """Leave physical VRAM headroom before loading models or creating tensors.
+
+    The input-token bucket budget cannot bound generated speech or KV-cache
+    growth. An allocator limit makes oversized batches raise CUDA OOM before
+    Windows has to back those allocations with shared system memory.
+    """
+    if workers < 1:
+        raise ValueError("workers must be positive")
+    free, total = torch_module.cuda.mem_get_info()
+    headroom = max(1024 ** 3, int(total * 0.15))
+    allowed = min(int(total * 0.80) // workers, (free - headroom) // workers)
+    if allowed <= 0:
+        raise torch_module.cuda.OutOfMemoryError(
+            "CUDA out of memory: insufficient free VRAM to reserve narration headroom"
+        )
+    torch_module.cuda.set_per_process_memory_fraction(allowed / total)
+    return allowed
+
+
 def is_cuda_oom(exc, torch_module=None):
     """True only for PyTorch's OOM type or a CUDA-qualified OOM RuntimeError."""
     cuda = getattr(torch_module, "cuda", None)

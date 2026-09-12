@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import tempfile
 import types
@@ -33,6 +34,10 @@ class BucketEtaTests(unittest.TestCase):
         self.assertAlmostEqual(
             estimate_remaining_seconds(observations, [100, 100]), 21.0
         )
+
+    def test_tiny_headings_do_not_predict_cost_of_long_prose(self):
+        observations = [(6 + i % 8, 2.0 + i * 0.03) for i in range(28)]
+        self.assertIsNone(estimate_remaining_seconds(observations, [100, 120, 180]))
 
     def test_progress_sidecar_is_valid_json(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -69,6 +74,15 @@ class ServerProgressTests(unittest.TestCase):
         with unittest.mock.patch("server.time.time", return_value=101.0):
             progress = server._narration_progress(self.job_dir, self.state)
         self.assertIsNone(progress["eta_sec"])
+
+    def test_stalled_batch_hides_stale_eta_and_explains_delay(self):
+        progress_file = self.job_dir / "narration_progress.json"
+        progress_file.write_text(json.dumps({"eta_sec": 7530}), encoding="utf-8")
+        os.utime(progress_file, (100, 100))
+        with unittest.mock.patch("server.time.time", return_value=221):
+            progress = server._narration_progress(self.job_dir, self.state)
+        self.assertIsNone(progress["eta_sec"])
+        self.assertIn("taking longer", progress["message"])
 
     def test_generation_eta_is_hidden_during_assembly(self):
         (self.job_dir / "plan_total.txt").write_text("1", encoding="utf-8")

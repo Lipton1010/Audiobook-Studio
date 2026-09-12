@@ -5,7 +5,7 @@ the exact commit and installer artifact being published.
 
 ## Source and privacy
 
-- [ ] The exact 1.0.2 candidate `git status --short --branch` is clean and synchronized with the intended remote.
+- [ ] The exact 1.0.3 candidate `git status --short --branch` is clean and synchronized with the intended remote.
 - [x] Dependency-free regression tests pass: `python -m unittest discover -s tests -v`.
 - [x] Python and embedded JavaScript syntax checks pass.
 - [x] Current source and installer designs contain no live crash-report credential; reporting is local opt-in and disabled by default.
@@ -17,10 +17,10 @@ the exact commit and installer artifact being published.
 
 ## Installer artifact
 
-- [x] Build 1.0.2 only with `install\build_installer.bat patch`; never compile the Inno file directly.
-- [x] The 1.0.2 build comes from clean `HEAD` and records its commit, byte size, and SHA-256 at handoff.
-- [x] The 1.0.2 Inno output manifest passes the prohibited-content check, and source/artifact credential scans pass.
-- [x] The built 1.0.2 executable is not committed to Git.
+- [ ] Build 1.0.3 only with `install\build_installer.bat` and `install\build_installer.bat patch`; never compile the Inno file directly.
+- [ ] The 1.0.3 builds come from clean `HEAD` and record their commit, byte sizes, and SHA-256 at handoff.
+- [ ] Both 1.0.3 Inno output manifests pass the prohibited-content check, and source/artifact credential scans pass.
+- [ ] The built 1.0.3 executables are not committed to Git.
 
 ## Exact-build clean-machine validation
 
@@ -33,6 +33,8 @@ the exact commit and installer artifact being published.
 - [ ] Generate a short CUDA narration with the installed build and verify the final audio.
 - [ ] In the installed pywebview window, save and inspect both a beta-report ZIP and finished audio.
 - [ ] On a 16 GB NVIDIA GPU, force or naturally reach a recoverable batched OOM and confirm ordered bisection/resume succeeds.
+- [ ] Apply the patch to an actual 1.0.1 install and verify narration imports, audio downloads, and retained user data.
+- [ ] Observe dedicated and shared GPU memory through a complete installed-build narration; a developer-machine allocator cap test is not a physical small-card test.
 - [ ] Close the app during a synthetic narration and confirm no owned GPU worker survives and no unrelated process is terminated.
 - [ ] Confirm M4B chapter navigation and the completed-job segment-cache cleanup action.
 - [ ] Uninstall and verify user books, voices, jobs, and audiobooks are preserved as documented.

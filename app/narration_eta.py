@@ -6,6 +6,8 @@ import time
 
 PROGRESS_FILENAME = "narration_progress.json"
 MIN_BUCKET_SAMPLES = 20
+STALE_PROGRESS_SECONDS = 120
+STALLED_BATCH_SECONDS = 300
 
 
 def estimate_remaining_seconds(observations, remaining_tmax):
@@ -13,6 +15,13 @@ def estimate_remaining_seconds(observations, remaining_tmax):
     if not remaining_tmax:
         return 0.0
     if len(observations) < MIN_BUCKET_SAMPLES:
+        return None
+
+    # A few tiny headings cannot calibrate the cost of the remaining prose.
+    # Wait until the middle of the remaining workload is within 2x the
+    # observed input lengths instead of extrapolating across an entire book.
+    remaining_sorted = sorted(remaining_tmax)
+    if remaining_sorted[len(remaining_sorted) // 2] > 2 * max(x for x, _ in observations):
         return None
 
     xs = [float(tmax) for tmax, _ in observations]

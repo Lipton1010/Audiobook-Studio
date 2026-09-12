@@ -33,7 +33,7 @@ import requests
 
 import pipeline_text as pt
 from config import CFG
-from narration_eta import PROGRESS_FILENAME
+from narration_eta import PROGRESS_FILENAME, STALE_PROGRESS_SECONDS, STALLED_BATCH_SECONDS
 
 APP_DIR = Path(__file__).parent
 try:
@@ -1204,6 +1204,27 @@ def _narration_failure_message(job_dir, codes):
     return f"a narration worker failed (exit codes {codes}), see log"
 
 
+def _wait_for_generation(proc, job_dir, engine):
+    if engine != "batched":
+        return proc.wait()
+    progress_file = job_dir / PROGRESS_FILENAME
+    while True:
+        try:
+            return proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                age = time.time() - progress_file.stat().st_mtime
+            except FileNotFoundError:
+                # Model loading precedes the first bucket progress record.
+                continue
+            if age > STALLED_BATCH_SECONDS:
+                raise RuntimeError(
+                    "Narration stopped because a batch made no progress for five minutes. "
+                    "Completed segments are saved. Close other GPU-heavy applications "
+                    "and resume the job."
+                )
+
+
 def run_narration(st):
     job_id = st["id"]
     job_dir = JOBS_DIR / job_id
@@ -1255,7 +1276,7 @@ def run_narration(st):
                 _set_active_processes(job_id, procs)
                 if _cancel_flags.pop(job_id, False):
                     raise _Cancelled()
-            codes = [p.wait() for p in procs]
+            codes = [_wait_for_generation(p, job_dir, engine) for p in procs]
             _clear_active_processes(job_id)
 
             if _cancel_flags.pop(job_id, False):
@@ -1421,13 +1442,14 @@ def _narration_progress(job_dir, st):
     baseline = st.get("narrate_baseline_done", 0)
     this_run = done - baseline
     eta = None
+    progress_stale = False
     if st.get("engine") == "batched":
         try:
-            progress = json.loads(
-                (job_dir / PROGRESS_FILENAME).read_text(encoding="utf-8")
-            )
+            progress_file = job_dir / PROGRESS_FILENAME
+            progress = json.loads(progress_file.read_text(encoding="utf-8"))
+            progress_stale = time.time() - progress_file.stat().st_mtime > STALE_PROGRESS_SECONDS
             worker_eta = progress.get("eta_sec")
-            if worker_eta is not None and float(worker_eta) >= 0:
+            if not progress_stale and worker_eta is not None and float(worker_eta) >= 0:
                 eta = float(worker_eta)
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             pass
@@ -1436,6 +1458,8 @@ def _narration_progress(job_dir, st):
     if total and done >= total:
         eta = None
         message = "assembling"
+    elif progress_stale:
+        message = "current batch is taking longer than expected; time estimate unavailable"
     elif done == 0:
         message = f"loading model ({n} worker{'s' if n > 1 else ''})"
     else:

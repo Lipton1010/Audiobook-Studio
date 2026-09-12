@@ -52,7 +52,7 @@ perth.PerthImplicitWatermarker = _NoWatermark
 
 from chatterbox.tts import ChatterboxTTS
 from assembly_metadata import outline_chapter_marks
-from gpu_oom import bisect_cuda_oom, is_cuda_oom, recover_cuda_after_oom
+from gpu_oom import bisect_cuda_oom, configure_memory_limit, is_cuda_oom, recover_cuda_after_oom
 from narration_eta import PROGRESS_FILENAME, estimate_remaining_seconds, write_progress
 from narration_safety import repair_capped_sequences
 
@@ -427,6 +427,8 @@ def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size
     for bnum, bucket in enumerate(buckets):
         _bucket_started = _time.monotonic()
         _tmax = max(int(t.numel()) for _, t in bucket)
+        print(f"shard {shard}: starting bucket {bnum + 1}/{len(buckets)} "
+              f"N={len(bucket)} Tmax={_tmax}: generating speech tokens", flush=True)
         _t0 = _time.time()
         seqs = _oom_bisect_generate(model, conds, bucket, shard)
         _t3s = _time.time() - _t0
@@ -456,6 +458,7 @@ def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size
                 max_attempts=3,
                 on_retry=_log_retry,
             )
+        print(f"shard {shard}: bucket {bnum + 1}/{len(buckets)}: converting speech tokens to audio", flush=True)
         _t0 = _time.time()
         wavs = _oom_bisect_vocode(model, conds, seqs, batch_s3gen, shard)
         _s3s = _time.time() - _t0
@@ -509,7 +512,13 @@ def run_generate(job_dir, plan, ref_wav, shard, nshards, engine="parallel",
     todo = [i for i in my_indices if not (seg_dir / f"seg_{i:06d}.wav").exists()]
     print(f"Shard {shard}/{nshards}: {len(my_indices)} of {len(plan)} chunks, "
           f"{len(todo)} to generate, engine={engine}")
-    print("Loading Chatterbox model...")
+    if not todo:
+        print(f"shard {shard}: all segments already present", flush=True)
+        return
+    allowed = configure_memory_limit(torch, workers=nshards)
+    print(f"CUDA allocator budget: {allowed / 1024 ** 3:.2f} GiB "
+          "(physical VRAM headroom reserved)", flush=True)
+    print("Loading Chatterbox model...", flush=True)
     model = ChatterboxTTS.from_pretrained(device="cuda")
     sr = model.sr
 

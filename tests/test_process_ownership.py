@@ -122,6 +122,29 @@ class RunNarrationCleanupTests(unittest.TestCase):
         proc.kill.assert_called_once()
         self.assertIsNone(server._active_procs["job_id"])
 
+    def test_stalled_batch_stops_owned_worker_and_preserves_segments(self):
+        seg_dir = self.job_dir / "segments"
+        seg_dir.mkdir()
+        segment = seg_dir / "seg_000000.wav"
+        segment.write_bytes(b"completed audio")
+        proc = mock.Mock()
+        proc.poll.return_value = None
+        proc.wait.side_effect = [subprocess.TimeoutExpired("worker", 5), 0]
+
+        def spawn(*_args, **_kwargs):
+            progress = self.job_dir / "narration_progress.json"
+            progress.write_text('{}', encoding="utf-8")
+            os.utime(progress, (100, 100))
+            return proc
+
+        with mock.patch.object(server, "_spawn_worker", side_effect=spawn), \
+             mock.patch.object(server.time, "time", return_value=401):
+            with self.assertRaisesRegex(RuntimeError, "five minutes"):
+                server.run_narration(self.state)
+        proc.kill.assert_called_once()
+        self.assertEqual(segment.read_bytes(), b"completed audio")
+        self.assertIsNone(server._active_procs["job_id"])
+
 
 if __name__ == "__main__":
     unittest.main()

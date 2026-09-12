@@ -55,6 +55,23 @@ Read body text and section headings. Never read captions, figure/table labels, o
 
 ## Current validated state
 
+2026-09-12 narration safety update, candidate 1.0.3: a Jurassic Park run stalled after 336
+segments with about 22.36 GiB dedicated and 3.86 GiB shared GPU memory in use. Canceled at the
+user's request; all 336 completed segments remain resumable. The original stochastic trigger
+was not reproduced. The input-token budget alone does not bound generated-token memory.
+Workers now set a CUDA allocator ceiling before model loading, retaining physical VRAM
+headroom. Existing ordered OOM bisection handles batches that exceed it. Batched progress hides
+an ETA after two minutes without an update and stops the owned worker resumably after five;
+model loading before the first progress record is not covered by that timeout. Early heading
+samples no longer extrapolate an ETA far beyond observed text lengths. The patch now includes
+all local Python import dependencies and the voice-conversion helper (15 files total).
+All 66 unit tests pass. Real T3/S3Gen probes across five production-plan buckets recovered under
+a 6 GiB allocator cap; a synthetic forced-1000-token test split 12 rows into groups of 3, peaked
+at 6 GiB reserved, then generated 12 finite, non-silent audio segments in the same CUDA context.
+These are developer-machine checks, not physical small-card or installed-build certification.
+See NARRATION_AUDIT.md for evidence and remaining release gates. Restart the app to load new
+server-side safeguards before resuming. Prior 1.0.2 patch assurances are superseded by this audit.
+
 Remote is github.com/Lipton1010/Audiobook-Studio. Keep the repo deliberately MINIMAL: one branch
 (master) and one tag (v1-parallel, the pre-batched-engine rollback point). Delete feature branches
 once merged; branch clutter is what caused stray commits. Check real git state with `git log` and
@@ -88,7 +105,7 @@ D:\Audiobook_Pipeline\app\ is a local web app wrapping the whole pipeline, PDF t
 app/batched_narrate.py puts N text chunks that share one voice through a SINGLE T3 forward pass. It reproduces v1's per-sequence math (right-padded text so real tokens keep learned positions 0..T_j-1, CFG as a 2N-row block-ordered batch, explicit position_ids from cumsum(mask)-1, per-row EOS with finished rows frozen to a safe one-hot). Quality is verified: byte-identical tokens to the old parallel engine. S3Gen batches a bucket when there is more than one valid row and trims every result to its real token length; one-row buckets use v1's exact path.
 
 - Selected by config["engine"] ("batched" default, "parallel" fallback). server.py DEFAULT_ENGINE reads env AUDIOBOOK_ENGINE. The batched engine runs ONE process on purpose.
-- VRAM safety is a TOKEN BUDGET, not a fixed batch size: buckets cap rows*Tmax at BATCH_TOKEN_BUDGET (default 1300, cap BATCH_SIZE 12). A fixed count OOM-thrashed and looked like a hang ~62% into a book once chunks got long. On the 4090 the longest chunks land at N=4, medium ~N=8, short at the 12 cap.
+- Buckets cap rows*Tmax at BATCH_TOKEN_BUDGET (default 1300, cap BATCH_SIZE 12). This controls input work, not worst-case generated-token memory; the 1.0.3 allocator ceiling and OOM bisection supply an additional memory safeguard. A fixed count OOM-thrashed and looked like a hang ~62% into a book once chunks got long. On the 4090 the longest chunks land at N=4, medium ~N=8, short at the 12 cap.
 - HONEST SPEEDUP, do not overstate it: ~2x on a full book, and it is chunk-length dependent. Short/medium chunks hit ~3-4x; long chunks near CHAR_CEILING 400 are compute-bound AND forced to small batches, giving only ~1.1-1.2x. Earlier versions of this file said the budget was over-conservative and that S3Gen was "~15% of gen time and overlappable"; BOTH were measured and disproved on 2026-07-26, see the next section.
 - batched_generate frees the kv-cache and calls torch.cuda.empty_cache() before vocoding. This is load-bearing: without it the reserved pool climbs across buckets and pushes S3Gen onto cudaFree-and-retry (one 728-token chunk took 95s instead of 0.87s).
 - A bucket runs until EVERY row hits EOS, so one row that never emits EOS still makes the bucket run to max_new_tokens. CORRECTED 2026-08-04, this used to say "output stays correct, only throughput suffers" and that is FALSE: a runaway row once vocoded its padding as 21.4 seconds of audible DEAD AIR. The worker now blocks capped rows before vocoding, retries only that row in isolation up to three times, and fails resumably rather than writing bad audio if every retry caps. The dependency-free safety logic is regression-tested; a fresh CUDA production run remains a release validation gate.
@@ -103,7 +120,8 @@ MEASURED DEAD. Do not propose either again without new evidence.
 - OVERLAPPING S3Gen WITH T3: ceiling 1.52x, real implementation delivered 1.09x. T3's decode loop is
   launch-bound Python and a vocoder thread contends for the GIL; Windows has no CUDA MPS.
 - RAISING BATCH_TOKEN_BUDGET: 1800 measures 0.96x against 1300 on real chunks. 1300 is the sweet
-  spot. Peak VRAM is NOT the binding constraint (peaks ~8 GB of 24); per-row compute is.
+  spot in those measured runs: peaks were ~8 GB of 24 and per-row compute was the constraint.
+  This is not a universal memory-safety claim; the 2026-09-12 run exhausted dedicated VRAM.
 
 BENCHMARKING RULE. Always build chunk lists with `narrate_worker.build_plan`. Three separate
 benchmarks gave wrong answers by tokenizing raw blocks.json text (792 tokens) instead of real chunks

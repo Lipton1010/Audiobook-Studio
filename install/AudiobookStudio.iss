@@ -47,7 +47,7 @@
 
 #define MyAppName "Audiobook Studio"
 #define MyAppDirName "AudiobookStudio"
-#define MyAppVersion "1.0.2"
+#define MyAppVersion "1.0.3"
 #define MyAppPublisher "Audiobook Studio"
 
 [Setup]

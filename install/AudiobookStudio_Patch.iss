@@ -29,7 +29,7 @@
 ;
 #define MyAppName "Audiobook Studio"
 #define MyAppDirName "AudiobookStudio"
-#define MyAppVersion "1.0.2"
+#define MyAppVersion "1.0.3"
 #define MyAppPublisher "Audiobook Studio"
 
 [Setup]
@@ -63,6 +63,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Source: "..\app\server.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\narrate_worker.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\narration_eta.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\batched_narrate.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\narration_safety.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\assembly_metadata.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\pipeline_text.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\convert_voice.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\gpu_oom.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\launcher.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\managed_runtime.py"; DestDir: "{app}\app"; Flags: ignoreversion

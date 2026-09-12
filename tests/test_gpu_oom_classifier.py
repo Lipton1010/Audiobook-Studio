@@ -7,7 +7,7 @@ from unittest import mock
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP_DIR))
 
-from gpu_oom import bisect_cuda_oom, is_cuda_oom, recover_cuda_after_oom
+from gpu_oom import bisect_cuda_oom, configure_memory_limit, is_cuda_oom, recover_cuda_after_oom
 
 
 class FakeTorchOom(RuntimeError):
@@ -40,6 +40,29 @@ class CudaOomClassifierTests(unittest.TestCase):
 
     def test_rejects_non_runtime_exception_with_same_words(self):
         self.assertFalse(is_cuda_oom(ValueError("CUDA error: out of memory"), fake_torch()))
+
+
+class MemoryBudgetTests(unittest.TestCase):
+    def test_budget_accounts_for_card_size_free_memory_and_workers(self):
+        for total_gb, free_gb, workers, expected_gb in [
+            (24, 23, 1, 19.2), (16, 15, 1, 12.6), (8, 7, 1, 5.8),
+            (24, 12, 1, 8.4), (24, 23, 2, 9.6),
+        ]:
+            with self.subTest(total_gb=total_gb, free_gb=free_gb, workers=workers):
+                cuda = fake_torch().cuda
+                cuda.mem_get_info = lambda: (int(free_gb * 1024**3), int(total_gb * 1024**3))
+                cuda.set_per_process_memory_fraction = mock.Mock()
+                budget = configure_memory_limit(SimpleNamespace(cuda=cuda), workers)
+                self.assertAlmostEqual(budget / 1024**3, expected_gb, places=6)
+                cuda.set_per_process_memory_fraction.assert_called_once_with(budget / (total_gb * 1024**3))
+
+    def test_busy_gpu_fails_before_model_load(self):
+        cuda = fake_torch().cuda
+        cuda.mem_get_info = lambda: (1024**3, 24 * 1024**3)
+        cuda.set_per_process_memory_fraction = mock.Mock()
+        with self.assertRaises(FakeTorchOom):
+            configure_memory_limit(SimpleNamespace(cuda=cuda))
+        cuda.set_per_process_memory_fraction.assert_not_called()
 
 
 class CudaOomBisectionTests(unittest.TestCase):
