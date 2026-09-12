@@ -36,6 +36,9 @@ install/*.exe
 # the previous Setup_AudiobookStudio.exe into the new one and fail.
 Output/
 
+# Private D&D speech, reference, renders, and editing files.
+Ozymandias_20260903/
+
 # Written by setup.py / the one-click installer on the target machine.
 install_log.txt
 install_warnings.txt
@@ -56,3 +59,6 @@ HANDOFF_*.md
 # CLAUDE.md on 2026-08-04. settings.local.json and *.bak stay local.
 .claude/*
 !.claude/skills/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

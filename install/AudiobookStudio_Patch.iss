@@ -5,7 +5,7 @@
 ; never embed or inject a reporting credential.
 ;
 ; This does NOT touch conda, torch, ffmpeg, or the model weights at all --
-; only 8 small files (the changed app Python/UI files, config schema, and
+; only explicitly named small files (the changed app Python/UI files, config schema, and
 ; VERSION), all explicitly named, never a
 ; wildcard, so there is no risk of sweeping up a book PDF or the voice clip
 ; the way the main installer's `..\*` source spec has to guard against.
@@ -64,6 +64,7 @@ Source: "..\app\server.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\narrate_worker.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\gpu_oom.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\launcher.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\managed_runtime.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\static\index.html"; DestDir: "{app}\app\static"; Flags: ignoreversion
 Source: "..\app\config.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\config.example.json"; DestDir: "{app}\app"; Flags: ignoreversion

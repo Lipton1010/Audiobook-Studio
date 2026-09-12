@@ -40,11 +40,12 @@ which is the single most common thing that makes a fresh install look broken.
 """
 import argparse
 import json
-import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from app.managed_runtime import configure_managed_runtime
 
 REPO = Path(__file__).resolve().parent
 INSTALL = REPO / "install"
@@ -58,38 +59,6 @@ CU_INDEX = "https://download.pytorch.org/whl/cu124"
 # the env with a numpy the narrator cannot use. The cu124 index carries 1.26.4.
 TORCH_PINS = ["torch==2.6.0+cu124", "torchaudio==2.6.0+cu124", "torchvision==0.21.0+cu124",
               "numpy==1.26.4"]
-
-
-def configure_managed_runtime(runtime_root):
-    """Keep installer-owned environments and caches under one app folder.
-
-    This is opt-in because a source checkout deliberately uses the developer's
-    existing conda/cache layout. The one-click installer always enables it.
-    """
-    root = Path(runtime_root).resolve()
-    cache = root / "cache"
-    miniconda = root / "miniconda3"
-    for folder in (cache, miniconda / "envs", miniconda / "pkgs"):
-        folder.mkdir(parents=True, exist_ok=True)
-    managed = {
-        "HF_HOME": cache / "huggingface",
-        "TORCH_HOME": cache / "torch",
-        "PIP_CACHE_DIR": cache / "pip",
-        "XDG_CACHE_HOME": cache,
-        "XDG_CONFIG_HOME": root / "config",
-        "CONDA_ENVS_PATH": miniconda / "envs",
-        "CONDA_PKGS_DIRS": miniconda / "pkgs",
-    }
-    for name, value in managed.items():
-        os.environ[name] = str(value)
-    # Conda otherwise creates ~/.conda/environments.txt, and current Miniconda
-    # enables Anaconda's anonymous-usage token by default under ~/.conda.
-    os.environ["CONDA_REGISTER_ENVS"] = "false"
-    os.environ["CONDA_NO_PLUGINS"] = "true"
-    os.environ["CONDA_SOLVER"] = "classic"
-    os.environ["CONDA_ANACONDA_ANON_USAGE"] = "false"
-    os.environ["ANACONDA_ANON_USAGE"] = "false"
-    return root
 
 
 # ---------- pretty output ----------
@@ -450,7 +419,7 @@ def main():
     args = ap.parse_args()
 
     if args.runtime_root:
-        runtime_root = configure_managed_runtime(args.runtime_root)
+        runtime_root = configure_managed_runtime(args.runtime_root, create_dirs=True)
         print(f"  Managed runtime: {runtime_root}")
 
     hr()

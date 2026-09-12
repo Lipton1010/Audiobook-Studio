@@ -229,18 +229,5 @@ class Config:
         self._ffmpeg_cache = (found,)
         return found
 
-    def summary(self):
-        return {
-            "base_dir": str(self.base_dir),
-            "chatterbox_python": self.chatterbox_python,
-            "reference_wav": self.reference_wav,
-            "audiobooks_dir": str(self.audiobooks_dir),
-            "library_roots": [str(r) for r in self.library_roots],
-            "ollama_url": self.ollama_url,
-            "ocr_model": self.ocr_model,
-            "port": self.port,
-        }
-
-
 # Import-time singleton; server.py reads these module attributes.
 CFG = Config()

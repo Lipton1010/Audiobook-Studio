@@ -13,7 +13,6 @@ app at all.
 """
 import atexit
 import json
-import os
 import socket
 import sys
 import threading
@@ -23,33 +22,10 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
+from managed_runtime import configure_managed_runtime
+
 APP_DIR = Path(__file__).resolve().parent
 LOG_PATH = APP_DIR.parent / "launcher_log.txt"
-
-
-def _configure_managed_runtime():
-    """Reapply installer-owned cache paths on every shortcut launch."""
-    root = APP_DIR.parent / "runtime"
-    miniconda = root / "miniconda3"
-    if not (miniconda / "python.exe").exists():
-        return
-    cache = root / "cache"
-    values = {
-        "HF_HOME": cache / "huggingface",
-        "TORCH_HOME": cache / "torch",
-        "PIP_CACHE_DIR": cache / "pip",
-        "XDG_CACHE_HOME": cache,
-        "XDG_CONFIG_HOME": root / "config",
-        "CONDA_ENVS_PATH": miniconda / "envs",
-        "CONDA_PKGS_DIRS": miniconda / "pkgs",
-    }
-    for name, value in values.items():
-        os.environ[name] = str(value)
-    os.environ["CONDA_REGISTER_ENVS"] = "false"
-    os.environ["CONDA_NO_PLUGINS"] = "true"
-    os.environ["CONDA_SOLVER"] = "classic"
-    os.environ["CONDA_ANACONDA_ANON_USAGE"] = "false"
-    os.environ["ANACONDA_ANON_USAGE"] = "false"
 
 
 def _redirect_detached_output():
@@ -64,7 +40,7 @@ def _redirect_detached_output():
         pass
 
 
-_configure_managed_runtime()
+configure_managed_runtime(APP_DIR.parent / "runtime")
 _redirect_detached_output()
 sys.path.insert(0, str(APP_DIR))
 
