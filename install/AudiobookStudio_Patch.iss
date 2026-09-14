@@ -53,7 +53,9 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\app\icon.ico
-ExtraDiskSpaceRequired=12884901888
+; The measured 1.0.5 narration environments, models and caches need about
+; 17.4 GB beyond the existing base runtime. Reserve 20 GiB for the upgrade.
+ExtraDiskSpaceRequired=21474836480
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
