@@ -47,7 +47,7 @@
 
 #define MyAppName "Audiobook Studio"
 #define MyAppDirName "AudiobookStudio"
-#define MyAppVersion "1.0.5"
+#define MyAppVersion "1.0.6"
 #define MyAppPublisher "Audiobook Studio"
 
 [Setup]
@@ -75,7 +75,7 @@ PrivilegesRequired=lowest
 ; The embedded source is tiny, but Miniconda, the conda environment, pip cache,
 ; torch, the isolated VibeVoice and quality environments, caches, and model
 ; weights need substantial headroom. The legacy fresh install measured 16.4 GB,
-; so reserve 20 GiB for the larger 1.0.5 runtime.
+; so reserve 20 GiB for the current VibeVoice runtime.
 ExtraDiskSpaceRequired=21474836480
 OutputDir=..\Output
 OutputBaseFilename=Setup_AudiobookStudio

@@ -49,6 +49,12 @@ The crew waited.""")
         self.assertEqual(blocks[2]["visual_kind"], "image or diagram indication")
         self.assertIn("chart.png", blocks[2]["text"])
 
+    def test_prose_starting_with_map_period_is_not_a_visual_caption(self):
+        blocks = pt.tag_blocks("Map. It was the first thing she checked.\nMap 2. The evacuation route.")
+        self.assertEqual([block["type"] for block in blocks], ["body", "visual"])
+        self.assertEqual(blocks[0]["text"], "Map. It was the first thing she checked.")
+        self.assertEqual(blocks[1]["visual_kind"], "image or diagram indication")
+
     def test_iteration_heading_and_quotation_are_not_consumed(self):
         blocks = pt.tag_blocks("""ITERATION ONE
 \"[AV12] is only a label,\" she said.
@@ -100,6 +106,19 @@ The generator restarted.""")
         ], "prose", 0.0, source_page=4)
         self.assertEqual([block["type"] for block in blocks], ["visual", "body"])
         self.assertEqual(blocks[1]["text"], "Mina said the reactor was stable.")
+
+    def test_path_a_numbered_colon_title_splits_from_body_as_heading(self):
+        blocks = pt._path_a_page_blocks([
+            (0, 10, "01: ARRIVAL"),
+            (0, 20, "The expedition began at dawn."),
+        ], "prose", 0.0, source_page=5)
+        self.assertEqual([block["type"] for block in blocks], ["heading", "body"])
+        self.assertEqual(blocks[0]["text"], "01: ARRIVAL")
+        self.assertEqual(blocks[1]["text"], "The expedition began at dawn.")
+
+    def test_numbered_colon_data_is_not_a_heading(self):
+        blocks = pt.paragraphs_to_blocks(["01: sensor 12"], source_page=5)
+        self.assertEqual(blocks[0]["type"], "body")
 
     def test_legacy_retag_preserves_prose_and_headings(self):
         retagged = pt.retag_legacy_visual_blocks([

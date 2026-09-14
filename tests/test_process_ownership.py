@@ -3,6 +3,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import time
 import types
 import unittest
 from pathlib import Path
@@ -13,6 +14,28 @@ sys.path.insert(0, str(APP_DIR))
 sys.modules.setdefault("fitz", types.ModuleType("fitz"))
 
 import server
+
+
+def _process_is_running(pid):
+    if os.name != "nt":
+        return False
+    import ctypes
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(0x1000, False, pid)
+    if not handle:
+        return False
+    code = wintypes.DWORD()
+    try:
+        return bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) and code.value == 259)
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 class LegacyPidSafetyTests(unittest.TestCase):
@@ -60,6 +83,107 @@ class WorkerOwnershipTests(unittest.TestCase):
             if child.poll() is None:
                 child.kill()
                 child.wait(timeout=10)
+
+    @unittest.skipUnless(os.name == "nt", "Windows Job Objects are Windows-only")
+    def test_terminate_processes_closes_job_and_kills_descendant(self):
+        root = Path(tempfile.mkdtemp())
+        trigger, child_pid = root / "trigger", root / "child.pid"
+        script = "\n".join([
+            "from pathlib import Path",
+            "import subprocess, sys, time",
+            "trigger, output = map(Path, sys.argv[1:])",
+            "while not trigger.exists(): time.sleep(.01)",
+            "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])",
+            "output.write_text(str(child.pid))",
+            "time.sleep(30)",
+        ])
+        parent = subprocess.Popen([sys.executable, "-c", script, str(trigger), str(child_pid)],
+                                  creationflags=server.WINDOWS_NO_WINDOW)
+        try:
+            server._assign_worker_to_job(parent)
+            trigger.write_text("go", encoding="utf-8")
+            for _ in range(100):
+                if child_pid.exists():
+                    break
+                time.sleep(.05)
+            self.assertTrue(child_pid.exists())
+            descendant = int(child_pid.read_text(encoding="utf-8"))
+            self.assertTrue(_process_is_running(descendant))
+            server._terminate_processes([parent])
+            time.sleep(.1)
+            self.assertFalse(_process_is_running(descendant))
+        finally:
+            server._close_worker_job([parent])
+            if parent.poll() is None:
+                parent.kill()
+                parent.wait(timeout=10)
+            child_pid.unlink(missing_ok=True)
+            trigger.unlink(missing_ok=True)
+            root.rmdir()
+
+    def test_terminate_processes_closes_only_the_passed_worker_job(self):
+        old, current = mock.Mock(), mock.Mock()
+        old.poll.return_value = current.poll.return_value = 0
+        old_job, current_job = mock.Mock(), mock.Mock()
+        old._audiobook_job, current._audiobook_job = old_job, current_job
+
+        server._terminate_processes([old])
+
+        old_job.close.assert_called_once()
+        current_job.close.assert_not_called()
+
+
+class CancelOwnershipTests(unittest.TestCase):
+    def tearDown(self):
+        server._cancel_flags.clear()
+        server._clear_active_processes("active")
+
+    def test_cancel_without_an_active_handle_preserves_another_worker_job(self):
+        active = mock.Mock()
+        active.poll.return_value = None
+        active_job = mock.Mock()
+        active._audiobook_job = active_job
+        server._set_active_processes("active", [active])
+        queued = {"id": "queued", "status": "queued", "backend": "chatterbox"}
+
+        with mock.patch.object(server, "load_state", return_value=queued):
+            server.request_cancel("queued")
+
+        active_job.close.assert_not_called()
+        active.kill.assert_not_called()
+
+    @unittest.skipUnless(os.name == "nt", "Windows Job Objects are Windows-only")
+    def test_canceling_queued_job_preserves_active_worker_descendant(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            trigger, child_pid = root / "trigger", root / "child.pid"
+            script = "\n".join([
+                "from pathlib import Path",
+                "import subprocess, sys, time",
+                "trigger, output = map(Path, sys.argv[1:])",
+                "while not trigger.exists(): time.sleep(.01)",
+                "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])",
+                "output.write_text(str(child.pid))",
+                "time.sleep(30)",
+            ])
+            active = subprocess.Popen([sys.executable, "-c", script, str(trigger), str(child_pid)],
+                                      creationflags=server.WINDOWS_NO_WINDOW)
+            try:
+                server._assign_worker_to_job(active)
+                server._set_active_processes("active", [active])
+                trigger.write_text("go", encoding="utf-8")
+                for _ in range(100):
+                    if child_pid.exists():
+                        break
+                    time.sleep(.05)
+                self.assertTrue(child_pid.exists())
+                descendant = int(child_pid.read_text(encoding="utf-8"))
+                with mock.patch.object(server, "load_state", return_value={"id": "queued", "status": "queued"}):
+                    server.request_cancel("queued")
+                self.assertTrue(_process_is_running(descendant))
+            finally:
+                server._terminate_processes([active])
+                server._clear_active_processes("active")
 
 
 class RunNarrationCleanupTests(unittest.TestCase):

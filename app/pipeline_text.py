@@ -101,7 +101,7 @@ LOOSE_LOG_ROW_RE = re.compile(r"^\s*\d{2}:\d{2}:\d{2}\s{2,}\S")
 PARTIAL_PIPE_ROW_RE = re.compile(r"^\s*\|[^|]+\|[^|]+")
 VISUAL_INDICATOR_RE = re.compile(
     r"^\s*(?:!\[[^]]*\]\([^)]*\)|\[(?:image|figure|diagram|chart|map)\b[^]]*\]|"
-    r"(?:figure|fig\.?|diagram|chart|image|illustration|map)\s*\d*\s*[:.])",
+    r"(?:figure|fig\.?|diagram|chart|image|illustration|map)\s*(?:\d+\s*[.:]|:))",
     re.I,
 )
 
@@ -463,6 +463,11 @@ HEADING_LINE_RE = re.compile(
     r"|PROLOGUE|EPILOGUE|INTRODUCTION|PREFACE|FOREWORD|AFTERWORD)\s*$",
     re.IGNORECASE,
 )
+NUMBERED_COLON_HEADING_RE = re.compile(r"^\d+\s*:\s*[A-Z][A-Z '&-]{1,58}$")
+
+
+def _is_division_heading(text):
+    return bool(HEADING_LINE_RE.match(text) or NUMBERED_COLON_HEADING_RE.match(text))
 
 LIGATURES = {
     "ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl",
@@ -665,7 +670,7 @@ def _prose_page_paragraphs(lines_with_geom, leading=0.0):
     buf = ""
     prev_y0 = None
     for x0, y0, text in lines_with_geom:
-        if HEADING_LINE_RE.match(text.strip()):
+        if _is_division_heading(text.strip()):
             if buf:
                 paras.append(buf)
                 buf = ""
@@ -701,7 +706,7 @@ def _verse_page_paragraphs(lines_with_x):
     paras = []
     buf = []
     for _, text in lines_with_x:
-        if HEADING_LINE_RE.match(text):
+        if _is_division_heading(text):
             if buf:
                 paras.append(" ".join(buf))
                 buf = []
@@ -720,7 +725,7 @@ def paragraphs_to_blocks(paragraphs, source_page=None):
     """Path A blocks: mostly body, with conservative heading detection."""
     blocks = []
     for p in paragraphs:
-        if HEADING_LINE_RE.match(p.strip()):
+        if _is_division_heading(p.strip()):
             block = {"type": "heading", "text": strip_markdown(p)}
         elif is_heading(p):
             block = {"type": "heading", "text": strip_markdown(p)}

@@ -2,6 +2,21 @@
 
 Personal project. Local build on my own hardware, for legally purchased books, personal use only.
 
+## 1.0.6 installer retest authorized, 2026-09-14
+
+The owner requested updated patch and full installer builds after the batched repair
+fixes. This authorizes packaging and exact-artifact beta testing now, while the
+private audiobook continues separately; it supersedes the earlier book-first build
+sequence. Main checkout/GitHub reconciliation still waits for the completed,
+verified audiobook and 1.0.6 beta handoff. Preserve all main checkout changes.
+
+The release candidate includes the post-beta extraction, heading, process cleanup,
+progress, persistent CPU verification, native batching, selective repair and numeric
+equivalence fixes described below. Source verification passed 203 tests with 15
+runtime-dependent skips; all 31 focused tests passed in the isolated VibeVoice
+runtime. Both installer version markers and the app version are 1.0.6. See
+RELEASE_1_0_6.md. Artifact tests and hashes are recorded separately under ignored
+Output/Release_1_0_6; source checks do not certify an installer or a public release.
 ## Current 1.0.5 integration state — 2026-09-14
 
 The owner approved VibeVoice 1.5B as the preferred narrator after listening to the
@@ -26,6 +41,119 @@ with extensive Astra final audit and testing before the established Google Drive
 beta handoff. This supersedes the earlier build hold. Fresh-machine setup and
 exact-artifact verification remain distinct from the completed local app checks;
 do not upload until those checks have finished. Public release gates still apply.
+
+## Post-beta Annihilation validation, 2026-09-14
+
+The real-book run exposed source defects after the 1.0.5 beta handoff: ordinary
+prose beginning with a visual-label word and a period could trigger review;
+numbered uppercase colon chapter titles could merge into body text; healthy
+VibeVoice generation/CPU-quality retries could exceed the watchdog interval
+between accepted passages; terminating a worker left its CPU verifier running.
+These are corrected in the source worktree with synthetic regressions. Worker
+progress now identifies actual generation and quality-check phase transitions,
+and each worker has its own lock-protected, handle-scoped Windows Job Object.
+Canceling a queued job or cleaning up an older worker cannot close another job.
+Quality thresholds and finite phase timeouts remain enforced.
+
+Astra ran the 178-test full suite (three runtime-dependent skips), then all three
+runtime tests in the existing VibeVoice interpreter. The final phase-display
+change passed the seven-test server suite. Sol independently reviewed the fixes.
+Real extraction preserves five chapter headings and all prose without false
+visuals. The full audiobook has resumed using its unchanged accepted checkpoint;
+completion and final audio verification are still pending. Scene-separator pause
+handling remains the previously documented limitation. Private evidence is under
+ignored Output/Annihilation_1_0_5. No new installer, patch, or release was built.
+## VibeVoice efficiency investigation, 2026-09-14
+
+The owner made total processing time a product priority: the previous Chatterbox
+Annihilation job finished in 36.4 minutes, while the new VibeVoice pipeline spends
+roughly as long on CPU speech checking as GPU generation and can repeat both for
+rejected passages. The older job used a different voice, all 102 PDF pages, and no
+new per-attempt CPU coverage gate; it is a product baseline, not an isolated model
+benchmark. Do not describe performance as solved.
+
+The source worker now retains one isolated CPU Whisper large-v3 helper per job and
+generates at most one provisional next passage while checking the current one.
+Int8 CPU inference, beam size five, VAD, quality thresholds, retry counts and receipt
+identities are unchanged. Only verified audio becomes a checkpoint. Real phase
+transitions, per-request timeouts, bounded diagnostics and exact-process cleanup
+remain enforced; OCR never overlaps narration on the GPU.
+
+Astra ran the final 189-test suite (12 runtime-dependent skips) and all 17 focused
+runtime/quality tests in the existing isolated runtime. Sol independently audited
+the lifecycle, speculative retries, checkpoint order and cancellation. A real
+two-passage run completed with both receipts validated in 549.0 seconds, including
+two retries of the first passage. It overlapped 78.8 seconds of work and preserved
+the already-generated second passage. This is useful evidence, not a claim that
+whole-book speed is competitive. Annihilation's seven accepted checkpoints were
+preserved for resume.
+
+A separate synthetic native batch-of-two pilot took 84.0 seconds of generation
+versus 153.2 seconds serial, with both batched outputs passing the unchanged CPU
+gate. It is not integrated into production and does not certify smaller GPUs.
+A GPU Whisper experiment was much faster but disagreed with CPU verification on
+a previously rejected passage; neither transcript is audio ground truth. GPU
+checking is not enabled. Investigate that disagreement before changing the gate.
+The short-heading absolute-threshold limitation also remains a final-audio review
+item. Private evidence lives under ignored Output/Annihilation_1_0_5.
+## Batched repair sections, 2026-09-14
+
+The owner authorized implementing native VibeVoice batching and small independent
+repair sections after the original run exhausted its third retry on parent passage
+11. The existing parent plan remains unchanged. Missing parents now use deterministic
+120-word target, 180-word maximum sections, with sentence boundaries where possible.
+Headings remain whole. All 55,513 source words and five headings are preserved in
+485 sections beneath the existing 154-parent plan. Eleven accepted parent WAVs and
+receipts were verified unchanged before resume.
+
+One model process uses native batches of two only on the measured 24 GB class
+(at least 23 GiB physical VRAM); smaller or unknown devices stay at one. CUDA OOM
+uses the existing ordered bisection helper. One persistent CPU verifier can overlap
+one following batch within a parent. Unit receipts bind source/runtime identity,
+WAV, and report hashes; resume recomputes coverage. Good peer units survive failures.
+Only a failed unit retries, with bounded attempts. The concatenated transcripts must
+also pass the unchanged parent coverage gate before parent audio is published.
+Internal joins use 5 ms edge fades, retaining every frame and all interior speech;
+accepted unit files remain unchanged. GPU ASR remains disabled.
+
+Astra's real 693-word, two-parent benchmark completed generation and all six CPU
+checks in 219.46 seconds, versus 549.04 seconds for the prior overlap trial. The
+prior trial needed two retries and this trial needed none, so this is not a controlled
+whole-book speed estimate. Measured overlap was 54.62 seconds; peak Torch allocation
+was 6,038,912,000 bytes and reservation 6,543,114,240 bytes. Both parent gates passed.
+Cache-only replay loaded neither model nor ASR and preserved all cache hashes. The
+first raw concatenation showed one 0.067-full-scale boundary step; Astra corrected
+it with the internal fades and verified every new join reaches zero, with exact
+interior PCM and timing preservation. The corrected 200.417-second mono 24 kHz AAC
+M4B export decoded completely without errors. This is objective audio validation,
+not a subjective listening verdict.
+
+Final verification: Astra full suite 200 tests OK (15 runtime-dependent skips),
+all 28 focused tests passed in the existing VibeVoice runtime, and Sol independently
+reviewed retry, cumulative quality, cancellation, cache and join behavior. The
+installer process-check fixture now uses a unique temporary app root so it can run
+while Storybird is open. Graft reparsed 71 Python files and its wiring check passed.
+The future patch source manifest includes the new module; no installer was built.
+Private measurements and resume evidence are in Output/Annihilation_1_0_5. Annihilation
+resumed through Storybird on the updated worker; full completion, final audiobook
+verification/upload, 1.0.6 packaging/handoff, and then main/GitHub reconciliation
+remain pending in that order. Performance is improved, not established as competitive
+with the historical 36.4-minute Chatterbox book run.
+
+The subsequent live run proved section repair preserved its three good peers, but
+its remaining section was rejected three times for a comparison bug: Whisper's
+"100" and "700" were counted as missing "one hundred" and "seven hundred". Those
+four formatting-only token differences plus one possessive difference crossed the
+five-word threshold. The quality tokenizer now expands valid unsigned whole
+integers (including grouped thousands, through one trillion) into canonical English
+words. Signed, fractional, decimal, leading-zero and identifier forms stay distinct;
+the threshold and runtime identity are unchanged. Astra replayed all three real
+reports: each now has only one missing/inserted word and passes. Sol independently
+reviewed numeric boundaries, including grouped decimals. Final counts after this
+correction: full suite 203 tests OK (15 runtime-dependent skips), isolated focused
+suite 31/31 passed. The book resumed through the app again with its good sections
+preserved. See numeric_equivalence_audit.json and BATCH_REPAIR_AUDIT.json in the
+private evidence folder for final source hashes and live progress. The formerly failing parent 11 subsequently passed after only its missing section was regenerated; all three accepted peer WAV hashes remained unchanged (live_repair_recovery.json).
 
 ## Hardware and environment
 

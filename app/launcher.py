@@ -89,11 +89,10 @@ def _show_error(title, msg):
 
 
 def _kill_orphan_workers():
-    """Close the owned Job Object so no narration worker survives exit."""
+    """Stop the active owned workers before the launcher exits."""
     with server._active_procs_lock:
         procs = list(server._active_procs.get("procs") or [])
     server._terminate_processes(procs)
-    server._close_worker_job()
 
 
 def _port_in_use(port):

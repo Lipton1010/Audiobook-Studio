@@ -1,5 +1,6 @@
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -9,8 +10,11 @@ from pathlib import Path
 class InstallerRunningCheckTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.root = Path(__file__).resolve().parents[1]
-        cls.script = cls.root / 'install/check_running_app.ps1'
+        repo = Path(__file__).resolve().parents[1]
+        cls.script = repo / 'install/check_running_app.ps1'
+        cls.temporary_root = tempfile.TemporaryDirectory(prefix='storybird-running-check-')
+        cls.addClassCleanup(cls.temporary_root.cleanup)
+        cls.root = Path(cls.temporary_root.name)
         cls.power_shell = Path(r'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe')
 
     def check(self):

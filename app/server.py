@@ -172,27 +172,34 @@ class _WindowsWorkerJob:
             self.handle = None
 
 
-_worker_job = None
 _worker_job_lock = threading.Lock()
 
 
 def _assign_worker_to_job(proc):
-    """Assign a newly spawned worker to this server's kill-on-close job."""
-    global _worker_job
+    """Assign a worker and its descendants to an exact owned Job Object."""
     if os.name != "nt":
         return
+    job = _WindowsWorkerJob()
+    try:
+        job.assign(proc)
+    except Exception:
+        job.close()
+        raise
     with _worker_job_lock:
-        if _worker_job is None:
-            _worker_job = _WindowsWorkerJob()
-        _worker_job.assign(proc)
+        proc._audiobook_job = job
 
 
-def _close_worker_job():
-    """Terminate every still-running owned worker without consulting PIDs."""
-    global _worker_job
+def _close_worker_job(procs=()):
+    """Close only the Job Objects attached to these live process handles."""
+    jobs, seen = [], set()
     with _worker_job_lock:
-        job, _worker_job = _worker_job, None
-    if job is not None:
+        for proc in list(procs):
+            job = vars(proc).get("_audiobook_job")
+            proc._audiobook_job = None
+            if job is not None and id(job) not in seen:
+                jobs.append(job)
+                seen.add(id(job))
+    for job in jobs:
         job.close()
 
 # Bumping the number of narration processes to fit the GPU. Each Chatterbox
@@ -1037,7 +1044,12 @@ def _clear_active_processes(job_id):
 
 
 def _terminate_processes(procs):
-    """Best-effort handle-based shutdown for processes this run owns."""
+    """Terminate the current owned process tree, then reap its root handles."""
+    # A root worker can have a CPU quality-check child. Killing only the root
+    # leaves that child running while the server remains alive, so close this
+    # run's kill-on-close Job Object before reaping the root handles. The next
+    # worker creates a fresh Job Object in _assign_worker_to_job.
+    _close_worker_job(procs)
     for p in list(procs):
         try:
             if p.poll() is None:
@@ -1823,7 +1835,9 @@ def _narration_progress(job_dir, st):
         message = "current batch is taking longer than expected; time estimate unavailable"
     elif worker_status == "checking_cache":
         message = "checking resumable passages"
-    elif worker_status == "loading_model" or done == 0:
+    elif worker_status == "quality_check":
+        message = f"checking generated passage quality ({n} worker{'s' if n > 1 else ''})"
+    elif worker_status == "loading_model" or (not worker_status and done == 0):
         message = f"loading model ({n} worker{'s' if n > 1 else ''})"
     else:
         message = f"generating ({n} worker{'s' if n > 1 else ''})"

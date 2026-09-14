@@ -1,4 +1,6 @@
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import types
@@ -41,6 +43,44 @@ class VibeVoiceServerTests(unittest.TestCase):
         progress = server._narration_progress(self.job_dir, self.state)
         self.assertEqual((progress["done"], progress["total"]), (3, 7))
         self.assertIn("loading model", progress["message"])
+
+    def test_vibevoice_first_generation_phase_is_not_called_model_loading(self):
+        (self.job_dir / "vibevoice_progress.json").write_text(
+            json.dumps({"done": 0, "total": 7, "status": "generating"}), encoding="utf-8"
+        )
+        progress = server._narration_progress(self.job_dir, self.state)
+        self.assertIn("generating", progress["message"])
+        self.assertNotIn("loading model", progress["message"])
+
+    def test_vibevoice_quality_phase_refresh_prevents_false_stall(self):
+        progress = self.job_dir / "vibevoice_progress.json"
+        calls = 0
+
+        def wait(timeout=None):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                progress.write_text(json.dumps({
+                    "done": 1, "total": 154, "status": "quality_check",
+                    "passage_index": 1, "attempt": 2,
+                }), encoding="utf-8")
+                os.utime(progress, (900, 900))
+                raise subprocess.TimeoutExpired("worker", timeout)
+            return 0
+
+        proc = mock.Mock(wait=wait)
+        with mock.patch.object(server.time, "time", return_value=901):
+            self.assertEqual(server._wait_for_generation(proc, self.job_dir, "", "vibevoice"), 0)
+
+    def test_vibevoice_watchdog_still_stops_a_stale_phase(self):
+        progress = self.job_dir / "vibevoice_progress.json"
+        progress.write_text(json.dumps({"done": 1, "total": 154, "status": "quality_check"}), encoding="utf-8")
+        os.utime(progress, (600, 600))
+        proc = mock.Mock()
+        proc.wait.side_effect = subprocess.TimeoutExpired("worker", 5)
+        with mock.patch.object(server.time, "time", return_value=901):
+            with self.assertRaisesRegex(RuntimeError, "five minutes"):
+                server._wait_for_generation(proc, self.job_dir, "", "vibevoice")
 
     def test_vibevoice_runs_one_worker_with_fixed_quality_settings(self):
         captured = {}

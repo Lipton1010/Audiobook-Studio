@@ -26,7 +26,7 @@
 ;
 #define MyAppName "Audiobook Studio"
 #define MyAppDirName "AudiobookStudio"
-#define MyAppVersion "1.0.5"
+#define MyAppVersion "1.0.6"
 #define MyAppPublisher "Audiobook Studio"
 
 [Setup]
@@ -64,6 +64,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Source: "..\app\server.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\narrate_worker.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\vibevoice_plan.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\vibevoice_units.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\vibevoice_worker.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\vibevoice_quality.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\vibevoice_assembly.py"; DestDir: "{app}\app"; Flags: ignoreversion
@@ -183,9 +184,9 @@ begin
   begin
     Result :=
       'This existing Audiobook Studio install does not have the private runtime ' +
-      'required for the 1.0.5 VibeVoice upgrade:' + #13#10#13#10 +
+      'required for the 1.0.6 VibeVoice upgrade:' + #13#10#13#10 +
       ExpandConstant('{app}\runtime\miniconda3') + #13#10#13#10 +
-      'Run the 1.0.5 full installer to repair or create the isolated runtime, ' +
+      'Run the 1.0.6 full installer to repair or create the isolated runtime, ' +
       'then run this patch again. Your books, voices, jobs, and audiobooks are preserved.';
   end;
 end;
@@ -213,7 +214,7 @@ begin
   WizardForm.ProgressGauge.Style := npbstNormal;
   if ResultCode <> 0 then
   begin
-    SuppressibleMsgBox('The 1.0.5 VibeVoice runtime did not finish building (exit code ' +
+    SuppressibleMsgBox('The 1.0.6 VibeVoice runtime did not finish building (exit code ' +
            IntToStr(ResultCode) + '). The patch files were copied, but the app ' +
            'will not launch so it cannot run with a partial runtime.' + #13#10#13#10 +
            'Full diagnostic log:' + #13#10 + LogPath + #13#10#13#10 +
@@ -237,7 +238,7 @@ begin
     exit;
   if PatchSetupOk then
     WizardForm.FinishedLabel.Caption :=
-      'Audiobook Studio 1.0.5 is ready. VibeVoice 1.5B is selected for new books.'
+      'Audiobook Studio 1.0.6 is ready. VibeVoice 1.5B is selected for new books.'
   else
     WizardForm.FinishedLabel.Caption :=
       'The patch copied its files, but VibeVoice setup failed. The app was not ' +
