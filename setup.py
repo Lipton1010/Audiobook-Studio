@@ -4,7 +4,7 @@ Audiobook Studio setup / installer. Run from the repo root:
     setup.bat            (Windows, double-click or from a terminal)
     python setup.py      (if you already have a base Python)
 
-Runs in a plain Python (stdlib only) and drives conda to build the two
+Runs in a plain Python (stdlib only) and drives conda to build the isolated
 environments the app needs, pinned to the versions this project is known to
 work with. Idempotent: re-running checks what exists and only does what's
 missing. It never touches Ollama (optional, Path B only, and shared with other
@@ -14,7 +14,9 @@ existing chatterbox env without asking.
 
 What it sets up:
   * base env  (the web server): PyMuPDF + requests, into the conda base env
-  * chatterbox env (the narrator): Python 3.11 + torch 2.6.0+cu124 +
+  * VibeVoice 1.5B narrator and CPU quality-check environments by default,
+    with pinned model/tokenizer downloads and ownership-checked runtime folders.
+  * With --narrator chatterbox, the legacy narrator: Python 3.11 + torch 2.6.0+cu124 +
     chatterbox-tts 0.1.7 + transformers 5.2.0, from install/requirements-chatterbox.txt
 
 Prerequisites it checks and reports on:
@@ -368,7 +370,7 @@ def pin_chatterbox_python(conda):
 
 # ---------- verification ----------
 
-def verify(conda):
+def verify(conda, narrator="chatterbox"):
     step("Verifying the install")
     good = True
     r = run([conda, "run", "-n", "base", "python", "-c",
@@ -379,6 +381,9 @@ def verify(conda):
     else:
         err(f"base env import failed: {(r.stderr or '').strip()[:200]}")
         good = False
+
+    if narrator == "vibevoice":
+        return good
 
     # Import exactly what the narrator imports at runtime, not just the top-level
     # packages: a shallower check passes envs that die later on soundfile, the
@@ -416,17 +421,19 @@ def main():
                      help="download Chatterbox's ~3 GB of TTS weights now instead of on first narration")
     ap.add_argument("--runtime-root", type=Path,
                      help="keep installer-owned conda environments and caches under this folder")
+    ap.add_argument("--narrator", choices=("vibevoice", "chatterbox"), default="vibevoice",
+                    help="narrator to prepare; VibeVoice 1.5B is the default, Chatterbox supports older jobs")
     args = ap.parse_args()
 
     if args.runtime_root:
-        runtime_root = configure_managed_runtime(args.runtime_root, create_dirs=True)
+        runtime_root = configure_managed_runtime(args.runtime_root, create_dirs=not args.check_only)
         print(f"  Managed runtime: {runtime_root}")
 
     hr()
     print("  Audiobook Studio - setup")
     hr()
-    conda, problems, ffmpeg_ok = check_prereqs(auto_conda=args.auto_install_conda,
-                                               auto_ffmpeg=args.auto_install_ffmpeg)
+    conda, problems, ffmpeg_ok = check_prereqs(auto_conda=args.auto_install_conda and not args.check_only,
+                                               auto_ffmpeg=args.auto_install_ffmpeg and not args.check_only)
     if "conda" in problems:
         write_warnings_file()
         print("\nInstall the missing prerequisites above, then re-run.")
@@ -438,8 +445,16 @@ def main():
         return
 
     base_ok = setup_base_env(conda)
-    cb_ok = setup_chatterbox_env(conda, assume_yes=args.yes)
-    if args.prefetch_weights and cb_ok:
+    if args.narrator == "vibevoice":
+        step("VibeVoice 1.5B and CPU quality checker in isolated runtimes")
+        result = run([sys.executable, INSTALL / "bootstrap_vibevoice.py", "--install",
+                      "--conda", conda, "--runtime-root", args.runtime_root or REPO / "runtime"])
+        all_ok = verify(conda, narrator="vibevoice") and base_ok and result.returncode == 0
+        cb_ok = False
+    else:
+        cb_ok = setup_chatterbox_env(conda, assume_yes=args.yes)
+        all_ok = verify(conda) and base_ok and cb_ok
+    if args.narrator == "chatterbox" and args.prefetch_weights and cb_ok:
         # Deliberately NOT part of all_ok: a failed pre-fetch means a slow first
         # narration, not a broken install, and prefetch_weights() already says
         # so. Counting it made the exit code contradict the message.
@@ -447,7 +462,6 @@ def main():
     # ffmpeg_ok is reported but not gated on: a missing ffmpeg costs m4b/mp3
     # output, not the install. The exit code means "the Python environments are
     # broken", which is the only condition where launching is pointless.
-    all_ok = verify(conda) and base_ok and cb_ok
     # Only meaningful once the env exists; a failure here is reported but does
     # not by itself mean the environments are broken, so it does not flip
     # all_ok. config.py's own detection still gets a chance.

@@ -11,6 +11,7 @@ available. A desktop shortcut must not silently turn into a browser launch.
 """
 import atexit
 import json
+import os
 import socket
 import sys
 import threading
@@ -23,6 +24,8 @@ from managed_runtime import configure_managed_runtime
 
 APP_DIR = Path(__file__).resolve().parent
 LOG_PATH = APP_DIR.parent / "launcher_log.txt"
+APP_MUTEX = "AudiobookStudio_1E05_4C9D_9B5D_204F12CD7183"
+_app_mutex = None
 
 
 def _redirect_detached_output():
@@ -38,6 +41,18 @@ def _redirect_detached_output():
 
 
 configure_managed_runtime(APP_DIR.parent / "runtime")
+
+
+def _hold_app_mutex():
+    """Let the patch installer detect this app without scanning processes."""
+    global _app_mutex
+    if os.name != "nt" or _app_mutex:
+        return
+    try:
+        import ctypes
+        _app_mutex = ctypes.windll.kernel32.CreateMutexW(None, False, APP_MUTEX)
+    except Exception as exc:
+        _log(f"[launcher] Could not create app mutex: {exc}")
 _redirect_detached_output()
 sys.path.insert(0, str(APP_DIR))
 
@@ -183,6 +198,7 @@ def _open_native_window(webview_module, url):
 
 
 def main():
+    _hold_app_mutex()
     url = f"http://127.0.0.1:{CFG.port}"
 
     if _port_in_use(CFG.port):

@@ -44,6 +44,13 @@ CONFIG_PATH = APP_DIR / "config.json"
 _ENV = {
     "base_dir": "AUDIOBOOK_BASE_DIR",
     "chatterbox_python": "AUDIOBOOK_CHATTERBOX_PY",
+    "vibevoice_python": "AUDIOBOOK_VIBEVOICE_PY",
+    "vibevoice_model_dir": "AUDIOBOOK_VIBEVOICE_MODEL_DIR",
+    "vibevoice_cache_dir": "AUDIOBOOK_VIBEVOICE_CACHE_DIR",
+    "vibevoice_model_revision": "AUDIOBOOK_VIBEVOICE_MODEL_REVISION",
+    "vibevoice_tokenizer_revision": "AUDIOBOOK_VIBEVOICE_TOKENIZER_REVISION",
+    "vibevoice_quality_python": "AUDIOBOOK_VIBEVOICE_QUALITY_PY",
+    "vibevoice_quality_model": "AUDIOBOOK_VIBEVOICE_QUALITY_MODEL",
     "reference_wav": "AUDIOBOOK_REFERENCE_WAV",
     "audiobooks_dir": "AUDIOBOOK_AUDIOBOOKS_DIR",
     "library_roots": "AUDIOBOOK_LIBRARY_ROOTS",  # os.pathsep-separated in env
@@ -113,6 +120,26 @@ def _find_chatterbox_python(base_dir):
     return r"C:\Users\paulm\miniconda3\envs\chatterbox\python.exe"
 
 
+def _find_env_python(env_name):
+    """Find an optional isolated conda environment without machine paths."""
+    candidates = []
+    for var in ("CONDA_PREFIX_1", "CONDA_PREFIX"):
+        root = os.environ.get(var)
+        if root:
+            candidates.append(Path(root) / "envs" / env_name / "python.exe")
+    home = Path(os.path.expanduser("~"))
+    for name in ("miniconda3", "anaconda3", "miniforge3", "mambaforge"):
+        candidates.extend((
+            home / name / "envs" / env_name / "python.exe",
+            Path("C:/") / name / "envs" / env_name / "python.exe",
+            Path("C:/ProgramData") / name / "envs" / env_name / "python.exe",
+        ))
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return ""
+
+
 def _as_path_list(value):
     if isinstance(value, (list, tuple)):
         return [str(v) for v in value if str(v).strip()]
@@ -132,6 +159,26 @@ class Config:
 
         self.chatterbox_python = _pick(
             "chatterbox_python", file_cfg, _find_chatterbox_python(self.base_dir)
+        )
+        self.vibevoice_python = _pick(
+            "vibevoice_python", file_cfg, _find_env_python("vibevoice-env")
+        )
+        self.vibevoice_model_dir = _pick(
+            "vibevoice_model_dir", file_cfg,
+            str(self.base_dir / "models" / "vibevoice-1.5b"),
+        )
+        self.vibevoice_cache_dir = _pick("vibevoice_cache_dir", file_cfg, "")
+        self.vibevoice_model_revision = _pick(
+            "vibevoice_model_revision", file_cfg, "c00898d257e6b46004e3e2866a47534085fb685a"
+        )
+        self.vibevoice_tokenizer_revision = _pick(
+            "vibevoice_tokenizer_revision", file_cfg, "8faed761d45a263340a0528343f099c05c9a4323"
+        )
+        self.vibevoice_quality_python = _pick(
+            "vibevoice_quality_python", file_cfg, ""
+        )
+        self.vibevoice_quality_model = _pick(
+            "vibevoice_quality_model", file_cfg, ""
         )
 
         self.reference_wav = _pick(

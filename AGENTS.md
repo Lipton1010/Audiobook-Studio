@@ -13,7 +13,11 @@ Hard project rules:
 1. OCR and TTS never overlap on the GPU.
 2. Keep the chatterbox, fish-speech, and dnd-transcribe environments isolated.
 3. Never track or distribute purchased book text, PDFs, generated audio, or
-   unlicensed voice samples.
+   unlicensed voice samples. Owner-approved uploads of generated audio to the
+   owner's private Google Drive are explicitly permitted for personal listening.
+   Verify the destination is owner-only and preserve private sharing settings.
+   This exception does not authorize public sharing, third-party distribution,
+   or adding these materials to Git or release artifacts.
 4. Verify extraction and narration separately and test claims against real or
    synthetic output before marking them fixed.
 5. Run Git writes from native Windows because `core.autocrlf` protects this

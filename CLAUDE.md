@@ -2,6 +2,31 @@
 
 Personal project. Local build on my own hardware, for legally purchased books, personal use only.
 
+## Current 1.0.5 integration state — 2026-09-14
+
+The owner approved VibeVoice 1.5B as the preferred narrator after listening to the
+full chapter. New Storybird jobs now default to this isolated backend. Existing
+jobs without a backend remain Chatterbox; Chatterbox is also selectable for new jobs.
+This supersedes historical statements below that Chatterbox is the app-wide default.
+
+Terra implementation, independent Sol verification and orchestrator app-level
+verification are recorded in [VIBEVOICE_1_0_5.md](VIBEVOICE_1_0_5.md). Two real
+synthetic PDF-to-M4B jobs passed, including visual decisions, final-preview approval,
+GPU narration and CPU quality checks. GPU-disabled checkpoint reuse and all three
+export formats were verified separately. Original extraction remains separate from
+spoken visual adaptations. OCR and TTS never overlap on the GPU.
+
+Runtime settings are pinned to 1.5B BF16, CFG 2, 20 steps, SDPA and gain-only
+-21 LUFS normalization. No environment was upgraded for this integration: local
+configuration registers verified existing runtimes. The new provisioning helper
+creates only ownership-marked isolated environments when explicitly invoked.
+
+The owner explicitly authorized the 1.0.5 full installer and patch on 2026-09-14,
+with extensive Astra final audit and testing before the established Google Drive
+beta handoff. This supersedes the earlier build hold. Fresh-machine setup and
+exact-artifact verification remain distinct from the completed local app checks;
+do not upload until those checks have finished. Public release gates still apply.
+
 ## Hardware and environment
 
 RTX 4090 (24 GB VRAM), i9-13900K, 32 GB RAM, Windows, Anaconda. Driver supports CUDA 13.3.
@@ -43,7 +68,7 @@ GLM-OCR is primary, run via a tuned Modelfile (glm-ocr-doc) on the /api/generate
 
 ## Extraction rule
 
-Read body text and section headings. Never read captions, figure/table labels, or repeating boilerplate (title, author, running headers, footers, page numbers). Tables and number-heavy data lists are replaced with a short spoken omission marker, not narrated. Section headings get an audible pause/cue before the body.
+Read body text and section headings, retaining iteration headings and quotations. Remove repeating boilerplate (title, author, running headers, footers, page numbers). Visual passages, including tables, data lists, charts, diagrams and computer logs, must retain their extracted source for review before narration. The owner retired blanket omission announcements on 2026-09-12. In Storybird, explicitly keep spoken text, write an editable spoken description, or skip a passage when surrounding author-written prose already conveys its contribution. Preserve important counts, changes, warnings and the original sequence of discovery. Never infer missing graphics or add unsupported conclusions. Uncertain passages require manual review; adaptations stay separate from original extraction. Section headings keep their audible pause/cue before the body.
 
 ## Working style
 
@@ -123,7 +148,7 @@ D:\Audiobook_Pipeline\app\ is a local web app wrapping the whole pipeline, PDF t
 - pipeline_text.py: shared tagging/extraction. Carries the verified page-number filter plus: headings may end in ? or !, markdown emphasis stripped, whitespace collapsed, cross-page mid-sentence stitching, Path A prose mode (path_a.py x-indent rule, font-size-based drop-cap merge) and verse mode (sentence-run grouping), auto-detected by capitalized-line-start fraction (>0.45 = verse). HEADING_LINE_RE detects chapter divisions numbered as digits, roman numerals, OR spelled-out words ("Chapter One", "Chapter Twenty-One") plus standalone Prologue/Epilogue/Introduction/Preface/Foreword/Afterword; all-caps short lines are still headings via is_heading (this can catch rare in-story all-caps like "DANGEROUS", which get a heading pause but are NOT chapters since the worker's CHAPTER_RE only marks division words).
 - narrate_worker.py runs in the chatterbox env as a subprocess. Per-chunk WAV segments make narration resumable. Output is ONE single file, DEFAULT m4b, chosen by config["format"] (m4b | mp3 | wav). m4b/mp3 are encoded by streaming raw PCM straight into ffmpeg (no giant intermediate WAV) at 64k AAC/MP3, mono 24kHz. m4b/mp3 carry navigable CHAPTERS: one per top-level heading (CHAPTER_RE = BOOK/CHAPTER/PART/CANTO/PROLOGUE/EPILOGUE/INTRODUCTION/PREFACE), written via an ffmetadata file; sub-section headings are not chapters. wav is the lossless master and is the only format that can split (only if it would top the ~4 GB WAV cap, ~22+ hr book; fallback_part_minutes default 240). ffmpeg is required for m4b/mp3 (chocolatey install present; find_ffmpeg falls back to that path).
 - Jobs are per-job folders under app\jobs\. Path B caches per-page OCR .md so extraction also resumes. Finished parts are also copied to D:\Audiobook_Pipeline\audiobooks\<title>\.
-- GLM-OCR degenerates on full-page ARTWORK pages (endless code fences, empty HTML tables, or looped short tokens). Guards in pipeline_text.tag_blocks: markup-only and code-fence lines dropped, consecutive duplicate body blocks collapsed, and any page whose blocks are >=20 with <30% unique text returns empty (art page). ocr_page caps num_predict at 4096. narrate_worker fingerprints the chunk plan and wipes stale segments if blocks change.
+- GLM-OCR can degenerate on artwork pages (endless code fences, empty HTML tables, or looped short tokens). Visual review preserves detected empty tables and uncertain repeated OCR as raw review evidence instead of announcing an omission. A blank OCR result is an unresolved unreadable-page visual, including when recovered from cached pages. Nonempty copyright-filtered pages still follow the copyright rule. ocr_page caps num_predict at 4096. Narration fingerprints the spoken chunk plan and invalidates stale segments if that plan changes.
 - Voice cloning: users can upload a voice sample in the UI (wav/mp3/flac/ogg, converted via convert_voice.py in the chatterbox env, soundfile only, trimmed to 20s) and pick a voice per job. Default voice is samples\Voice_Sample\male_ref.wav ("Default narrator (male sample)").
 - Design decisions applied (were open threads 3/4): CHECKLIST FOR X sections get normal heading treatment; epigraphs stay plain body.
 - Verified end to end 2026-07-21: 1-page Path B job produced 53.7s of real narrated audio through the UI. Full Odyssey extraction dry-run: verse mode, 4465 blocks, all 24 Book headings detected.
@@ -228,10 +253,11 @@ rather than the 1.5x that marks a paragraph, and an audition can inject them at 
 re-narrating anything. Untested. Do NOT substitute a bigger uniform gap for this; that is exactly
 what round 2 rejected.
 
-OPERATIONAL TRAP, has cost a wasted run: `worker_loop` SKIPS extraction whenever blocks.json exists,
-so changing pipeline_text and resuming an existing job has NO effect. DELETE blocks.json to re-extract
-(the per-page OCR cache survives), or create a fresh job. Spoken text/type changes invalidate segments;
-source-page, chapter, and assembly-only metadata do not. Always audit blocks.json on disk after a resume.
+Cached extraction needs deliberate migration. Do not delete an existing job's blocks to apply the
+visual-review policy. The review flow preserves original extraction separately and checks cached
+jobs before narration. Spoken text/type changes invalidate segments through the existing plan hash;
+source-page, chapter, and assembly-only metadata do not. Always audit the saved narration projection
+after a resume. Unrelated extraction changes still require an explicitly prepared fresh extraction.
 
 ## Portable configuration
 
@@ -244,11 +270,11 @@ Two things about app/config.py that are easy to get wrong:
 Two-column reference books are a different document class from novels and verse, and they broke four things. All four fixes are in; this section exists so the same ground is not re-explored.
 
 - USE PATH B, even when the PDF has a perfect text layer. Path A's paragraphing relies on the x-indent rule, and a two-column rulebook has no first-line indents, so every LINE becomes its own block, drop caps orphan ("UNGEONS & DRAGONS"), and columns interleave out of order. suggest_path already routes multi-column pages to B on its own; trust it. GLM-OCR is faithful here, measured at 0.95-0.98x of the text layer's character count.
-- OPERATIONAL TRAP, cost a wasted narration run: worker_loop SKIPS extraction whenever blocks.json exists. So changing pipeline_text and resuming an existing job has NO effect, and plan_hash cannot save you because the blocks it hashes are never regenerated. To apply an extraction change to an existing job, DELETE blocks.json and resume; the per-page OCR cache in pages\ survives, so it costs re-tagging only, no re-OCR. Always audit blocks.json on disk after a resume rather than assuming the fix landed.
-- Path B tagging guards added for this class of book: running headers ("CHAPTER 6 | COSMOLOGY", filtered by the pipe form only, so real chapter openers survive because they emit "CHAPTER 6" and "COSMOLOGY" as separate pipe-free lines); dice tables (a "1d20 Claim to Fame" header plus 3+ numbered rows, where SHORT fragment rows collapse to one marker but LONG rows that are real prose merely tabulated are kept with roll numbers stripped); diagram pages (many short distinct labels AND under 900 total chars, the volume ceiling being what stops it eating a random-tables page); and raw HTML tables, which OCR emits on a few pages and which the markup-only guard cannot catch because the cells contain real words.
+- Existing jobs preserve their cached extraction and prior audio. Use visual review to adapt cached visual passages; do not delete blocks.json as a migration shortcut. The historical extraction-skip trap remains relevant for unrelated extraction changes, which need a deliberately prepared fresh extraction.
+- Path B filters pipe-form running headers while preserving real chapter openers. Dice tables, including long prose-like rows, now remain raw visual passages for review rather than losing roll numbers or receiving omission markers. Diagram-label detection is bounded to contiguous short labels and preserves surrounding headings, quotations and prose. Raw HTML tables, malformed pipe tables and structured log fragments also retain their source for an explicit treatment.
 - rasterize_page has a 12 megapixel budget. Fold-out pages exist: DMG page 154 is a 4934x7000pt map that rendered a 107 MB JPEG at 200 dpi and made Ollama return 413, killing extraction 148 pages in.
 - CHAPTER MARKS CAN GO MISSING from detected headings when OCR does not transcribe decorative chapter numbers. New extractions now retain 1-based source-page provenance, the server persists the PDF outline, and assembly uses selected outline divisions when they provide more chapter marks than detected headings. Destinations map to the first real narrated chunk on or after the outline page. This is regression-tested on synthetic mappings but still needs an installed-build M4B navigation check on a real book before release.
-- Expect frequent omission markers in table-dense chapters. That is the extraction rule working, but it is audible, so listen to a table-heavy stretch before committing to a long book.
+- Table-dense chapters require editorial review. Prior omission markers are historical behavior, superseded by the owner-authorized visual review policy. Narrate a visual only to the extent its source supports and its contribution warrants.
 
 ## Repo hygiene (history scrub completed 2026-08-04)
 
@@ -385,6 +411,12 @@ and observe clean shutdown before any complete-book job. The exact-build clean-m
 still mandatory for a public release.
 
 ## Local library follow-up (2026-09-12)
+
+Visual review is implemented in the source app. See `VISUAL_REVIEW.md` for its editorial
+workflow, cached-job migration, source/decision files, prior-audio preservation and verification.
+`review_required` pauses the worker queue before TTS; saved keep/describe/skip decisions and a
+current full-text preview are required before narration of flagged passages. The interface uses
+Storybird branding. This source change does not constitute a new installer or release.
 
 - Finished jobs now render as collapsed, cover-led tiles after active work. Their existing playback,
   download, output-folder, delete, beta-report, log, and cache controls remain available after

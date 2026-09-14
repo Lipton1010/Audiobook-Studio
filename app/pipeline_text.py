@@ -21,6 +21,17 @@ import fitz  # PyMuPDF
 
 MD_EMPHASIS_RE = re.compile(r"\*{1,3}([^*]+)\*{1,3}|_{1,3}([^_]+)_{1,3}")
 TERMINAL_PUNCT = ".?!:;”’\"'"
+ITERATION_NUMBER_RE = (
+    r"(?:\d+|[IVXLCDM]+|first|second|third|fourth|fifth|sixth|seventh|"
+    r"eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|"
+    r"sixteenth|seventeenth|eighteenth|nineteenth|twentieth|one|two|three|"
+    r"four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|"
+    r"fifteen|sixteen|seventeen|eighteen|nineteen|twenty)"
+)
+ITERATION_HEADING_RE = re.compile(
+    r"^(?:" + ITERATION_NUMBER_RE + r"\s+iteration|iteration\s+" +
+    ITERATION_NUMBER_RE + r")$", re.IGNORECASE,
+)
 
 
 def strip_markdown(text):
@@ -30,9 +41,9 @@ def strip_markdown(text):
         prev = text
         text = MD_EMPHASIS_RE.sub(lambda m: m.group(1) or m.group(2), text)
     text = re.sub(r"^#{1,6}\s*", "", text.strip())
-    # Safety net for stray inline HTML from OCR. Whole HTML tables are caught
-    # earlier and replaced with a marker; this stops a lone <br> or <em> from
-    # ever being spoken. Requires a letter or slash after "<" so ordinary prose
+    # Safety net for stray inline HTML from OCR. Whole HTML tables are retained
+    # as visual blocks; this stops a lone <br> or <em> from being spoken.
+    # Requires a letter or slash after "<" so ordinary prose
     # comparisons are untouched.
     text = HTML_TAG_RE.sub(" ", text)
     text = re.sub(r"\s+", " ", text)  # collapse stray double spaces from PDF extraction
@@ -46,6 +57,8 @@ def is_table_row(ln):
 
 def is_heading(ln):
     s = strip_markdown(ln)
+    if ITERATION_HEADING_RE.match(s):
+        return True
     if len(s) < 2 or len(s) > 60:
         return False
     # ? and ! are legal heading enders ("CAN YOU REMEMBER THEIR NAMES?")
@@ -71,7 +84,6 @@ def is_dialogue(ln):
 # narrates every row: "1 Delicious food. 2 Rude people. 3 Friendly folk."
 DICE_HEADER_RE = re.compile(r"^\d*d\d+\b", re.I)
 TABLE_ROW_RE = re.compile(r"^\d+\s*(?:[-–—]\s*\d+)?\s+\S")
-ROLL_PREFIX_RE = re.compile(r"^\d+\s*(?:[-–—]\s*\d+)?\s+")
 # "CHAPTER 6 | COSMOLOGY" / "APPENDIX B | MAPS": the pipe form is only ever the
 # repeating running header. A general fix would be cross-page repetition
 # detection in stitch_pages, which sees every page; this targeted form is what
@@ -84,6 +96,14 @@ RUNNING_HEADER_RE = re.compile(r"^(CHAPTER|APPENDIX|PART)\b[^|]{0,24}\|", re.I)
 # 208 DMG pages, ~8700 characters of markup.
 HTML_TABLE_RE = re.compile(r"<\s*(table|tr|td|th|thead|tbody)\b", re.I)
 HTML_TAG_RE = re.compile(r"<[a-zA-Z/][^>]*>")
+CODE_LINE_RE = re.compile(r"^\s*\[-?[A-Z]{2,}[A-Z0-9-]*\]\s*$")
+LOOSE_LOG_ROW_RE = re.compile(r"^\s*\d{2}:\d{2}:\d{2}\s{2,}\S")
+PARTIAL_PIPE_ROW_RE = re.compile(r"^\s*\|[^|]+\|[^|]+")
+VISUAL_INDICATOR_RE = re.compile(
+    r"^\s*(?:!\[[^]]*\]\([^)]*\)|\[(?:image|figure|diagram|chart|map)\b[^]]*\]|"
+    r"(?:figure|fig\.?|diagram|chart|image|illustration|map)\s*\d*\s*[:.])",
+    re.I,
+)
 
 
 def is_dice_table_header(ln):
@@ -105,6 +125,117 @@ def is_number_heavy_list(ln):
         return False
     numeric = sum(1 for t in tokens if re.fullmatch(r"\d+|dead", t.strip(".,;")))
     return numeric >= max(1, len(tokens) // 2)
+
+
+def _visual_block(text, visual_kind):
+    """Keep extracted visual source for review without turning it into speech."""
+    return {"type": "visual", "text": text, "visual_kind": visual_kind}
+
+
+def _visual_line_kind(line):
+    if HTML_TABLE_RE.search(line):
+        return "HTML table"
+    if is_table_row(line):
+        return "Markdown table"
+    if PARTIAL_PIPE_ROW_RE.match(line):
+        return "partial Markdown table"
+    if CODE_LINE_RE.fullmatch(line):
+        return "standalone code"
+    if LOOSE_LOG_ROW_RE.match(line):
+        return "structured log row"
+    if VISUAL_INDICATOR_RE.match(line):
+        return "image or diagram indication"
+    return None
+
+
+def _is_numeric_column_row(line):
+    words = line.strip().split()
+    if not 2 <= len(words) <= 6 or line.rstrip().endswith((".", "?", "!")):
+        return False
+    return sum(word.replace(",", "").isdigit() for word in words) >= 2
+
+
+def _is_table_header(line):
+    words = line.strip().split()
+    return (2 <= len(words) <= 5 and line.rstrip()[-1:] not in TERMINAL_PUNCT
+            and all(word.replace("-", "").isalpha() for word in words))
+
+
+def _visual_kind_at(lines, index):
+    line = lines[index]
+    kind = _visual_line_kind(line)
+    if kind:
+        return kind
+    numeric = _is_numeric_column_row(line)
+    before = index > 0 and _is_numeric_column_row(lines[index - 1])
+    after = index + 1 < len(lines) and _is_numeric_column_row(lines[index + 1])
+    if numeric and (before or after):
+        return "plain-text table row"
+    if (_is_table_header(line) and index + 2 < len(lines)
+            and _is_numeric_column_row(lines[index + 1])
+            and _is_numeric_column_row(lines[index + 2])):
+        return "plain-text table header"
+    return None
+
+
+def _group_visual_kind(kinds):
+    if "structured log row" in kinds:
+        return "structured log"
+    if "Markdown table" in kinds:
+        return "Markdown table"
+    if "partial Markdown table" in kinds or "plain-text table row" in kinds:
+        return "plain-text table"
+    return kinds[0]
+
+
+def _collapse_label_runs(blocks):
+    """Collapse only a dense run of diagram labels, never its nearby prose."""
+    collapsed = []
+    i = 0
+    while i < len(blocks):
+        run = []
+        while i < len(blocks):
+            block = blocks[i]
+            text = block["text"]
+            if (block["type"] != "body" or text.lstrip().startswith(("\"", "“", "'", "‘"))
+                    or len(text) >= 30 or text.rstrip()[-1:] in TERMINAL_PUNCT):
+                break
+            run.append(block)
+            i += 1
+        if len(run) >= 15 and len({block["text"] for block in run}) == len(run) \
+                and sum(len(block["text"]) for block in run) < 900:
+            visual = _visual_block("\n".join(block["text"] for block in run), "diagram labels")
+            if "source_page" in run[0]:
+                visual["source_page"] = run[0]["source_page"]
+            collapsed.append(visual)
+        else:
+            collapsed.extend(run)
+        if i < len(blocks):
+            collapsed.append(blocks[i])
+            i += 1
+    return collapsed
+
+
+def retag_legacy_visual_blocks(blocks):
+    """Conservatively expose visual candidates in older block caches."""
+    texts = [block.get("text", "") for block in blocks]
+    retagged = []
+    for index, original in enumerate(blocks):
+        block = dict(original)
+        if block.get("type") in ("table", "omitted_data"):
+            block["type"] = "visual"
+            block.setdefault("visual_kind", "legacy omitted visual")
+        elif block.get("type") == "body":
+            lines = block.get("text", "").splitlines() or [block.get("text", "")]
+            kinds = [_visual_kind_at(lines, line_index) for line_index in range(len(lines))]
+            if kinds and all(kinds):
+                block["type"] = "visual"
+                block["visual_kind"] = _group_visual_kind(kinds)
+            elif _visual_kind_at(texts, index):
+                block["type"] = "visual"
+                block["visual_kind"] = _visual_kind_at(texts, index)
+        retagged.append(block)
+    return _collapse_label_runs(retagged)
 
 
 # ---------- Path B tagging (per OCR page) ----------
@@ -132,6 +263,10 @@ def tag_blocks(raw_text):
         if RUNNING_HEADER_RE.match(strip_markdown(stripped)):
             i += 1
             continue
+        if HTML_TABLE_RE.search(stripped):
+            blocks.append(_visual_block(ln, "HTML table"))
+            i += 1
+            continue
         # GLM-OCR degenerates on full-page artwork, emitting endless
         # code fences, punctuation lines, or empty HTML table markup.
         # A line with no letter/digit outside of markup is not
@@ -143,25 +278,26 @@ def tag_blocks(raw_text):
         if re.fullmatch(r"`{3,}[\w-]*", stripped):
             i += 1
             continue
-        if HTML_TABLE_RE.search(stripped):
-            blocks.append({"type": "table", "text": "A reference table is omitted here."})
-            i += 1
-            continue
-        if is_table_row(ln):
-            while i < n and (is_table_row(lines[i]) or not lines[i].strip()):
-                if not lines[i].strip():
-                    if i + 1 < n and is_table_row(lines[i + 1]):
-                        i += 1
-                        continue
-                    else:
-                        break
-                i += 1
-            blocks.append({"type": "table", "text": "A reference table is omitted here."})
+        visual_kind = _visual_kind_at(lines, i)
+        if visual_kind:
+            visual_lines, kinds = [], []
+            while i < n:
+                kind = _visual_kind_at(lines, i)
+                if kind:
+                    visual_lines.append(lines[i])
+                    kinds.append(kind)
+                    i += 1
+                elif not lines[i].strip() and i + 1 < n and _visual_kind_at(lines, i + 1):
+                    visual_lines.append(lines[i])
+                    i += 1
+                else:
+                    break
+            blocks.append(_visual_block("\n".join(visual_lines), _group_visual_kind(kinds)))
             continue
         if is_dice_table_header(ln):
             # Look ahead and collect the rows. Only act if real numbered rows
             # follow, so a prose line merely mentioning "1d20" is not swallowed.
-            j, row_texts = i + 1, []
+            j, row_count = i + 1, 0
             while j < n:
                 s = lines[j].strip()
                 if not s:
@@ -174,38 +310,30 @@ def tag_blocks(raw_text):
                     j += 1              # repeated column label mid-table, skip
                     continue
                 if is_dice_table_row(s):
-                    row_texts.append(strip_markdown(s))
+                    row_count += 1
                     j += 1
                     continue
                 break
-            if len(row_texts) >= 3:
-                lens = sorted(len(t) for t in row_texts)
-                median = lens[len(lens) // 2]
-                # Short rows are unlistenable data ("1 Delicious food") and get
-                # one marker. Long rows are real prose that merely happens to be
-                # tabulated (DMG page 180's 1d10 adventure hooks run 100+ chars
-                # each), so keep them and only drop the roll numbers and the
-                # column label, which are the figure labels the rule excludes.
-                if median < 60:
-                    blocks.append({"type": "table",
-                                   "text": "A random table is omitted here."})
-                else:
-                    for t in row_texts:
-                        t = ROLL_PREFIX_RE.sub("", t)
-                        if t:
-                            blocks.append({"type": "body", "text": t})
+            if row_count >= 3:
+                # Random-table rows stay together as a visual record. Their
+                # length does not make the layout prose, and retaining the raw
+                # lines lets the reviewer decide what belongs in narration.
+                blocks.append(_visual_block("\n".join(lines[i:j]), "random table"))
                 i = j
                 continue
         if is_number_heavy_list(ln):
+            data_lines = []
             while i < n and (is_number_heavy_list(lines[i]) or not lines[i].strip()):
                 if not lines[i].strip():
                     if i + 1 < n and is_number_heavy_list(lines[i + 1]):
+                        data_lines.append(lines[i])
                         i += 1
                         continue
                     else:
                         break
+                data_lines.append(lines[i])
                 i += 1
-            blocks.append({"type": "omitted_data", "text": "A data list is omitted here."})
+            blocks.append(_visual_block("\n".join(data_lines), "number-heavy data list"))
             continue
         if is_heading(ln):
             blocks.append({"type": "heading", "text": strip_markdown(ln)})
@@ -226,26 +354,11 @@ def tag_blocks(raw_text):
     if len(blocks) >= 20:
         unique = len(set(b["text"] for b in blocks))
         if unique / len(blocks) < 0.3:
-            return []
-    # Label-list detector: a diagram transcribes as many SHORT, ALL-DISTINCT
-    # lines, which the repetition check above cannot catch. Measured on the 2024
-    # DMG's cosmology wheel (page 176): 43 blocks averaging 12 characters, which
-    # would narrate as "Plane of Water. Plane of Ice. Feywild." The extraction
-    # rule says never read figure labels, so collapse the page to one marker.
-    # Real prose pages are nowhere near this: they run ~250 characters a block.
-    bodies = [b["text"] for b in blocks if b["type"] in ("body", "heading")]
-    if len(bodies) >= 15:
-        lens = sorted(len(t) for t in bodies)
-        median = lens[len(lens) // 2]
-        total = sum(lens)
-        # The total-volume ceiling is what makes this safe. Without it this also
-        # ate DMG page 95, a page of random tables (2418 chars, "1d20 Claim to
-        # Fame") that the number-heavy-list detector above already handles
-        # correctly by keeping each table's title and omitting only its rows.
-        # A real diagram page carries almost no text: page 176 is 553 chars.
-        if median < 30 and total < 900:
-            return [{"type": "omitted_data", "text": "A diagram is omitted here."}]
-    return blocks
+            return [_visual_block(raw_text, "uncertain repeated OCR artwork")]
+    # A diagram can transcribe as many short, distinct labels. Restrict the
+    # collapse to that contiguous body-only run so headings and nearby prose
+    # remain in their original order.
+    return _collapse_label_runs(blocks)
 
 
 COPYRIGHT_PRIMARY_RE = re.compile(
@@ -307,7 +420,8 @@ def stitch_pages(pages_of_blocks):
     """
     merged = []
     for page_blocks in pages_of_blocks:
-        page_blocks = [b for b in page_blocks if b["text"].strip()]
+        page_blocks = [b for b in page_blocks
+                       if b["type"] == "visual" or b["text"].strip()]
         if not page_blocks:
             continue
         if merged:
@@ -618,6 +732,123 @@ def paragraphs_to_blocks(paragraphs, source_page=None):
     return blocks
 
 
+def _path_a_page_blocks(lines, mode, leading, source_page):
+    """Tag visual lines before paragraphing the remaining Path A prose."""
+    blocks, prose_lines = [], []
+    raw_lines = [line[2] for line in lines]
+
+    def flush_prose():
+        if not prose_lines:
+            return
+        if mode == "verse":
+            paragraphs = _verse_page_paragraphs([(x0, text) for x0, _, text in prose_lines])
+        else:
+            paragraphs = _prose_page_paragraphs(prose_lines, leading)
+        blocks.extend(paragraphs_to_blocks(paragraphs, source_page=source_page))
+        prose_lines.clear()
+
+    i = 0
+    while i < len(lines):
+        kinds = []
+        if _visual_kind_at(raw_lines, i):
+            flush_prose()
+            visual_lines = []
+            while i < len(lines):
+                kind = _visual_kind_at(raw_lines, i)
+                if not kind:
+                    break
+                visual_lines.append(lines[i][2])
+                kinds.append(kind)
+                i += 1
+            visual = _visual_block("\n".join(visual_lines), _group_visual_kind(kinds))
+            visual["source_page"] = source_page
+            blocks.append(visual)
+        else:
+            prose_lines.append(lines[i])
+            i += 1
+    flush_prose()
+    return blocks
+
+
+def _page_graphics(page, source_page):
+    """Return page graphics with their vertical position when PDF exposes it."""
+    try:
+        images = page.get_images(full=True)
+        drawings = page.get_drawings()
+    except (AttributeError, RuntimeError):
+        return []
+    graphics = []
+    for image in images:
+        try:
+            rects = page.get_image_rects(image[0])
+        except (AttributeError, RuntimeError):
+            rects = []
+        if rects:
+            for rect in rects:
+                graphics.append((rect.y0, _visual_block("", "embedded image")))
+        else:
+            graphics.append((float("inf"), _visual_block("", "embedded image")))
+    # One vector path is commonly a decorative rule. Several independent paths
+    # are a conservative signal for a chart or diagram without text.
+    if len(drawings) >= 3:
+        rects = sorted((drawing["rect"] for drawing in drawings if "rect" in drawing),
+                       key=lambda rect: rect.y0)
+        bands = []
+        for rect in rects:
+            if bands and rect.y0 <= bands[-1][1] + 6:
+                bands[-1][1] = max(bands[-1][1], rect.y1)
+            else:
+                bands.append([rect.y0, rect.y1])
+        for top, _bottom in bands or [(float("inf"), float("inf"))]:
+            graphics.append((top, _visual_block("", "vector graphic")))
+    for _, block in graphics:
+        block["source_page"] = source_page
+    return sorted(graphics, key=lambda item: item[0])
+
+
+def _page_graphic_blocks(page, source_page):
+    """Compatibility helper for callers that only need the visual records."""
+    return [block for _, block in _page_graphics(page, source_page)]
+
+
+def _insert_page_graphics(page_blocks, graphics, lines):
+    """Insert each graphic at its text-line boundary without splitting headings."""
+    for y0, graphic in graphics:
+        insert_at = len(page_blocks)
+        split_at = None
+        search_block, search_offset = 0, 0
+        for _, line_y, text in lines:
+            needle = strip_markdown(text)
+            if not needle:
+                continue
+            for index in range(search_block, len(page_blocks)):
+                block = page_blocks[index]
+                if block["type"] not in ("body", "heading"):
+                    continue
+                offset = block["text"].find(needle, search_offset if index == search_block else 0)
+                if offset < 0:
+                    continue
+                search_block, search_offset = index, offset + len(needle)
+                if line_y >= y0:
+                    insert_at = index
+                    split_at = offset if block["type"] == "body" else None
+                break
+            if insert_at != len(page_blocks):
+                break
+        if split_at:
+            block = page_blocks[insert_at]
+            before = block["text"][:split_at].rstrip()
+            after = block["text"][split_at:].lstrip()
+            if before and after:
+                block["text"] = before
+                tail = dict(block)
+                tail["text"] = after
+                page_blocks[insert_at + 1:insert_at + 1] = [graphic, tail]
+                continue
+        page_blocks.insert(insert_at, graphic)
+    return page_blocks
+
+
 def extract_path_a(pdf_path, page_from, page_to, progress_cb=None):
     """
     Path A: whole page range -> stitched blocks.
@@ -635,13 +866,13 @@ def extract_path_a(pdf_path, page_from, page_to, progress_cb=None):
         pages = []
         total = page_to - page_from + 1
         for idx, pno in enumerate(range(page_from - 1, page_to)):
-            lines = _page_lines_with_geom(doc.load_page(pno))
-            if mode == "verse":
-                paras = _verse_page_paragraphs([(x0, t) for x0, _, t in lines])
-            else:
-                paras = _prose_page_paragraphs(lines, leading)
-            pages.append(filter_copyright_blocks(
-                paragraphs_to_blocks(paras, source_page=pno + 1)
+            page = doc.load_page(pno)
+            lines = _page_lines_with_geom(page)
+            page_blocks = filter_copyright_blocks(
+                _path_a_page_blocks(lines, mode, leading, source_page=pno + 1)
+            )
+            pages.append(_insert_page_graphics(
+                page_blocks, _page_graphics(page, pno + 1), lines
             ))
             if progress_cb:
                 progress_cb(idx + 1, total)

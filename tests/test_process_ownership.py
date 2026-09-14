@@ -1,4 +1,5 @@
 import os
+import json
 import subprocess
 import sys
 import tempfile
@@ -76,6 +77,10 @@ class RunNarrationCleanupTests(unittest.TestCase):
             "engine": "batched",
             "format": "wav",
         }
+        (self.job_dir / "blocks.json").write_text(
+            json.dumps({"blocks": [{"type": "body", "text": "Synthetic prose."}]}),
+            encoding="utf-8",
+        )
         self.common = [
             mock.patch.object(server, "JOBS_DIR", self.jobs_dir),
             mock.patch.object(server, "extract_book_meta", return_value=({}, None, [])),

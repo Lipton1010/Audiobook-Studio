@@ -2,13 +2,16 @@
 
 [![Latest release](https://img.shields.io/github/v/release/Lipton1010/Audiobook-Studio?label=download&color=blue)](https://github.com/Lipton1010/Audiobook-Studio/releases/latest)
 
-Local PDF to audiobook pipeline for legally purchased books, personal use only. Runs entirely on my own hardware (RTX 4090, Windows): OCR and text extraction feed a tagging stage, then Chatterbox TTS narrates with a cloned voice.
+Local PDF to audiobook pipeline for legally purchased books, personal use only. Storybird runs extraction and narration locally. The 1.0.5 source uses VibeVoice 1.5B for new jobs, with Chatterbox available for existing jobs and as a selectable fallback.
+
+**The 1.0.5 source integration is locally verified; no 1.0.5 installer or patch has been built.** Existing release downloads do not contain this integration. See [verification and its limits](VIBEVOICE_1_0_5.md).
 
 ## What's here
 
 - `app/` — Audiobook Studio, a local web app wrapping the whole pipeline.
   - `server.py` — stdlib HTTP server + job queue (base conda env). UI at http://localhost:8765. Runs every stage strictly sequentially so the OCR model and the TTS model never share the GPU.
-  - `pipeline_text.py` — extraction and tagging. Path A: text-layer PDFs (adaptive prose paragraphing uses first-line indents when present and vertical spacing otherwise; verse uses sentence-run grouping). Path B: PyMuPDF rasterize, GLM-OCR via Ollama, block tagging (headings, dialogue, tables and data lists become short spoken omission markers). Both paths retain source-page provenance for assembly metadata.
+  - `pipeline_text.py` — extraction and tagging. Path A: text-layer PDFs (adaptive prose paragraphing uses first-line indents when present and vertical spacing otherwise; verse uses sentence-run grouping). Path B: PyMuPDF rasterize, GLM-OCR via Ollama, block tagging. Visual passages retain their extracted source and require review before narration. Both paths retain source-page provenance.
+  - `visual_review.py` — saved visual treatments and the narration adaptation, kept separately from original extraction.
   - `narrate_worker.py` — Chatterbox narration subprocess (chatterbox conda env). Per-chunk WAV checkpoints make multi-hour narrations resumable; output is a single file, default **m4b with navigable chapters**, or mp3 / lossless wav. Chapter marks use detected top-level headings and fall back to accurately mapped PDF-outline entries when the outline is more complete. m4b/mp3 are encoded straight from the segments via ffmpeg.
   - `convert_voice.py` — converts an uploaded voice sample (wav/mp3/flac/ogg) to a mono reference WAV for cloning.
   - `static/index.html` — the UI: PDF import and library, jobs with live progress, voice upload and per-job voice selection. Completed jobs have an explicit audio download, an **Open output folder** button, safe segment-cache cleanup, and a compressed beta-test report containing the job and available setup logs.
@@ -25,8 +28,8 @@ For development validation, run `python -m unittest discover -s tests -v`. Relea
 
 You provide these; the installer sets up everything else, including Miniconda and ffmpeg if you don't already have them.
 
-- **Windows** with an **NVIDIA GPU**, roughly **6 GB+ VRAM** (built on a 24 GB RTX 4090). This is a hard requirement for narration: the TTS model runs on CUDA, so a Mac, an AMD card, or integrated graphics **cannot generate audio**. Text extraction alone works without a GPU. Nothing can auto-install a GPU or its driver; if you don't have one, the installer will tell you clearly rather than fail partway through.
-- Roughly **15 GB of free disk**: about 10 GB for the Python environment and TTS models, plus a few GB of headroom for the audio you generate.
+- **Windows** with an **NVIDIA CUDA GPU**. VibeVoice 1.5B has been exercised on a 24 GB RTX 4090; smaller cards have not been validated by this project. Text extraction alone works without a GPU.
+- The legacy Chatterbox setup requires roughly **15 GB free disk**. The new VibeVoice and CPU checker add separate environments and model weights; their complete fresh-install footprint has not yet been measured. Generated audiobooks require additional space.
 - **Your own** reference voice clip and books. The default voice sample is **not** shipped (see below), and PDFs are never included.
 - Optional: **Ollama** with the `glm-ocr-doc` model, only for scanned-image books (Path B):
   ```
@@ -58,7 +61,7 @@ The one-click folder layout is intentionally self-contained: `runtime/` holds pr
 setup.bat
 ```
 
-This checks your prerequisites (conda, GPU, ffmpeg, Ollama) and reports what's missing rather than installing it automatically. It then builds the two conda environments the app needs, pinned to known-good versions (Python 3.11, torch 2.6.0+cu124, chatterbox-tts 0.1.7, transformers 5.2.0 from `install/requirements-chatterbox.txt`). It is safe to re-run, and it never modifies Ollama.
+This checks prerequisites, then prepares the base app dependencies plus separate VibeVoice and CPU speech-checking environments under `runtime/`. It downloads pinned VibeVoice 1.5B, tokenizer and speech-recognition weights before recording the verified paths. Existing unrelated environments and Ollama are not modified. Use `python setup.py --narrator chatterbox` to prepare the legacy narrator instead.
 
 Useful flags (all combinable): `--check-only` (report only, install nothing), `--auto-install-conda` (silently install Miniconda if missing), `--auto-install-ffmpeg` (fetch a static ffmpeg build into `tools\` if missing), `--prefetch-weights` (download the TTS weights now instead of on first narration), `--yes` (don't prompt).
 
@@ -78,6 +81,14 @@ Double-click `Start_Audiobook_Studio.bat` (or the Start Menu / Desktop shortcut 
 **First narration only, if you skipped the pre-fetch step above:** Chatterbox downloads about 3 GB of model weights with no progress bar. It can look frozen for several minutes; let it run. Later runs are fast, since the weights are cached.
 
 ## Narration engines
+
+New jobs default to **VibeVoice 1.5B**. Select **Chatterbox** in the job dialog when needed; jobs saved without a backend retain their legacy Chatterbox behavior. VibeVoice uses whole passages, native timing, and gain-only loudness adjustment. Its checkpoints and quality receipts are separate from Chatterbox's segment cache. The CPU speech checker rejects major missing or extra wording; it cannot certify pronunciation, naturalness, or the absence of every audible artifact.
+
+To reuse an existing VibeVoice environment without modifying it, run `install/bootstrap_vibevoice.py --configure-existing` with `--python`, `--model-dir`, `--cache-dir`, `--quality-python`, and `--quality-model`. `--check-only` verifies the same supplied paths without writing configuration. See `app/config.example.json` for portable configuration keys. Fresh runtime installation and installer execution are separate checks from narration in a verified existing environment.
+
+Storybird pauses after extraction when it flags visual passages. Select **Review narration text** to see each passage, nearby prose and its original PDF page when available. Choose **Keep as spoken text**, **Replace with a spoken description**, or **Skip: surrounding prose conveys it**. Save each treatment, open **Inspect final narration text**, then select **Start narration**. Saved treatments can be revisited from the job's controls.
+
+Descriptions are manual adaptations, not automatic interpretations. Preserve important counts, changes, warnings and discovery order. If the graphic is missing, Storybird says so; do not reconstruct details absent from the source. Prose-only jobs continue through the ordinary workflow. See [visual review behavior and verification](VISUAL_REVIEW.md) for cached-job handling and test coverage.
 
 Two narrators are available, selectable per job (default `batched`):
 

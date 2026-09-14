@@ -43,11 +43,11 @@
 ;     only) and is commonly shared with other things on a user's machine, so
 ;     installing or upgrading it is not this installer's business.
 ;   - Reuse a machine-wide Python. The one-click install owns a private
-;     Miniconda under {app}\runtime so its 10 GB footprint stays together.
+;     Miniconda under {app}\runtime so its 20 GB runtime footprint stays together.
 
 #define MyAppName "Audiobook Studio"
 #define MyAppDirName "AudiobookStudio"
-#define MyAppVersion "1.0.4"
+#define MyAppVersion "1.0.5"
 #define MyAppPublisher "Audiobook Studio"
 
 [Setup]
@@ -58,6 +58,7 @@ AppId={{FF5AC68A-1E05-4C9D-9B5D-204F12CD7183}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+AppMutex=AudiobookStudio_1E05_4C9D_9B5D_204F12CD7183
 ; Per-user install, no admin required -- matches the "JustMe" Miniconda
 ; install and keeps this usable on a locked-down work laptop.
 ; Miniconda's Windows installer rejects or misbehaves with some destinations
@@ -72,9 +73,10 @@ UsePreviousAppDir=no
 DefaultGroupName={#MyAppName}
 PrivilegesRequired=lowest
 ; The embedded source is tiny, but Miniconda, the conda environment, pip cache,
-; torch and model weights use roughly 10 GB after setup. Require 12 GiB beyond
-; the installer payload so the environment build does not fail near the end.
-ExtraDiskSpaceRequired=12884901888
+; torch, the isolated VibeVoice and quality environments, caches, and model
+; weights need substantial headroom. The legacy fresh install measured 16.4 GB,
+; so reserve 20 GiB for the larger 1.0.5 runtime.
+ExtraDiskSpaceRequired=21474836480
 OutputDir=..\Output
 OutputBaseFilename=Setup_AudiobookStudio
 ; Emit the list of every file actually embedded in the .exe. This is the ONLY
@@ -99,6 +101,9 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"
 
 [Files]
+; PrepareToInstall runs before the normal recursive copy. Keep a temporary
+; helper payload so upgrades can detect an active legacy installation first.
+Source: "..\install\check_running_app.ps1"; Flags: dontcopy
 ; Source is the repo root (one level up from install\, where this .iss lives).
 ;
 ; EXCLUDES SEMANTICS, easy to get wrong: Inno is NOT gitignore. Per the [Files]
@@ -149,6 +154,7 @@ var
   CondaPythonPath: string;
   MinicondaFailureLogPath: string;
   SetupPyOk: Boolean;
+  AppProcessCheckError: Boolean;
 
 function SetEnvironmentVariableW(lpName, lpValue: string): Boolean;
   external 'SetEnvironmentVariableW@kernel32.dll stdcall';
@@ -199,6 +205,34 @@ begin
   // actual non-zero exit from setup.py clears it.
   SetupPyOk := True;
   Result := True;
+end;
+
+function InstalledAppIsRunning(): Boolean;
+var
+  Params: string;
+  ResultCode: Integer;
+begin
+  AppProcessCheckError := False;
+  ExtractTemporaryFile('check_running_app.ps1');
+  Params := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
+    ExpandConstant('{tmp}\check_running_app.ps1') + '" -AppRoot "' +
+    ExpandConstant('{app}') + '"';
+  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Params,
+              ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    AppProcessCheckError := True;
+    Result := True;
+    exit;
+  end;
+  if ResultCode = 0 then
+    Result := False
+  else if ResultCode = 9 then
+    Result := True
+  else
+  begin
+    AppProcessCheckError := True;
+    Result := True;
+  end;
 end;
 
 // The one-click install deliberately does not reuse a machine-wide conda. Its
@@ -405,6 +439,19 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
+  if FileExists(ExpandConstant('{app}\app\server.py')) and InstalledAppIsRunning() then
+  begin
+    if AppProcessCheckError then
+      Result :=
+        'Setup could not safely determine whether this Audiobook Studio install ' +
+        'is running. Close Audiobook Studio and retry. No files were changed.'
+    else
+      Result :=
+        'Audiobook Studio is currently running from this installation:' + #13#10#13#10 +
+        ExpandConstant('{app}') + #13#10#13#10 +
+        'Close it and retry. Setup does not replace active server or worker files.';
+    exit;
+  end;
   CondaPythonPath := FindPrivateCondaPython();
   if CondaPythonPath = '' then
   begin
@@ -464,7 +511,7 @@ begin
 
   WizardForm.StatusLabel.Caption :=
     'Setting up Audiobook Studio. This downloads several gigabytes and uses ' +
-    'about 10 GB of disk space. It can take 15-30 minutes. It is not frozen.';
+    'up to 20 GB of disk space. It can take 15-30 minutes. It is not frozen.';
   WizardForm.ProgressGauge.Style := npbstMarquee;
 
   if not Exec(ExpandConstant('{cmd}'), Params, ExpandConstant('{app}'),
@@ -504,6 +551,14 @@ end;
 function SetupPySucceeded(): Boolean;
 begin
   Result := SetupPyOk;
+end;
+
+function GetCustomSetupExitCode(): Integer;
+begin
+  if SetupPyOk then
+    Result := 0
+  else
+    Result := 1;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

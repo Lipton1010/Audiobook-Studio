@@ -174,3 +174,102 @@ STILL NOT ESTABLISHED: one passage, one listener. The excerpt was deliberately d
 
 THE OPEN QUESTION IS STRUCTURAL. The commercial recording's distinguishing feature is a long-pause register we lack entirely, 6.1% of its gaps between 1200 and 4700 ms against our 0.1%. Round 2 shows that reaching those lengths with a UNIFORM gap is rejected, so the answer is not a bigger number, it is a different KIND of pause at the right places. Scene breaks should be detectable from the same page geometry `detect_paragraph_style` / `_modal_leading` already measure, at roughly 2.5x leading rather than the 1.5x that marks a paragraph, and an audition can inject them at assembly with no re-narration. `app/gap_audition.py` is the harness; it takes `--gaps a,b,c`, `--start-chunk` and `--num-chunks` so a prior excerpt can be reproduced exactly.
 
+
+### Owner verdict and audition presentation preference (2026-09-13)
+
+Owner listening supersedes automated acceptance. In the September 13 blind audition, A was explicit Chatterbox Multilingual V3, B original English Chatterbox, C VibeVoice Large/7B selective 8-bit. First-take ranking was B > A > C, but C Take 2 had highly preferred underlying delivery despite musical artifacts and slow pacing. M was VibeVoice independent chunks; N was the same configuration generating the whole dialogue in one call. N Take 2 was the owner's overall favorite; N Take 1 also sounded fantastic. Preserve VibeVoice whole-dialogue generation as the preferred investigation direction, not a production switch or book-length reliability claim.
+
+J was original Chatterbox intact turn, K independent chunks, and L preceding-sentence regeneration plus trimming. J/K both sounded good; L was robotic with repeated phoneme tails. L FAILED OWNER LISTENING despite passing automated whole-word checks. The prior clean designation is superseded. The detailed verdict, timestamps and verified mapping are in ignored `Output/Narration_20260913/owner_verdict_20260913.md`; current operational authority remains `handoff.md`. No production change followed this verdict.
+
+The owner explicitly invoked the i-have-adhd skill for future auditions: `C:/Users/paulm/.codex/plugins/cache/i-have-adhd/i-have-adhd/0.3.0/skills/i-have-adhd/SKILL.md`. Read the installed skill when applying it; search for its current path if the version changes. Apply its presentation rules. These audition-specific defaults are an operational interpretation, not verbatim skill requirements:
+
+1. Present one listening question per round with two or three short, directly playable clips. Keep the first listening action obvious.
+2. Put the same short passage in each clip and state the exact measured listening time. State one thing to judge, such as pronunciation, musical artifacts, pacing or continuity.
+3. Keep blind labels stable within a round. State what the labels refer to without revealing candidate identities. Reveal identities after the owner ranks that round.
+4. Request one simple response, such as A, B or neither, plus an optional timestamp. Keep visible choices small; do not start with a large folder, mixed test families or a long matrix of repeats.
+5. Retain all repeats and diagnostics internally and make them available when needed. Use a second take or another passage in the next round to test reproducibility. This limits presentation burden, not experiment completeness.
+
+No further listening is required merely to acknowledge or save this preference.
+
+## VibeVoice lead and focused pace round, 2026-09-13
+
+Owner clarification: VibeVoice shows the most promise, especially pronunciation. Even in the first ABC comparison, it would have been the favorite without hallucinations and with quicker tempo. Preserve the observed first-take B > A > C ranking but do not interpret it as a preference for Chatterbox's underlying performance. VibeVoice is the lead candidate; whole-dialogue N Take2 is the preferred reference performance.
+
+Prepared Output/Narration_20260913/Pace_Round1/Listening: three blind timing variants of the full N Take2 performance, with pitch/formants preserved and common -21 LUFS loudness. Total listening time is 142.97175 seconds. All three WAVs passed decode, finite-audio, clipping and loudness checks and the delivered copies match their SHA-256 receipts. No new TTS ran. This calibrates pace, not artifact removal or native model speed control. Await the owner's A/B/C/none preference before revealing this round's separate mapping_private.json.
+
+After the pace choice, focus the next small generation comparison on unwanted musical audio using intact passages and matched repeats, with one setting changed at a time. Existing artifact causes remain unproven. The owner also asked about VibeVoice-1.5B. Verified Microsoft's August 2025 announcement includes both 1.5B and 7B; a separate 1.5B audition is worth consideration but has not been generated or downloaded here. Do not assume the smaller model fixes artifacts, and do not confuse size-plus-precision comparisons with a controlled quantization test. Source links and full method are in Pace_Round1/round_notes.md.
+
+
+## Pace round owner verdict, September 13, 2026
+
+Owner ranking: C best by far. A was bad with reverb throughout; B was horrible and robotic. A and B are rejected for audible quality.
+
+Verified mapping: A = Rubber Band tempo 1.1 (10 percent faster); B = tempo 1.2 (20 percent faster); C = tempo 1.0 (original rate). Every arm used the same N Take2 performance and passed through Rubber Band with pitch=1 and preserved formants, followed by loudness normalization. C is original rate, not a byte-identical unprocessed source copy.
+
+The faster processed variants degraded the preferred voice. This rejects the tested time-stretching configuration for delivery. It does not establish that the owner prefers slow narration: the pace comparison was confounded by the audible processing defects. The owner's earlier desire for quicker natural delivery remains open. It also does not establish that every possible speed-adjustment algorithm would fail.
+
+Decode, finite samples, no clipping, and matched loudness were technical checks only. They did not validate perceptual pitch/timbre preservation or naturalness. The assistant did not directly listen before delivery. Do not present those checks as proof that an audition sounds good.
+
+Keep the original N Take2 waveform and natural rate as the quality reference. Prioritize the next bounded VibeVoice generation investigation on musical hallucinations, using original-rate playback and intact context. If tempo is investigated again, first establish whether the generator supports a genuine speaking-rate control or another controlled generation approach; do not silently insert spoken instructions or equate faster rendering with faster speech. Do not reuse the rejected A/B processing as a quality fix.
+
+Owner model-link clarification: the recently released microsoft/VibeVoice-ASR-Streaming-1.5B is speech recognition (audio to text), not the older VibeVoice-1.5B TTS model. The owner was asking about that ASR release. It is not a narration candidate; no new 1.5B audition was requested by that question.
+
+
+
+## First 1.5B TTS audition and VibeVoice artifact round, 2026-09-13
+
+The owner authorized proceeding and asked about 1.5B TTS. Official microsoft/VibeVoice-1.5B TTS has now actually generated four samples locally. This is the older text-to-speech model, not ASR Streaming 1.5B. Weights are pinned to c00898d257e6b46004e3e2866a47534085fb685a, with three hashed shards totaling 5,408,202,454 bytes, saved outside the repo at D:/ml_repos/narration-auditions-20260913/vibevoice-1.5b-model. It runs BF16 in the existing isolated VibeVoice environment without package changes. Runtime count is 2,704,021,985 parameters including audio components; zero quantized linear modules. The existing 7B retains its verified 197 selective 8-bit modules.
+
+Private delivery: Output/Narration_20260913/Artifact_Round1/Listening/Listening guide.md. The first round presents only Prose_A_Take1, Prose_B_Take1 and Prose_C_Take1, totaling 143.07 seconds. Ask which has the least unwanted music/ringing/reverb/robotic sound. Configuration identities are randomized in mapping_private.json and must remain concealed until the verdict. The same labels carry into the retained repeat and dialogue samples.
+
+Configurations: 7B CFG 1.3; same 7B CFG 2.0; official 1.5B BF16 CFG 1.3. Same saved voice reference, original wording, intact prose/dialogue, 20 diffusion steps, SDPA, 1200 token cap, and two matched seeds per passage. Stronger guidance is exploratory, not an established music fix. The small-versus-large comparison changes size and precision and cannot isolate quantization. Each scene is a single call, so comparisons against old chunked C also include context, pauses and random-draw changes. All playback is natural generated speed with gain-only loudness matching and PCM16 conversion. No time stretching, denoising or internal cropping.
+
+Completed: 12 synthesis calls, 583.33 seconds of raw audio, 1047.38 seconds measured generation excluding loading and checks. Peak sampled total GPU memory during generation was 14443 MiB, including desktop; half-second sampling can miss peaks. GPU inference was sequential and Ollama had no loaded model at preflight or before each call. CPU Whisper checks overlapped some TTS, so timing is operational rather than a controlled speed ranking.
+
+All 12 presentation WAVs decoded, were finite and unclipped, and measured -21.010 to -21.000 LUFS. CPU faster-whisper-large-v3 checked all raw clips. Word differences, including spelling variants and possible substitutions/omissions, are retained in raw ASR reports. These checks do not verify pronunciation, musical artifacts, or naturalness. No artifact-free claim or winner is established before owner listening. All raw takes remain; no take was selected for pleasantness or removed for sounding bad. 72 copied files were hash-verified; the listening guide was deliberately rewritten to use original-project playback paths.
+
+Detailed evidence: method_private.md, small_model_provenance.json, tokenizers_private.json, loader_*.json, raw generation/ASR receipts, results_private.json and summary_private.json. The installed source acknowledges spontaneous BGM as a known behavior; its cause in our clips remains unresolved. Model/source/voice isolation is preserved, and no production backend, completed audiobook, installer or release changed.
+
+
+## Owner prose verdict, September 13, 2026
+
+The owner preferred B among the three first-take prose clips. A was described as not bad/not terrible, not very emotive, and flat overall. B was good and the favorite. C had an artifact around 0:08, strangely accelerated delivery around 0:17, and another artifact around 0:34. C was very natural and emotive and would have been liked a lot without the artifacts, but was the most imperfect of the batch. No strict A-versus-C ranking was supplied.
+
+Verified mapping: A = VibeVoice Large/7B selective 8-bit, CFG 1.3; B = the same model, CFG 2.0; C = official VibeVoice-1.5B TTS in BF16, CFG 1.3. These are the artifact round labels, not the original engine or pace labels.
+
+This supports stronger 7B guidance on this prose take. It does not establish artifact-free output, reliable improvement across seeds, or suitability across a whole book. B had no specific artifact reported by the owner; do not convert that into verified absence of artifacts. A and B held model, text, reference, seed, context, diffusion steps and presentation constant; guidance was the intended changed variable. The cause of C's artifacts is unproven. C was generated at its native rate with gain-only presentation, so the reported acceleration was not introduced by the rejected time-stretching process. The 1.5B model remains promising for expressiveness and is not categorically rejected.
+
+Next focused listening check uses the already generated Dialogue_A_Take2 and Dialogue_B_Take2, reblinded as D/E in Dialogue_Check. This compares the two 7B guidance settings on the intact dialogue passage associated with the earlier N preference. It uses the matched second seed (20270913), the same text and reference, natural generated timing and common loudness. Both saved second takes matched normalized source words in CPU back-transcription; this does not validate pronunciation or naturalness. The original N recording remains preserved and is not substituted for either new arm. No new synthesis is needed. Ask only which dialogue performance sounds more natural, allowing neither; reveal D/E after that choice. Both first dialogue takes and all 1.5B repeats remain retained for later checks.
+
+Dialogue check delivery: Output/Narration_20260913/Artifact_Round1/Dialogue_Check/Listening/Listening guide.md. Total 100.00 seconds. D/E mapping is private until the verdict. No new GPU inference ran while recording this feedback.
+
+
+## Owner dialogue verdict, September 13, 2026
+
+The owner preferred D as more natural. E was decent, but variations in cadence made it lose to D.
+
+Verified mapping: D = Dialogue_B_Take2, VibeVoice Large/7B selective 8-bit with CFG 2.0. E = Dialogue_A_Take2, the same model with CFG 1.3. Both use the same intact dialogue, voice reference, second seed (20270913), 20 diffusion steps, natural generated timing and gain-only loudness matching. D is 47.866667 seconds; E is 52.133333 seconds. Their delivery hashes match the retained source receipts.
+
+CFG 2.0 has now won the first-take prose comparison and this matched second-take dialogue comparison. It is the lead setting for further VibeVoice narration tests. This is evidence across two passages and two seed values, but not a same-passage repeatability result, an optimum-guidance sweep, or proof of full-book reliability. The owner did not report a specific musical artifact in the winning clips; absence of a report is not proof that musical hallucinations are eliminated.
+
+The 1.5B TTS model remains an expressive but less reliable candidate on the reviewed prose take, with artifacts near 0:08 and 0:34 and an abrupt speed change near 0:17. This dialogue check compared only the two 7B guidance settings, so it adds no direct 1.5B-versus-7B evidence.
+
+Preserve the existing production backend and all original audio. For the next bounded continuity pilot, use 7B selective 8-bit, CFG 2.0, 20 diffusion steps, the same original voice reference, intact context and native timing. Test a longer passage with narration/dialogue transitions for music, missing/repeated words, pronunciation and cadence before any production integration. No new synthesis or production change occurred while recording this verdict.
+
+
+
+## Continuous pilot and VRAM findings, September 13, 2026
+
+The owner authorized a longer continuous passage with the preferred CFG 2.0 setting and asked whether 7B would run on a 12 GB card.
+
+Selected source blocks 843 through 857 inclusive, 432 whitespace-delimited words, form an intact landing scene with dialogue, narration, helicopter noise and electronic-beeping descriptions. These descriptions make spontaneous non-speech generation relevant to the stress test. No wording or source-job data was modified. Earlier candidate ranges contained evident source-text defects; the selected scene avoids those known defects rather than silently correcting them during this narration test. Source and reference hashes remain guarded against the parent experiment records.
+
+This is one single-call pilot, not a seed repeatability or full-book qualification run. The winning 7B selective 8-bit weights, BF16 audio components, original Ray Porter PHM reference, SDPA, 20 diffusion steps, CFG 2.0 and deterministic token selection were retained. Seed 20270913. The generated-token cap is 4000 to permit the longer passage; successful completion requires that the cap flag is false. The allocator ceiling is unchanged at 85 percent of this 24 GiB GPU. There is no simulated 12 GB allocator cap, CPU model offload or physical 12 GB card test.
+
+Generation took 295.70 seconds and produced 126.53 seconds of audio. CUDA peak allocations during loading were 10.833 GiB, with 10.855 GiB reserved. During generation the peaks were 11.188 GiB allocated and 11.430 GiB reserved. Whole-run sampled device memory peaked at 14508 MiB, including desktop and CUDA overhead; the sampled pre-load baseline after CUDA setup was 2183 MiB. Half-second samples can miss brief peaks. Reserved memory includes allocations; do not add allocated and reserved values together. PyTorch allocator values exclude some driver/library memory; do not equate them with the complete physical-card requirement.
+
+The publisher advertises 12 GB minimum and 16+ GB recommended for this selective-8-bit model: https://huggingface.co/FabioSarracino/VibeVoice-Large-Q8 . These are publisher claims, not physical-card validation here. More specifically, our unchanged 85 percent allocator ceiling would allow only approximately 10.2 GiB on a nominal 12 GiB card, below the measured 10.833 GiB needed for loading alone. The installed PyTorch API documentation confirms that the fraction limits the allocator to total visible memory multiplied by the fraction. Thus the CURRENT settings are not a fit for 12 GB; this is an inference from a measured allocation and the configured limit, not a physical-card trial. A different memory budget, offload strategy or quantization might permit 12 GB, but none was tested and headroom would still be tight. A 16 GB card is a more realistic capacity target for this tested 8-bit configuration, still subject to actual-card and longer-input validation. These measurements do not describe full-precision 7B. Previously tested 1.5B BF16 peaked at 7,974 MiB total device memory, with more headroom but outstanding owner-reported quality issues.
+
+Presentation uses only common loudness gain and PCM16 conversion. Actual loudness -21.000 LUFS, sample peak 0.754883, no clipping, successful full FFmpeg decode. CPU faster-whisper-large-v3 checks the raw output without a source-text prompt. It does not verify musical artifacts, voice match, naturalness or phonetic accuracy. SequenceMatcher differences are retained rather than called WER or silently corrected. All raw and presentation audio is preserved. No production backend, installer, completed book or environment packages were changed.
+
+Playback and measurements: Output/Narration_20260913/Continuity_Pilot/Listening/Listening guide.md and summary_private.json. Owner listening verdict pending. No artifact-free claim has been made.

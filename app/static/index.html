@@ -42,6 +42,24 @@
   @media (max-width:760px) { .app-shell { display:block; } .sidebar { position:sticky; top:0; z-index:5; height:auto; padding:12px 16px; border-right:0; border-bottom:1px solid var(--line); gap:8px; } .sidebar-head { display:flex; align-items:center; gap:12px; } .brand img { width:29px; height:29px; } .tagline,.storage { display:none; } .nav { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); overflow:visible; padding-bottom:2px; } .nav button { width:100%; min-width:0; min-height:44px; justify-content:center; gap:5px; padding:6px; font-size:.78rem; } .nav-icon { width:auto; } .side-bottom { display:block; margin:0; } .theme-switch { width:150px; margin-left:auto; } .topbar { display:none; } main { padding:24px 16px 42px; } .screen-heading { align-items:flex-start; flex-direction:column; margin-bottom:20px; } .create-callout { align-items:flex-start; flex-wrap:wrap; } .create-callout button { margin-left:62px; } }
   @media (max-width:480px) { .nav button { font-size:.83rem; } .create-callout button { margin-left:0; width:100%; } .upload-row > button,.dlg-actions button { width:100%; } .pagerow { grid-template-columns:1fr; } .radio-row { display:grid; } }
 </style>
+<style>
+  #visual-review-dialog { width:min(1120px,calc(100% - 24px)); }
+  .review-toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .review-toolbar select { flex:1; min-width:180px; }
+  .review-columns { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:28px; margin-top:20px; }
+  .review-columns > section { min-width:0; }
+  .review-columns[hidden] { display:none; }
+  .review-text { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; max-height:340px; overflow:auto; padding:14px; background:var(--canvas); border:1px solid var(--line); border-radius:9px; }
+  .review-context { white-space:pre-wrap; overflow-wrap:anywhere; color:var(--muted); }
+  #review-editor { width:100%; min-height:160px; padding:12px; resize:vertical; font:inherit; color:var(--ink); background:var(--canvas); border:1px solid var(--control-line); border-radius:9px; }
+  #visual-review-dialog :is(select,textarea,button:not(.primary)) { border-color:var(--muted); }
+  #review-page-image { display:block; max-width:100%; max-height:65vh; margin:auto; object-fit:contain; }
+  #review-page-image[hidden] { display:none; }
+  #review-full-text { max-height:55vh; }
+  #review-status { margin:14px 0; }
+  #visual-review-dialog .dlg-actions { flex-wrap:wrap; }
+  @media(max-width:760px) { .review-columns { grid-template-columns:1fr; gap:16px; } #visual-review-dialog { padding:18px; } }
+</style>
 </head>
 <body>
 <div class="app-shell">
@@ -102,6 +120,13 @@
   </div></fieldset>
   <label for="f-voice">Narrator voice</label>
   <select id="f-voice" required></select>
+  <fieldset><legend>Narration engine</legend>
+  <div class="radio-row" id="backend-row">
+    <label><input type="radio" name="backend" value="vibevoice" checked>
+      <span>VibeVoice 1.5B<br><span class="hint">Natural pacing, the default for new audiobooks</span></span></label>
+    <label><input type="radio" name="backend" value="chatterbox">
+      <span>Chatterbox<br><span class="hint">Existing narrator option</span></span></label>
+  </div></fieldset>
   <label for="f-format">Output format</label>
   <select id="f-format">
     <option value="m4b">M4B: audiobook with chapters (recommended)</option>
@@ -131,6 +156,50 @@
     <button class="primary" id="create-job-btn" type="submit">Create audiobook</button>
   </div>
   </form>
+</dialog>
+
+<dialog id="visual-review-dialog" aria-labelledby="review-title" aria-describedby="review-intro">
+  <h3 id="review-title">Review visual passages</h3>
+  <p class="help" id="review-intro">Choose what each passage contributes to the story. Keep important counts, changes and warnings at their original place in the narrative.</p>
+  <div id="review-status" role="status"></div>
+  <div class="err" id="review-error" role="alert"></div>
+  <div id="review-content" hidden>
+    <div class="review-toolbar">
+      <button type="button" id="review-prev">Previous</button>
+      <label for="review-select">Passage</label><select id="review-select"></select>
+      <button type="button" id="review-next">Next</button>
+    </div>
+    <div class="review-columns" id="review-passage">
+      <section aria-labelledby="review-source-title">
+        <h4 id="review-source-title">Original extraction</h4>
+        <p class="help" id="review-provenance"></p>
+        <p class="help">Before this passage</p><div class="review-context" id="review-before"></div>
+        <pre class="review-text" id="review-original"></pre>
+        <p class="help">After this passage</p><div class="review-context" id="review-after"></div>
+        <p class="help" id="review-visual-availability"></p>
+        <details id="review-page"><summary>Original PDF page</summary><img id="review-page-image" alt="Original PDF page for this visual passage" hidden></details>
+      </section>
+      <section aria-labelledby="review-treatment-title">
+        <h4 id="review-treatment-title">Narration treatment</h4>
+        <p class="help" id="review-suggestion"></p>
+        <label for="review-treatment">Treatment</label>
+        <select id="review-treatment">
+          <option value="keep">Keep as spoken text</option>
+          <option value="describe">Replace with a spoken description</option>
+          <option value="skip">Skip: surrounding prose conveys it</option>
+        </select>
+        <label for="review-editor" id="review-editor-label">Spoken text</label>
+        <textarea id="review-editor" aria-describedby="review-editor-help"></textarea>
+        <p class="help" id="review-editor-help"></p>
+        <label for="review-exact">Exact proposed narration</label><pre class="review-text" id="review-exact"></pre>
+        <button type="button" class="primary" id="review-save">Save treatment</button>
+        <p class="help" id="review-saved" role="status"></p>
+      </section>
+    </div>
+    <details id="review-full"><summary>Inspect final narration text</summary><p class="help">In narrative order. Unresolved passages must be reviewed before generation.</p><pre class="review-text" id="review-full-text"></pre></details>
+    <p class="help">Changing spoken text requires new narration under Storybird’s cache rules. Original extraction and earlier finished audio are retained separately.</p>
+  </div>
+  <div class="dlg-actions"><button type="button" id="review-close">Close</button><button type="button" class="primary" id="review-start" disabled>Start narration</button></div>
 </dialog>
 
 <script>
@@ -582,6 +651,7 @@ async function createJob() {
     title: document.getElementById('f-title').value,
     path: document.querySelector('input[name=path]:checked').value,
     voice: document.getElementById('f-voice').value,
+    backend: document.querySelector('input[name=backend]:checked').value,
     format: document.getElementById('f-format').value,
     page_from: +document.getElementById('f-from').value,
     page_to: +document.getElementById('f-to').value,
@@ -777,7 +847,9 @@ function renderJob(j) {
   } else if (j.status === 'narrating') {
     detail = 'Narration starting (model loading)...';
   } else if (j.status === 'queued') {
-    detail = 'Queued. Narration will start when the current job finishes.';
+    detail = 'Queued. Visual passages will be reviewed before narration.';
+  } else if (j.status === 'review_required') {
+    detail = 'Review visual passages and inspect the spoken text before starting narration.';
   } else if (j.status === 'failed') {
     detail = 'Error: ' + (j.error || 'see log');
   } else if (j.status === 'done' && j.block_counts) {
@@ -791,7 +863,7 @@ function renderJob(j) {
   const pages = `pages ${j.page_from} to ${j.page_to}`;
   div.innerHTML = `<div class="row1">
       <span class="title">${esc(j.title)}</span>
-      <span class="badge ${badgeCls}">${esc(j.status)}</span>
+      <span class="badge ${badgeCls}">${esc(j.status.replaceAll('_', ' '))}</span>
     </div>
     <div class="detail job-meta">${j.path === 'B' ? 'Page images (OCR)' : 'PDF text'} · ${esc(pages)}${j.voice ? ' · ' + esc(j.voice) : ''}${j.format ? ' · ' + esc(j.format.toUpperCase()) : ''}</div>
     ${progressHtml}
@@ -800,7 +872,10 @@ function renderJob(j) {
   const row = document.createElement('div');
   row.className = 'job-actions';
   div.appendChild(row);
-  if (running) row.appendChild(btn('Cancel', 'danger', async () => {
+  if (!running && (j.block_counts || j.status === 'review_required')) {
+    row.appendChild(btn('Review narration text', j.status === 'review_required' ? 'primary' : '', () => openVisualReview(j.id, j.title)));
+  }
+  if (running || j.status === 'review_required') row.appendChild(btn('Cancel', 'danger', async () => {
     await jobAction(j.id, 'cancel');
   }));
   if (['failed','canceled','interrupted'].includes(j.status)) {
@@ -908,6 +983,190 @@ function renderJob(j) {
   }
   return div;
 }
+
+const reviewDialog = document.getElementById('visual-review-dialog');
+let reviewJob = null, reviewData = null, reviewIndex = 0, reviewDirty = false, reviewPreviewed = false, reviewSession = 0;
+const reviewEl = name => document.getElementById('review-' + name);
+
+async function reviewRequest(path, body) {
+  const response = await fetch(`/api/jobs/${reviewJob}/${path}`, body === undefined ? {} : {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Could not load the review. Try again.');
+  return data;
+}
+
+async function openVisualReview(jobId, title) {
+  const session = ++reviewSession;
+  reviewJob = jobId;
+  reviewData = null;
+  reviewIndex = 0;
+  reviewDirty = false;
+  reviewPreviewed = false;
+  reviewEl('title').textContent = `Review narration: ${title}`;
+  reviewEl('content').hidden = true;
+  reviewEl('error').textContent = '';
+  reviewEl('status').textContent = 'Loading extracted passages…';
+  reviewEl('start').disabled = true;
+  reviewEl('full').open = false;
+  reviewEl('full-text').textContent = '';
+  reviewDialog.showModal();
+  try {
+    const data = await reviewRequest('visual-review');
+    if (session !== reviewSession || !reviewDialog.open) return;
+    reviewData = data;
+    reviewEl('content').hidden = false;
+    renderVisualReview();
+    if (reviewData.items.length) reviewEl('select').focus();
+    reviewDialog.scrollTop = 0;
+  } catch (e) {
+    if (session !== reviewSession) return;
+    reviewEl('status').textContent = ''; reviewEl('error').textContent = e.message;
+  }
+}
+
+function updateReviewControls() {
+  if (!reviewData) return;
+  const items = reviewData.items;
+  reviewEl('prev').disabled = reviewDirty || reviewIndex === 0;
+  reviewEl('next').disabled = reviewDirty || reviewIndex >= items.length - 1;
+  reviewEl('select').disabled = reviewDirty || !items.length;
+  reviewEl('save').disabled = !reviewData.editable || !items.length;
+  reviewEl('start').disabled = !reviewData.editable || reviewDirty || reviewData.unresolved_count > 0 || !reviewPreviewed;
+}
+
+function renderVisualReview() {
+  const items = reviewData.items;
+  reviewEl('status').textContent = items.length
+    ? `${reviewData.unresolved_count} of ${items.length} passages need a saved treatment.`
+    : 'No visual passages were flagged. You can inspect the narration text below.';
+  if (!reviewData.editable) reviewEl('status').textContent += ' Pause the job before editing.';
+  reviewEl('select').replaceChildren(...items.map((item, index) => {
+    const option = document.createElement('option');
+    option.value = index;
+    option.textContent = `${index + 1}. ${item.visual_kind || 'Visual'}${item.source_page ? ` · page ${item.source_page}` : ''} · ${item.decision ? 'Saved' : 'Needs review'}`;
+    return option;
+  }));
+  reviewEl('select').value = reviewIndex;
+  reviewEl('passage').hidden = !items.length;
+  reviewEl('error').textContent = '';
+  reviewEl('saved').textContent = '';
+  reviewDirty = false;
+  const item = items[reviewIndex];
+  if (item) {
+    reviewEl('original').textContent = item.original_text || 'Original extracted content is unavailable.';
+    reviewEl('provenance').textContent = item.source_page ? `Source PDF page ${item.source_page}` : 'Source page is unknown.';
+    const context = item.nearby_prose || {};
+    reviewEl('before').textContent = (context.before || []).join('\n\n') || 'No nearby prose available.';
+    reviewEl('after').textContent = (context.after || []).join('\n\n') || 'No nearby prose available.';
+    const suggestion = item.suggestion || {};
+    reviewEl('suggestion').textContent = suggestion.reason || 'Review the source before choosing. Storybird does not infer missing visual content.';
+    reviewEl('treatment').value = item.decision || suggestion.decision || 'describe';
+    reviewEl('editor').value = item.decision ? (item.spoken_text || '') : (suggestion.spoken_text || '');
+    reviewEl('treatment').disabled = !reviewData.editable;
+    reviewEl('saved').textContent = item.decision ? 'Saved treatment loaded.' : 'Suggested treatment. Save to accept it.';
+    reviewEl('page').open = false;
+    reviewEl('page').hidden = !item.preview_url;
+    reviewEl('page-image').hidden = true;
+    reviewEl('page-image').removeAttribute('src');
+    reviewEl('visual-availability').textContent = item.preview_url
+      ? 'The original PDF page is available below. Check it against the extraction.'
+      : 'Original visual unavailable. The extraction may not contain the graphic; do not reconstruct missing details.';
+    updateReviewSpeech();
+  }
+  updateReviewControls();
+}
+
+function updateReviewSpeech() {
+  const treatment = reviewEl('treatment').value;
+  const skip = treatment === 'skip';
+  reviewEl('editor').disabled = skip || !reviewData.editable;
+  reviewEl('editor').readOnly = treatment === 'keep';
+  reviewEl('editor-label').textContent = treatment === 'describe' ? 'Your spoken description (adaptation)' : 'Spoken text';
+  reviewEl('editor-help').textContent = skip
+    ? 'Nothing will be spoken at this passage. Confirm the author’s nearby prose already supplies what matters.'
+    : treatment === 'describe'
+      ? 'Write only what the source supports. Preserve important numbers and discovery order. This is an adaptation, separate from the original text.'
+      : 'This keeps the extracted spoken text. Choose a spoken description to edit or condense it.';
+  reviewEl('exact').textContent = skip ? '(Nothing will be spoken.)' : reviewEl('editor').value || '(No spoken text yet.)';
+}
+
+function markReviewDirty() {
+  reviewDirty = true;
+  reviewPreviewed = false;
+  reviewEl('full').open = false;
+  reviewEl('saved').textContent = 'Unsaved changes. Save this treatment before moving to another passage.';
+  updateReviewSpeech();
+  updateReviewControls();
+}
+
+reviewEl('editor').addEventListener('input', markReviewDirty);
+reviewEl('treatment').addEventListener('change', () => {
+  const item = reviewData.items[reviewIndex];
+  if (reviewEl('treatment').value === 'keep') {
+    reviewEl('editor').value = item.keep_text || item.original_text || '';
+  }
+  markReviewDirty();
+});
+reviewEl('select').addEventListener('change', () => { reviewIndex = Number(reviewEl('select').value); renderVisualReview(); });
+reviewEl('prev').onclick = () => { reviewIndex--; renderVisualReview(); };
+reviewEl('next').onclick = () => { reviewIndex++; renderVisualReview(); };
+reviewEl('save').onclick = async () => {
+  const item = reviewData.items[reviewIndex];
+  reviewEl('save').disabled = true;
+  reviewEl('error').textContent = '';
+  try {
+    await reviewRequest(`visual-review/${item.id}`, {
+      fingerprint:item.fingerprint, decision:reviewEl('treatment').value,
+      spoken_text:reviewEl('treatment').value === 'skip' ? '' : reviewEl('editor').value
+    });
+    reviewData = await reviewRequest('visual-review');
+    reviewPreviewed = false;
+    reviewEl('full').open = false;
+    renderVisualReview();
+    reviewEl('saved').textContent = 'Treatment saved. It will be here when you return.';
+    reviewEl('save').focus();
+    await refreshJobs();
+  } catch (e) { reviewEl('error').textContent = e.message; updateReviewControls(); }
+};
+reviewEl('page').addEventListener('toggle', () => {
+  if (!reviewEl('page').open) return;
+  const item = reviewData?.items[reviewIndex];
+  if (!item?.preview_url) return;
+  const img = reviewEl('page-image');
+  img.onerror = () => {
+    img.hidden = true;
+    reviewEl('visual-availability').textContent = 'Original visual unavailable. The PDF page could not be loaded.';
+  };
+  img.onload = () => { img.hidden = false; };
+  img.src = item.preview_url;
+});
+reviewEl('full').addEventListener('toggle', async () => {
+  if (!reviewEl('full').open) return;
+  reviewEl('full-text').textContent = 'Loading narration text…';
+  try {
+    const preview = await reviewRequest('visual-review/preview');
+    reviewEl('full-text').textContent = preview.text || '(No spoken text.)';
+    reviewPreviewed = !reviewDirty && preview.unresolved_count === 0;
+    updateReviewControls();
+  } catch (e) { reviewEl('full-text').textContent = e.message; }
+});
+reviewEl('start').onclick = async () => {
+  reviewEl('start').disabled = true;
+  try {
+    await reviewRequest('visual-review/start', {});
+    reviewDialog.close();
+    await refreshJobs();
+  } catch (e) { reviewEl('error').textContent = e.message; updateReviewControls(); }
+};
+function closeReview() {
+  if (reviewDirty && !confirm('Discard the unsaved treatment? Saved treatments will stay.')) return;
+  reviewSession++;
+  reviewDialog.close();
+}
+reviewEl('close').onclick = closeReview;
+reviewDialog.addEventListener('cancel', event => { event.preventDefault(); closeReview(); });
 
 async function uploadCover(jobId, input) {
   const status = input.closest('.cover-change').querySelector('.cover-status');

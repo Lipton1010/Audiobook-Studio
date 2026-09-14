@@ -32,9 +32,8 @@ For the next version onward, the owner confirmed these exact Drive naming patter
 Substitute the actual app version. Put Patch or Installer first; include no build
 timestamp, hash suffix, or other identifier in the filename. Keep provenance in
 the receipts. Use a new version number for a different distributed build; identical
-bytes do not need another upload. Before building the next version, update
-`record_installer.ps1` and its naming assertion in `tests/test_installer_record.ps1`
-to generate these names. The existing 1.0.3 uploads and receipts retain their old
+bytes do not need another upload. `record_installer.ps1` and its naming assertion
+in `tests/test_installer_record.ps1` generate these names. The existing 1.0.3 uploads and receipts retain their old
 names at the owner's request; do not rename or reupload them just for this policy.
 
 `00_CURRENT_INSTALLERS.txt` is the human-readable local guide. Older versioned
@@ -43,8 +42,8 @@ current pair.
 
 ## Upload and retire previous copies
 
-Use the connected Google Drive tools immediately after each successful agent-run
-build, in the same task. This is a required completion step, not an optional
+Use the connected Google Drive tools after the required final audit and exact-build
+testing, in the same build task. This is a required completion step, not an optional
 follow-up. The owner explicitly rejected polling on 2026-09-12: do not create a
 recurring check or spend tokens when no build is happening. The batch file writes
 the upload-ready receipt but does not itself authenticate to Google Drive. A
@@ -73,7 +72,8 @@ in the next active task; do not claim that a receipt is an upload.
    delete files or change sharing permissions. Verify the resulting folder list.
 5. Upload or update `00_CURRENT_BETA.txt`, containing both current distribution
    names, versions, commits, byte sizes and SHA-256 values. Say these are beta
-   candidates and exact-build installed-machine validation remains outstanding.
+   candidates and state which exact-build installed-machine checks passed and
+   which release gates remain outstanding; never reuse a stale validation claim.
    Store its observed Drive file ID in the local ledger.
 
 For retry safety, always inspect the folder even when the hash is in the ledger:
