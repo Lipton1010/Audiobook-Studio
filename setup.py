@@ -100,6 +100,7 @@ def write_warnings_file():
 
 
 def run(cmd, **kw):
+    cmd = [str(part) for part in cmd]
     print(f"    $ {' '.join(cmd)}")
     return subprocess.run(cmd, **kw)
 

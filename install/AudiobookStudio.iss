@@ -326,20 +326,20 @@ begin
     if not DelTree(InstallDir, True, True, True) then
     begin
       AppendMinicondaInstallerLog('Could not remove the incomplete private Miniconda target.');
-      MsgBox('Setup found an incomplete private Miniconda installation but could not remove it:' + #13#10#13#10 +
+      SuppressibleMsgBox('Setup found an incomplete private Miniconda installation but could not remove it:' + #13#10#13#10 +
              InstallDir + #13#10#13#10 +
              'Close programs using that folder and run Setup again.' + #13#10#13#10 +
              'Diagnostic log:' + #13#10 + MinicondaFailureLogPath,
-             mbError, MB_OK);
+             mbError, MB_OK, IDOK);
       exit;
     end;
     if DirExists(InstallDir) then
     begin
       AppendMinicondaInstallerLog('The incomplete private Miniconda target still exists after cleanup.');
-      MsgBox('Setup could not completely remove an earlier partial Miniconda installation:' + #13#10#13#10 +
+      SuppressibleMsgBox('Setup could not completely remove an earlier partial Miniconda installation:' + #13#10#13#10 +
              InstallDir + #13#10#13#10 +
              'Diagnostic log:' + #13#10 + MinicondaFailureLogPath,
-             mbError, MB_OK);
+             mbError, MB_OK, IDOK);
       exit;
     end;
     AppendMinicondaInstallerLog('Incomplete private Miniconda target removed successfully.');
@@ -350,8 +350,8 @@ begin
   // wrapper to create multiple missing levels from its /D argument.
   if not ForceDirectories(ExpandConstant('{app}\runtime')) then
   begin
-    MsgBox('Could not create Audiobook Studio''s private runtime folder at:' + #13#10 +
-           ExpandConstant('{app}\runtime'), mbError, MB_OK);
+    SuppressibleMsgBox('Could not create Audiobook Studio''s private runtime folder at:' + #13#10 +
+           ExpandConstant('{app}\runtime'), mbError, MB_OK, IDOK);
     exit;
   end;
 
@@ -367,18 +367,18 @@ begin
     // first non-blank character is '#' as a preprocessor directive, so a wrapped
     // '#13#10' at the start of a line aborts the compile with 'Unknown
     // preprocessor directive'. Keep the newline constants mid-line.
-    MsgBox('Could not download Miniconda:' + #13#10#13#10 + GetExceptionMessage + #13#10#13#10 +
+    SuppressibleMsgBox('Could not download Miniconda:' + #13#10#13#10 + GetExceptionMessage + #13#10#13#10 +
            'Check your internet connection and run this installer again. ' +
            'If the message mentions a hash or checksum, the pinned Miniconda build ' +
            'has been replaced upstream and this installer needs rebuilding.',
-           mbError, MB_OK);
+           mbError, MB_OK, IDOK);
     exit;
   end;
 
   if not FileExists(InstallerPath) then
   begin
-    MsgBox('Miniconda downloaded but the installer file was not found at' + #13#10 +
-           InstallerPath, mbError, MB_OK);
+    SuppressibleMsgBox('Miniconda downloaded but the installer file was not found at' + #13#10 +
+           InstallerPath, mbError, MB_OK, IDOK);
     exit;
   end;
 
@@ -398,26 +398,26 @@ begin
         ResultCode, @OnMinicondaInstallerOutput) then
     begin
       AppendMinicondaInstallerLog('Failed to launch: ' + SysErrorMessage(ResultCode));
-      MsgBox('The Miniconda installer failed to launch.' + #13#10#13#10 +
+      SuppressibleMsgBox('The Miniconda installer failed to launch.' + #13#10#13#10 +
              'Diagnostic log:' + #13#10 + MinicondaFailureLogPath,
-             mbError, MB_OK);
+             mbError, MB_OK, IDOK);
       exit;
     end;
   except
     AppendMinicondaInstallerLog('Output-capture exception: ' + GetExceptionMessage);
-    MsgBox('The Miniconda installer could not be launched with output capture:' + #13#10#13#10 +
+    SuppressibleMsgBox('The Miniconda installer could not be launched with output capture:' + #13#10#13#10 +
            GetExceptionMessage + #13#10#13#10 + 'Diagnostic log:' + #13#10 +
-           MinicondaFailureLogPath, mbError, MB_OK);
+           MinicondaFailureLogPath, mbError, MB_OK, IDOK);
     exit;
   end;
   AppendMinicondaInstallerLog('Exit code: ' + IntToStr(ResultCode));
 
   if ResultCode <> 0 then
   begin
-    MsgBox('The Miniconda installer exited with error code ' + IntToStr(ResultCode) +
+    SuppressibleMsgBox('The Miniconda installer exited with error code ' + IntToStr(ResultCode) +
            '.' + #13#10#13#10 + 'Target folder:' + #13#10 + InstallDir + #13#10#13#10 +
            'Diagnostic log:' + #13#10 + MinicondaFailureLogPath,
-           mbError, MB_OK);
+           mbError, MB_OK, IDOK);
     exit;
   end;
 
@@ -523,13 +523,13 @@ begin
   if ResultCode <> 0 then
   begin
     SetupPyOk := False;
-    MsgBox('Audiobook Studio''s Python environment did not finish building ' +
+    SuppressibleMsgBox('Audiobook Studio''s Python environment did not finish building ' +
            '(setup.py exited with code ' + IntToStr(ResultCode) + ').' + #13#10#13#10 +
            'The app is installed but will not narrate until this is fixed. The full ' +
            'log is at:' + #13#10 + LogPath + #13#10#13#10 +
            'Send that file to whoever gave you this installer. You can also retry ' +
            'without reinstalling by running setup.bat in the install folder.',
-           mbError, MB_OK);
+           mbError, MB_OK, IDOK);
     exit;
   end;
 
@@ -543,8 +543,8 @@ begin
     for I := 0 to GetArrayLength(WarnLines) - 1 do
       WarnMsg := WarnMsg + WarnLines[I] + #13#10;
     if WarnMsg <> '' then
-      MsgBox('Audiobook Studio installed, but with warnings:' + #13#10#13#10 +
-             WarnMsg + #13#10 + 'Full log: ' + LogPath, mbInformation, MB_OK);
+      SuppressibleMsgBox('Audiobook Studio installed, but with warnings:' + #13#10#13#10 +
+             WarnMsg + #13#10 + 'Full log: ' + LogPath, mbInformation, MB_OK, IDOK);
   end;
 end;
 

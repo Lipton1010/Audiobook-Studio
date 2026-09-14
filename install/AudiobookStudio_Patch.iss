@@ -211,13 +211,13 @@ begin
   WizardForm.ProgressGauge.Style := npbstNormal;
   if ResultCode <> 0 then
   begin
-    MsgBox('The 1.0.5 VibeVoice runtime did not finish building (exit code ' +
+    SuppressibleMsgBox('The 1.0.5 VibeVoice runtime did not finish building (exit code ' +
            IntToStr(ResultCode) + '). The patch files were copied, but the app ' +
            'will not launch so it cannot run with a partial runtime.' + #13#10#13#10 +
            'Full diagnostic log:' + #13#10 + LogPath + #13#10#13#10 +
            'Close the installer, fix the reported network or disk problem, and ' +
            'run this patch again. Existing books, voices, jobs, and audiobooks ' +
-           'were not changed.', mbError, MB_OK);
+           'were not changed.', mbError, MB_OK, IDOK);
     exit;
   end;
   PatchSetupOk := True;

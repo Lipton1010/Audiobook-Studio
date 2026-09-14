@@ -38,6 +38,11 @@ class VibeVoiceInstallerTests(unittest.TestCase):
         self.assertIn('app\\narrate_worker.py', helper)
         self.assertIn('app\\vibevoice_worker.py', helper)
 
+    def test_custom_dialogs_are_suppressible_for_silent_installs(self):
+        for script in (self.full, self.patch):
+            self.assertNotRegex(script, r'(?<!Suppressible)MsgBox\(')
+            self.assertIn('SuppressibleMsgBox', script)
+
     def test_patch_provisions_vibevoice_and_suppresses_launch_on_failure(self):
         self.assertIn('bootstrap_vibevoice.py', self.patch)
         self.assertIn('--install --conda', self.patch)
