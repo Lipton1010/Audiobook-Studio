@@ -17,6 +17,13 @@ runtime-dependent skips; all 31 focused tests passed in the isolated VibeVoice
 runtime. Both installer version markers and the app version are 1.0.6. See
 RELEASE_1_0_6.md. Artifact tests and hashes are recorded separately under ignored
 Output/Release_1_0_6; source checks do not certify an installer or a public release.
+The first installed 1.0.6 candidate exposed missing M4B chapter marks for numbered
+colon headings. Both narration assemblers now reuse the shared chapter classifier;
+this changes assembly metadata only and preserves all narration checkpoints. The
+corrected source passed 204 tests (16 runtime-dependent skips) and all 35 focused
+runtime/assembly tests. Final candidate artifacts require new installed checks.
+The owner explicitly requested leaving Annihilation paused after installer testing
+and upload, to keep the PC available; do not automatically resume that book.
 ## Current 1.0.5 integration state — 2026-09-14
 
 The owner approved VibeVoice 1.5B as the preferred narrator after listening to the

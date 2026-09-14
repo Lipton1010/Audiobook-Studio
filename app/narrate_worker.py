@@ -51,17 +51,13 @@ class _NoWatermark:
 perth.PerthImplicitWatermarker = _NoWatermark
 
 from chatterbox.tts import ChatterboxTTS
-from assembly_metadata import outline_chapter_marks
+from assembly_metadata import is_outline_chapter_title, outline_chapter_marks
 from gpu_oom import bisect_cuda_oom, configure_memory_limit, is_cuda_oom, recover_cuda_after_oom
 from narration_eta import PROGRESS_FILENAME, estimate_remaining_seconds, write_progress
 from narration_safety import repair_capped_sequences
 
 CHAR_CEILING = 400
 SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?])\s+(?=[A-Z"\'‘“])')
-# Headings that name a top-level division become navigable chapters in
-# the m4b/mp3. Sub-section headings (e.g. "REVIEW THE CHARACTERS") do
-# not, so the chapter list stays a real table of contents.
-CHAPTER_RE = re.compile(r"^(BOOK|CHAPTER|PART|CANTO|PROLOGUE|EPILOGUE|INTRODUCTION|PREFACE)\b", re.I)
 AAC_BITRATE = "64k"  # mono 24 kHz narration; transparent for voice
 # Batching controls for engine="batched". BATCH_SIZE is the hard cap on rows
 # per batch. BATCH_TOKEN_BUDGET caps rows*Tmax so the KV-cache stays within
@@ -581,7 +577,7 @@ def run_assemble(job_dir, plan, config, profile):
         before = int(sr * entry["before_ms"] / 1000.0)
         after = int(sr * entry["after_ms"] / 1000.0)
         head = entry.get("heading")
-        if head and CHAPTER_RE.match(head):
+        if head and is_outline_chapter_title(head):
             detected_chapters.append((int(cursor / sr * 1000), head))
         source_page = entry.get("source_page")
         if source_page is not None and source_page not in seen_pages:

@@ -4,7 +4,7 @@
 
 The release also fixes ordinary unsigned whole-number notation in the quality checker, so equivalent forms such as `100` and `one hundred` do not consume retries. Numeric signs, decimals, fractions, leading-zero forms, and identifiers remain distinct.
 
-Extraction now keeps ordinary prose beginning with a label-like word out of visual review, restores numbered uppercase chapter titles as spoken headings, and preserves the existing visual-review path for genuine captions and graphics. Narration progress reports rendering and quality phases so healthy retries do not trigger the aggregate watchdog. Owned CPU verifier descendants are terminated with their exact worker run during cancellation or failure.
+Extraction now keeps ordinary prose beginning with a label-like word out of visual review, restores numbered uppercase chapter titles as spoken headings and navigable M4B chapter marks, and preserves the existing visual-review path for genuine captions and graphics. Narration progress reports rendering and quality phases so healthy retries do not trigger the aggregate watchdog. Owned CPU verifier descendants are terminated with their exact worker run during cancellation or failure.
 
 The patch updates the VibeVoice worker, planner, unit, quality, audio, and assembly modules and provisions the existing private runtime. The full installer copies the complete tracked source tree. Both installers require the release commit to contain every module before the canonical `git archive HEAD` build.
 

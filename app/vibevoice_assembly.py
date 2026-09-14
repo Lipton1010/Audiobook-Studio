@@ -8,12 +8,10 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-from assembly_metadata import outline_chapter_marks
+from assembly_metadata import is_outline_chapter_title, outline_chapter_marks
 
 
 AAC_BITRATE = "64k"
-CHAPTER_RE = re.compile(r"^(BOOK|CHAPTER|PART|CANTO|PROLOGUE|EPILOGUE|INTRODUCTION|PREFACE)\b", re.I)
-
 
 def _ffmpeg():
     return shutil.which("ffmpeg") or str(Path(__file__).resolve().parent.parent / "tools" / "ffmpeg.exe")
@@ -77,7 +75,7 @@ def assemble(job_dir, passages, config, segment_path, cancelled=lambda: False):
     sr = sf.info(str(paths[0])).samplerate
     cursor, detected_chapters, page_starts, seen_pages = 0, [], [], set()
     for passage, path in zip(passages, paths):
-        if passage.get("heading") and CHAPTER_RE.match(passage["heading"]):
+        if passage.get("heading") and is_outline_chapter_title(passage["heading"]):
             detected_chapters.append((int(cursor / sr * 1000), passage["heading"]))
         for page in passage.get("source_pages", []):
             if page not in seen_pages:
