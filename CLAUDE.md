@@ -38,6 +38,15 @@ with another model stopped for its required preview. UI voice import, placement,
 context actions, artwork, export, and advanced reset were exercised. Sol's source
 and privacy audits passed; Graft reparsed 80 Python files and its wiring check passed.
 See RELEASE_1_0_7.md for the scope and remaining hardware/installer limits.
+
+Main checkout and GitHub reconciliation are complete. Implementation commit 50afb28
+passed the same 291-test suite from the reconciled main checkout. Every prior dirty
+source/doc file was preserved with hash verification in an ignored local backup;
+unrelated branding and handoff files remain untracked and unchanged. The desktop
+shortcut now launches the main checkout's launcher, and the running app reports
+1.0.7. Existing runtime paths and job data are retained. No new installer was built.
+The requested personal iCloud upload remains pending sign-in and destination-access
+verification; the finished audiobook has not been uploaded there.
 # Local PDF to Audiobook Pipeline — Standing Rules
 
 Personal project. Local build on my own hardware, for legally purchased books, personal use only.
