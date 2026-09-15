@@ -94,6 +94,46 @@ class VibeVoiceRuntimeAudioTests(unittest.TestCase):
             progress = json.loads((job / worker.PROGRESS_FILE).read_text(encoding="utf-8"))
             self.assertEqual(progress, {"done": 1, "total": 1, "shard": 0, "status": "complete"})
 
+    def test_seeded_numbered_parent_cache_binds_manifest_before_skip(self):
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temp:
+            job = Path(temp)
+            seg_dir = job / worker.SEGMENTS_DIR
+            seg_dir.mkdir()
+            audio = np.full(2401, 0.02, dtype=np.float32)
+            wav = worker._wav_path(seg_dir, 0)
+            sf.write(wav, audio, 24000, subtype="PCM_16")
+            passage = {"index": 0, "identity": "identity", "text_sha256": "text",
+                       "text": "03: ARRIVAL", "heading": "03: ARRIVAL"}
+            seed = {"render_seed_profile": worker.NUMBERED_OUTLINE_HEADING_SEED_PROFILE,
+                    "render_seed": 102, "render_attempt": 2}
+            receipt = {"identity": "identity", "wav_sha256": worker.sha256_file(wav),
+                       "unit_reports": [{"transcript": "Three Arrival"}],
+                       "unit_manifest": [{"index": 0, "identity": "unit", "wav_sha256": "unit-audio", **seed}]}
+            worker._write_json(worker._receipt_path(seg_dir, 0), receipt)
+            unit_dir = seg_dir / worker.UNITS_DIR
+            unit_dir.mkdir()
+            worker._write_json(worker._receipt_path(unit_dir, 0), {"render_profile": worker.NUMBERED_OUTLINE_HEADING_PROFILE,
+                                                                    "attempt": 2, **seed})
+            with mock.patch.object(worker, "load_plan", return_value=({"passages": [passage]}, {})), \
+                 mock.patch.object(worker, "_load_model", side_effect=AssertionError("must not load")), \
+                 mock.patch.object(worker, "_QualityChecker", side_effect=AssertionError("must not load ASR")):
+                worker.run_generate(job)
+            unit_receipt = worker._receipt_path(unit_dir, 0)
+            unit_payload = json.loads(unit_receipt.read_text(encoding="utf-8"))
+            unit_payload["attempt"] = 1
+            worker._write_json(unit_receipt, unit_payload)
+            self.assertFalse(worker._valid_segment(seg_dir, passage))
+            unit_payload["attempt"] = 2
+            worker._write_json(unit_receipt, unit_payload)
+            receipt["unit_manifest"][0]["render_seed"] = 101
+            worker._write_json(worker._receipt_path(seg_dir, 0), receipt)
+            self.assertFalse(worker._valid_segment(seg_dir, passage))
+            receipt["unit_manifest"][0].update(seed)
+            for key in seed:
+                receipt["unit_manifest"][0].pop(key)
+            worker._write_json(worker._receipt_path(seg_dir, 0), receipt)
+            self.assertFalse(worker._valid_segment(seg_dir, passage))
+
 
     def test_parent_join_preserves_timing_and_interior_audio(self):
         with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temp:
@@ -160,12 +200,16 @@ class VibeVoiceRuntimeAudioTests(unittest.TestCase):
             def publish(directory, row, _p, _r, attempt):
                 published.append((row["unit_index"], attempt)); reports[row["unit_index"]] = {"unit_index": row["unit_index"], "transcript": row["text"]}
                 worker._write_json(worker._receipt_path(directory, row["index"]), {"attempt": attempt})
+            def quality(_checker, _wav, row, _label):
+                report = job / "report.json"
+                worker._write_json(report, {"transcript": row["text"]})
+                return True, report
             patches = [mock.patch.object(worker, "load_plan", return_value=({"passages": [parent], "voice_sha256": "v"}, {"quality_max_retries": 1})),
                 mock.patch.object(worker, "_valid_segment", return_value=False), mock.patch.object(worker, "_valid_unit", return_value=False),
                 mock.patch.object(worker, "repair_units", return_value=rows), mock.patch.object(worker, "_assert_no_ocr"), mock.patch.object(worker, "_prepare_voice", return_value=None),
                 mock.patch.object(worker, "_load_model", return_value=(_Torch(), None, None)), mock.patch.object(worker, "_batch_size", return_value=2),
                 mock.patch.object(worker, "_QualityChecker"), mock.patch.object(worker, "_render_items", side_effect=render),
-                mock.patch.object(worker, "_quality_check", return_value=(True, job / "report.json")), mock.patch.object(worker, "_publish_unit", side_effect=publish),
+                mock.patch.object(worker, "_quality_check", side_effect=quality), mock.patch.object(worker, "_publish_unit", side_effect=publish),
                 mock.patch.object(worker, "_unit_report", side_effect=lambda _d, row: reports[row["unit_index"]]),
                 mock.patch.object(worker, "parent_quality", return_value={"ok": True}), mock.patch.object(worker, "_assemble_parent_from_units")]
             with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9], patches[10], patches[11], patches[12], patches[13], patches[14]:
@@ -182,10 +226,11 @@ class VibeVoiceRuntimeAudioTests(unittest.TestCase):
             def publish(directory, row, _p, _r, attempt):
                 published.append((row["unit_index"], attempt)); reports[row["unit_index"]] = {"unit_index": row["unit_index"], "transcript": row["text"]}
                 worker._write_json(worker._receipt_path(directory, row["index"]), {"attempt": attempt})
-            def materialize(*args):
-                for path in args[5:]:
-                    if isinstance(path, Path): path.write_bytes(b"audio")
-            with mock.patch.object(worker, "load_plan", return_value=({"passages": [parent], "voice_sha256": "v"}, {"quality_max_retries": 1})), mock.patch.object(worker, "_valid_segment", return_value=False), mock.patch.object(worker, "_valid_unit", return_value=False), mock.patch.object(worker, "repair_units", return_value=rows), mock.patch.object(worker, "_assert_no_ocr"), mock.patch.object(worker, "_prepare_voice", return_value=None), mock.patch.object(worker, "_load_model", return_value=(_Torch(), None, None)), mock.patch.object(worker, "_batch_size", return_value=2), mock.patch.object(worker, "_QualityChecker"), mock.patch.object(worker, "_render_items", side_effect=render), mock.patch.object(worker, "_quality_check", return_value=(True, job / "report.json")), mock.patch.object(worker, "_publish_unit", side_effect=publish), mock.patch.object(worker, "_unit_report", side_effect=lambda _d, row: reports[row["unit_index"]]), mock.patch.object(worker, "parent_quality", side_effect=[{"ok": False}, {"ok": True}]), mock.patch.object(worker, "choose_repair_unit", return_value=rows[0]), mock.patch.object(worker, "_assemble_parent_from_units", side_effect=lambda *args: assembled.append(args)):
+            def quality(_checker, _wav, row, _label):
+                report = job / "report.json"
+                worker._write_json(report, {"transcript": row["text"]})
+                return True, report
+            with mock.patch.object(worker, "load_plan", return_value=({"passages": [parent], "voice_sha256": "v"}, {"quality_max_retries": 1})), mock.patch.object(worker, "_valid_segment", return_value=False), mock.patch.object(worker, "_valid_unit", return_value=False), mock.patch.object(worker, "repair_units", return_value=rows), mock.patch.object(worker, "_assert_no_ocr"), mock.patch.object(worker, "_prepare_voice", return_value=None), mock.patch.object(worker, "_load_model", return_value=(_Torch(), None, None)), mock.patch.object(worker, "_batch_size", return_value=2), mock.patch.object(worker, "_QualityChecker"), mock.patch.object(worker, "_render_items", side_effect=render), mock.patch.object(worker, "_quality_check", side_effect=quality), mock.patch.object(worker, "_publish_unit", side_effect=publish), mock.patch.object(worker, "_unit_report", side_effect=lambda _d, row: reports[row["unit_index"]]), mock.patch.object(worker, "parent_quality", side_effect=[{"ok": False}, {"ok": True}]), mock.patch.object(worker, "choose_repair_unit", return_value=rows[0]), mock.patch.object(worker, "_assemble_parent_from_units", side_effect=lambda *args: assembled.append(args)):
                 worker.run_generate(job)
         self.assertEqual(published, [(0, 1), (1, 1), (0, 2)])
         self.assertEqual(len(assembled), 1)

@@ -2,9 +2,11 @@
 
 [![Latest release](https://img.shields.io/github/v/release/Lipton1010/Audiobook-Studio?label=download&color=blue)](https://github.com/Lipton1010/Audiobook-Studio/releases/latest)
 
-Local PDF to audiobook pipeline for legally purchased books, personal use only. Storybird runs extraction and narration locally. The 1.0.5 source uses VibeVoice 1.5B for new jobs, with Chatterbox available for existing jobs and as a selectable fallback.
+Local PDF to audiobook pipeline for legally purchased books, personal use only. Storybird runs extraction and narration locally. New jobs use VibeVoice 1.5B, with Chatterbox available for existing jobs and as a selectable fallback.
 
-**The 1.0.5 source integration is locally verified; no 1.0.5 installer or patch has been built.** Existing release downloads do not contain this integration. See [verification and its limits](VIBEVOICE_1_0_5.md).
+**Current source: 1.0.7. Current private beta installers: 1.0.6.** The 1.0.7 source is locally tested; no 1.0.7 installer has been built. See [1.0.7 changes and verification limits](RELEASE_1_0_7.md). The public Releases page may contain an older version than the private beta handoff.
+
+In 1.0.7, selecting a voice imports it immediately, new audiobooks appear at the top of the main window, and additional books queue automatically. Right-click a finished book for artwork, export, regeneration, and deletion options. Advanced options include a restore-defaults button. Automatic performance overlaps the next passage's GPU generation with the current passage's CPU check while preserving quality gates and checkpoints.
 
 ## What's here
 
@@ -39,9 +41,9 @@ You provide these; the installer sets up everything else, including Miniconda an
 
 ## Install
 
-**[Download the latest `Setup_AudiobookStudio.exe`](https://github.com/Lipton1010/Audiobook-Studio/releases/latest)** from the Releases page. The installer is published as a release asset, not committed to the repo, so it will not appear in the file list above. If the Releases page is empty, no build has been published yet; build it yourself with `install\build_installer.bat`, or use the from-source route below.
+**[Public release downloads](https://github.com/Lipton1010/Audiobook-Studio/releases/latest)** are separate from the private beta handoff. Check the version before installing. Installers are release assets, not committed source files. Development builds use `install\build_installer.bat` and must satisfy `RELEASE_CHECKLIST.md`.
 
-For local beta handoff, use the two fixed filenames at the top of `Output`: `Setup_AudiobookStudio.exe` for a new installation and `Setup_AudiobookStudio_Patch.exe` for an existing installation. `Output/00_CURRENT_INSTALLERS.txt` records each candidate's version, source commit, size, and SHA-256. Older versioned copies belong under `Output/Old, do not use/`; the build script moves them there automatically. Build records identify the files; `RELEASE_CHECKLIST.md` determines release readiness. The owner's automatic Google Drive beta handoff follows [the handoff procedure](install/BETA_HANDOFF.md).
+The current private beta files are `Installer_AudiobookStudio_1.0.6.exe` for a new installation and `Patch_AudiobookStudio_1.0.6.exe` for an existing installation. Future handoffs use the same versioned naming pattern, without timestamp or hash suffixes. Superseded installers belong under `Old, do not use`. Build records identify source commits, sizes, and SHA-256 values; `RELEASE_CHECKLIST.md` determines release readiness. See [the beta handoff procedure](install/BETA_HANDOFF.md).
 
 **Why the .exe is easiest.** One installer, no terminal. It installs a private Miniconda and ffmpeg, builds the app's Python environment, and pre-downloads the ~3 GB of TTS model weights so the first narration doesn't have to. The complete setup downloads several gigabytes and uses roughly 10 GB on disk, so have at least 15 GB free before starting. All large app-owned pieces are kept below the single Audiobook Studio installation folder instead of creating Miniconda and model-cache folders across your user profile. Double-click it, click through the wizard, and it's done — a shortcut is added to your Start Menu (and Desktop, if you check that box). Those shortcuts launch the app without showing a Command Prompt window. This installer is built from source with Inno Setup (see `install/AudiobookStudio.iss`) rather than distributed as a signed release, so Windows SmartScreen will probably warn that it's from an unknown publisher the first time. That's expected for an unsigned personal-project installer, not a sign anything is wrong. If you see a blue **"Windows protected your PC"** box, click **More info**, then **Run anyway**. If you were sent a SHA-256 alongside the file, you can confirm it first by running this in PowerShell:
 
@@ -90,7 +92,7 @@ Storybird pauses after extraction when it flags visual passages. Select **Review
 
 Descriptions are manual adaptations, not automatic interpretations. Preserve important counts, changes, warnings and discovery order. If the graphic is missing, Storybird says so; do not reconstruct details absent from the source. Prose-only jobs continue through the ordinary workflow. See [visual review behavior and verification](VISUAL_REVIEW.md) for cached-job handling and test coverage.
 
-Two narrators are available, selectable per job (default `batched`):
+Chatterbox has two execution modes (default `batched`):
 
 - **`batched`** — generates several text chunks in one GPU pass. Much faster than the parallel engine on short/medium chunks; a VRAM budget keeps it from exceeding your card on long chunks. Verified to produce audio equivalent to the parallel engine.
 - **`parallel`** — the original one-chunk-at-a-time engine, run in several processes. Kept as a fallback (`v1-parallel` tag).

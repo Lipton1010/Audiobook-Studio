@@ -123,6 +123,7 @@ class VisualReviewTests(unittest.TestCase):
         output = job_dir / "output"
         output.mkdir()
         (output / "book.mp3").write_bytes(b"prior job audio")
+        (output / ".book.tmp123.m4b").write_bytes(b"unfinished job audio")
         library = Path(self.temp.name) / "library"
         library.mkdir()
         (library / "book.mp3").write_bytes(b"prior library audio")
@@ -139,6 +140,7 @@ class VisualReviewTests(unittest.TestCase):
         self.request("POST", f"/api/jobs/{job_id}/visual-review/start", {})
         snapshot = Path(server.load_state(job_id)["previous_output_snapshot"])
         self.assertEqual((snapshot / "job_output" / "book.mp3").read_bytes(), b"prior job audio")
+        self.assertFalse((snapshot / "job_output" / ".book.tmp123.m4b").exists())
         self.assertEqual((snapshot / "library_output" / "book.mp3").read_bytes(), b"prior library audio")
 
     def test_all_skipped_visuals_cannot_start_empty_narration(self):

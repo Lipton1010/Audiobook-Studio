@@ -14,6 +14,7 @@ imports torch or chatterbox.
 import hashlib
 import io
 import json
+import math
 import os
 import platform
 import re
@@ -33,6 +34,10 @@ import requests
 
 import pipeline_text as pt
 import visual_review
+from audiobook_exports import AudiobookExportError, export_finished_audio
+from audiobook_files import ArtworkReplacementError, replace_finished_artwork
+from generation_settings import default_settings, normalize_settings, runtime_settings
+from audiobook_library import owned_library_directory, visible_audio, publish_finished_output, delete_generated_files, contained
 from config import CFG
 from narration_eta import PROGRESS_FILENAME, STALE_PROGRESS_SECONDS, STALLED_BATCH_SECONDS
 
@@ -496,6 +501,14 @@ def _state_path(job_id):
 # seconds. Holding this lock makes the replace collision-free; the retries that
 # remain cover outside interference such as antivirus touching the .tmp file.
 _STATE_LOCK = threading.RLock()
+_JOB_MUTATION_LOCKS = {}
+_JOB_MUTATION_LOCKS_LOCK = threading.Lock()
+
+
+def _job_mutation_lock(job_id):
+    """Serialize finished-output changes with other mutations for one job."""
+    with _JOB_MUTATION_LOCKS_LOCK:
+        return _JOB_MUTATION_LOCKS.setdefault(job_id, threading.RLock())
 
 
 def load_state(job_id):
@@ -529,7 +542,7 @@ def save_state(state):
             try:
                 tmp.write_text(blob, encoding="utf-8")
                 tmp.replace(p)
-                return
+                return True
             except OSError:
                 if attempt == 11:
                     print(f"save_state: giving up on this write for {state['id'][:8]}")
@@ -548,12 +561,17 @@ def log_line(job_id, msg):
     print(f"{job_id[:8]} {msg}")
 
 
-def list_jobs():
+def list_jobs(include_hidden=False):
     out = []
     for d in sorted(JOBS_DIR.iterdir(), key=lambda p: p.name, reverse=True):
         if d.is_dir():
             st = load_state(d.name)
-            if st:
+            if st and (include_hidden or not st.get("library_hidden")):
+                scope = visual_review.scope_summary(d, st)
+                if scope:
+                    st["narration_range"] = {"from": scope["page_from"],
+                                             "to": scope["end_page"],
+                                             "original_to": scope["page_to"]}
                 out.append(st)
     return out
 
@@ -1011,19 +1029,27 @@ def enqueue(job_id):
             _queue_cv.notify()
 
 
+def queue_persisted(st):
+    st["status"] = "queued"
+    st["queued_at"] = time.time()
+    if not save_state(st):
+        raise OSError("Could not save the queued job. Try again.")
+    enqueue(st["id"])
+
+
 def request_cancel(job_id):
     with _STATE_LOCK:
+        st = load_state(job_id)
+        if st and st["status"] in ("review_required", "queued"):
+            st["status"] = "canceled"
+            if not save_state(st):
+                raise OSError("Could not save cancellation. Try again.")
         _cancel_flags[job_id] = True
         with _queue_cv:
-            removed = job_id in _queue
-            if removed:
+            if job_id in _queue:
                 _queue.remove(job_id)
-        st = load_state(job_id)
         if st and narration_backend(st) == "vibevoice":
             (JOBS_DIR / job_id / "cancel_flag.txt").write_text("cancel", encoding="utf-8")
-        if st and (st["status"] == "review_required" or (removed and st["status"] == "queued")):
-            st["status"] = "canceled"
-            save_state(st)
     with _active_procs_lock:
         procs = (list(_active_procs["procs"])
                  if _active_procs["job_id"] == job_id else [])
@@ -1098,10 +1124,14 @@ def run_extraction(st):
         save_state(st)
 
         def cb(done, tot):
+            if _cancelled(job_id):
+                raise _Cancelled()
             st["stage_progress"] = {"stage": "extract", "done": done, "total": tot}
             save_state(st)
 
         blocks, text_mode = pt.extract_path_a(pdf, p_from, p_to, progress_cb=cb)
+        if _cancelled(job_id):
+            raise _Cancelled()
         st["text_mode"] = text_mode
         log_line(job_id, f"path A text mode: {text_mode}")
     else:
@@ -1136,6 +1166,9 @@ def run_extraction(st):
             save_state(st)
             log_line(job_id, f"extracted page {pno + 1} ({idx + 1}/{total})")
         blocks = pt.stitch_pages(page_blocks)
+
+    if _cancelled(job_id):
+        raise _Cancelled()
 
     # Keep extraction evidence separate from the narration projection. Visual
     # decisions may change blocks.json later, but never this source record.
@@ -1437,6 +1470,7 @@ def _run_vibevoice_narration(st, job_dir, blocks):
         "quality_major_words": 5,
         "quality_max_retries": 2,
     }
+    config.update(runtime_settings("vibevoice", st["path"], st.get("generation_settings")))
     plan = vibevoice_plan.write_plan(job_dir, blocks, config)
     (job_dir / "cancel_flag.txt").unlink(missing_ok=True)
     progress_path = job_dir / "vibevoice_progress.json"
@@ -1486,10 +1520,11 @@ def _run_vibevoice_narration(st, job_dir, blocks):
 def run_narration(st):
     job_id = st["id"]
     job_dir = JOBS_DIR / job_id
-    blocks, unresolved, items, _decisions = visual_review.project(job_dir)
+    blocks, unresolved, items, _decisions = visual_review.project(job_dir, st)
     if unresolved:
         raise _ReviewRequired()
-    if items and st.get("review_previewed_hash") != _review_signature(blocks):
+    scope = visual_review.review_payload(job_dir, st)["narration_scope"]
+    if (items or scope or st.get("preview_required")) and st.get("review_previewed_hash") != _preview_signature(st, job_dir, blocks):
         raise _ReviewRequired()
     if not any(str(block.get("text", "")).strip() for block in blocks):
         raise _ReviewRequired("No spoken text remains. Keep or describe a passage before narration.")
@@ -1514,6 +1549,9 @@ def run_narration(st):
         "cover_image": cover,
         "pdf_outline": outline,
     }
+    config.update(runtime_settings("chatterbox", st["path"], st.get("generation_settings")))
+    if config["batch_preference"] == "conservative":
+        config["batch_size"] = 1
     (job_dir / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
     ensure_segments_fresh(job_dir, st)
     (job_dir / PROGRESS_FILENAME).unlink(missing_ok=True)
@@ -1590,14 +1628,37 @@ def _review_signature(blocks):
                                      separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
+def _preview_signature(st, job_dir, blocks):
+    """Keep legacy review signatures stable unless a VibeVoice page scope is active."""
+    source, _items, decisions = visual_review.prepare(job_dir, st)
+    scope = visual_review._scope(job_dir, st, source)
+    if scope is None:
+        return _review_signature(blocks)
+    payload = {
+        "version": 2,
+        "spoken": [{"type": block.get("type"), "text": block.get("text", "")}
+                   for block in blocks],
+        "source_fingerprint": visual_review._source_fingerprint(source),
+        "decisions": decisions,
+        "scope": scope,
+        "backend": narration_backend(st),
+        "page_from": st.get("page_from"),
+        "page_to": st.get("page_to"),
+    }
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                                     separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
 def _narrated_signature_path(job_id):
     return JOBS_DIR / job_id / "narrated_projection_hash.txt"
 
 
 def _record_narrated_signature(st, blocks=None):
+    job_dir = JOBS_DIR / st["id"]
     if blocks is None:
-        blocks = visual_review.load_blocks(JOBS_DIR / st["id"] / "blocks.json")
-    visual_review._write(_narrated_signature_path(st["id"]), {"signature": _review_signature(blocks)})
+        blocks, _unresolved, _items, _decisions = visual_review.project(job_dir, st)
+    visual_review._write(_narrated_signature_path(st["id"]), {
+        "signature": _preview_signature(st, job_dir, blocks)})
 
 
 def _narration_is_stale(st):
@@ -1612,8 +1673,9 @@ def _narration_is_stale(st):
     except ValueError:
         return True
     try:
-        blocks, unresolved, _items, _decisions = visual_review.project(JOBS_DIR / st["id"])
-        return bool(unresolved) or recorded != _review_signature(blocks)
+        job_dir = JOBS_DIR / st["id"]
+        blocks, unresolved, _items, _decisions = visual_review.project(job_dir, st)
+        return bool(unresolved) or recorded != _preview_signature(st, job_dir, blocks)
     except ValueError:
         return True
 
@@ -1621,8 +1683,13 @@ def _narration_is_stale(st):
 def _hold_for_visual_review(st):
     """Pause a job before GPU narration when any detected visual lacks review."""
     job_dir = JOBS_DIR / st["id"]
-    blocks, unresolved, _items, _decisions = visual_review.project(job_dir)
+    blocks, unresolved, _items, _decisions = visual_review.project(job_dir, st)
     if not unresolved:
+        if st.get("preview_required") and st.get("review_previewed_hash") != _preview_signature(st, job_dir, blocks):
+            st["status"] = "review_required"
+            st["visual_review_unresolved"] = 0
+            save_state(st)
+            return True
         if not any(str(block.get("text", "")).strip() for block in blocks):
             st["status"] = "review_required"
             st["error"] = "No spoken text remains. Keep or describe a passage before narration."
@@ -1649,7 +1716,7 @@ def _snapshot_prior_audio(st):
         if safe_title:
             candidates.append((AUDIOBOOKS_DIR / safe_title, "library_output"))
     audio = [(source, label) for source, label in candidates
-             if source.is_dir() and any(f.suffix.lower() in AUDIO_EXTS for f in source.iterdir())]
+             if source.is_dir() and any(_visible_output_audio(f) for f in source.iterdir())]
     if not audio:
         return None
     snapshot = job_dir / "output_history" / str(time.time_ns())
@@ -1657,7 +1724,7 @@ def _snapshot_prior_audio(st):
         target = snapshot / label
         target.mkdir(parents=True, exist_ok=False)
         for file in source.iterdir():
-            if file.is_file() and file.suffix.lower() in AUDIO_EXTS:
+            if _visible_output_audio(file):
                 shutil.copy2(file, target / file.name)
     return str(snapshot)
 
@@ -1720,27 +1787,42 @@ def worker_loop():
             while not _queue:
                 _queue_cv.wait()
             job_id = _queue.pop(0)
-        st = load_state(job_id)
-        if not st:
+        with _STATE_LOCK:
+            st = load_state(job_id)
+            canceled = _cancel_flags.pop(job_id, False)
+            if not st or st.get("status") != "queued":
+                continue
+            if canceled:
+                st["status"] = "canceled"
+                save_state(st)
+                continue
+            st["status"] = "extracting"
+            st.pop("error", None)
+            if not save_state(st):
+                st["status"] = "queued"
+                st["error"] = "Could not claim the queued job. Retrying shortly."
+                save_state(st)
+                retry_claim = True
+            else:
+                retry_claim = False
+        if retry_claim:
+            time.sleep(0.1)
+            enqueue(job_id)
             continue
         try:
+            if _cancelled(job_id):
+                raise _Cancelled()
             if not (JOBS_DIR / job_id / "blocks.json").exists():
                 st = run_extraction(st)
+            if _cancelled(job_id):
+                raise _Cancelled()
             if _hold_for_visual_review(st):
                 continue
+            if _cancelled(job_id):
+                raise _Cancelled()
             st = run_narration(st)
             out_dir = JOBS_DIR / job_id / "output"
-            safe_title = re.sub(r"[^\w \-]", "", st["title"]).strip() or job_id
-            book_dir = AUDIOBOOKS_DIR / safe_title
-            book_dir.mkdir(parents=True, exist_ok=True)
-            # Deliver whatever format the job produced; clear old copies
-            # so a re-run with a new format does not leave both behind.
-            for old in book_dir.glob("*"):
-                if old.suffix.lower() in AUDIO_EXTS:
-                    old.unlink()
-            for f in sorted(out_dir.iterdir()):
-                if f.suffix.lower() in AUDIO_EXTS:
-                    shutil.copy2(f, book_dir / f.name)
+            book_dir = publish_finished_output(out_dir, AUDIOBOOKS_DIR, st)
             st["audiobook_dir"] = str(book_dir)
 
             original_pdf = st.get("pdf_path")
@@ -1865,6 +1947,113 @@ def _safe_download_name(filename):
     return re.sub(r'[^A-Za-z0-9 .()_\-]', '_', filename).strip() or "download.txt"
 
 
+def _visible_output_audio(path):
+    """Hide all temporary and atomic audio files from finished-output APIs."""
+    return visible_audio(path)
+
+
+def _finished_audio_paths(st, formats=AUDIO_EXTS):
+    """Return de-duplicated audio only from this job's owned output locations."""
+    job_dir = JOBS_DIR / st["id"]
+    locations = [job_dir / "output"]
+    library = owned_library_directory(st, AUDIOBOOKS_DIR, list_jobs(include_hidden=True), job_dir=job_dir)
+    if library:
+        locations.append(library)
+    paths, seen = [], set()
+    for directory in locations:
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.iterdir(), key=lambda item: item.name.lower()):
+            if not _visible_output_audio(path) or path.suffix.lower() not in formats:
+                continue
+            contained(path, directory)
+            key = os.path.normcase(str(path.resolve()))
+            if key not in seen:
+                seen.add(key)
+                paths.append(path)
+    return paths
+
+
+def _export_finished_output(st, fmt):
+    """Reuse a completed format or safely create it under the job's output folder."""
+    if fmt not in {"m4b", "mp3", "wav"}:
+        raise ValueError("Export format must be M4B, MP3, or WAV.")
+    job_dir = JOBS_DIR / st["id"]
+    output = job_dir / "output"
+    existing = [path for path in _finished_audio_paths(st, {f".{fmt}"})
+                if _path_is_within(path, output)]
+    if existing:
+        return existing[0]
+    metadata = next((job_dir / name for name in ("chapters.ffmeta", "vibevoice.ffmeta")
+                     if (job_dir / name).is_file()), None)
+    sources = _finished_audio_paths(st, {".m4b", ".mp3"})
+    if metadata:
+        wav_sources = _finished_audio_paths(st, {".wav"})
+        if wav_sources:
+            sources = wav_sources + sources
+    if not sources:
+        sources = _finished_audio_paths(st, {".wav"})
+    if not sources:
+        raise ValueError("No finished audiobook audio is available to export.")
+    output.mkdir(parents=True, exist_ok=True)
+    title = re.sub(r"[^\w .()\-]", "", st.get("title", "")).strip() or "audiobook"
+    target = _unique_path(output, f"{title} ({fmt.upper()}).{fmt}")
+    ffmpeg = ffmpeg_status().get("path")
+    if not ffmpeg:
+        raise ValueError("Exporting another format needs ffmpeg, which is not installed on this machine.")
+    cover_temporary = None
+    try:
+        kind, cover = _job_cover_source(st)
+        if kind == "pdf":
+            cover_temporary = job_dir / f".export-cover-{uuid.uuid4().hex}.png"
+            cover_temporary.write_bytes(_render_library_cover(cover))
+            cover = cover_temporary
+        return export_finished_audio(sources[0], target, fmt, ffmpeg,
+                                     metadata_path=metadata, cover_path=cover if kind else None)
+    except AudiobookExportError as exc:
+        raise ValueError(str(exc)) from exc
+    finally:
+        if cover_temporary:
+            cover_temporary.unlink(missing_ok=True)
+
+
+def regenerate_job(job_id, backend, settings=None):
+    if backend not in ("vibevoice", "chatterbox"):
+        raise ValueError("Choose VibeVoice or Chatterbox for regeneration.")
+    original = load_state(job_id)
+    if not original or original.get("status") != "done" or original.get("library_hidden"):
+        raise ValueError("Regeneration needs a completed audiobook.")
+    pdf = _review_pdf_path(original)
+    if pdf is None:
+        raise ValueError("The source PDF is unavailable. Restore it before regenerating.")
+    errors = [missing_voice_error(original.get("voice")), missing_gpu_error(),
+              missing_ffmpeg_error(original.get("format", "m4b"))]
+    if backend == "vibevoice":
+        errors.append(missing_vibevoice_error())
+    if any(errors):
+        raise ValueError(next(error for error in errors if error))
+    settings = normalize_settings(backend, original.get("path", "B"), settings)
+    new_id = str(uuid.uuid4())
+    source = JOBS_DIR / job_id
+    destination = JOBS_DIR / new_id
+    state = {key: original[key] for key in ("title", "path", "page_from", "page_to", "voice", "format", "engine") if key in original}
+    state.update(id=new_id, pdf_path=str(pdf), backend=backend, status="queued",
+                 created_at=time.time(), regenerated_from=job_id, preview_required=True, generation_settings=settings)
+    destination.mkdir()
+    for name in ("source_blocks.json", "legacy_blocks.json", "blocks.json", "visual_review.json",
+                 "narration_scope.json", "cover_override.png", "cover.png", "cover.jpg", "cover.jpeg"):
+        path = source / name
+        if path.is_file():
+            contained(path, source)
+            shutil.copy2(path, destination / name)
+    if (destination / "blocks.json").exists():
+        visual_review.project(destination, state)
+    with _STATE_LOCK:
+        queue_persisted(state)
+    log_line(new_id, "created as a new generation; final text preview is required")
+    return state
+
+
 def _tail_text_lines(path, count=30, chunk_bytes=65536):
     """Read only enough of a potentially huge UTF-8 log to return its tail."""
     path = Path(path)
@@ -1889,6 +2078,11 @@ def job_detail(job_id):
     if not st:
         return None
     job_dir = JOBS_DIR / job_id
+    scope = visual_review.scope_summary(job_dir, st)
+    if scope:
+        st["narration_range"] = {"from": scope["page_from"],
+                                 "to": scope["end_page"],
+                                 "original_to": scope["page_to"]}
     _ensure_segment_cache_stat(st, job_dir)
     if st.get("status") == "narrating":
         st["narrate_progress"] = _narration_progress(job_dir, st)
@@ -1899,7 +2093,7 @@ def job_detail(job_id):
     if out_dir.exists() and not _narration_is_stale(st):
         st["outputs"] = sorted(
             [{"name": f.name, "bytes": f.stat().st_size}
-             for f in out_dir.iterdir() if f.suffix.lower() in AUDIO_EXTS],
+             for f in out_dir.iterdir() if _visible_output_audio(f)],
             key=lambda x: x["name"],
         )
     bl = job_dir / "blocks.json"
@@ -1917,9 +2111,12 @@ def _visual_review_detail(job_id):
     st = load_state(job_id)
     if not st:
         return None
-    payload = visual_review.review_payload(JOBS_DIR / job_id)
+    payload = visual_review.review_payload(JOBS_DIR / job_id, st)
     payload["status"] = st.get("status")
     payload["editable"] = st.get("status") not in ("queued", "extracting", "tagging", "narrating")
+    payload["vibevoice_scope_available"] = narration_backend(st) == "vibevoice"
+    if payload["vibevoice_scope_available"]:
+        payload["original_page_range"] = {"from": st.get("page_from"), "to": st.get("page_to")}
     history = JOBS_DIR / job_id / "output_history"
     payload["history_available"] = history.is_dir() and any(history.iterdir())
     pdf_path = _review_pdf_path(st)
@@ -1941,19 +2138,20 @@ def _review_pdf_path(st):
 
 
 def _full_narration_preview(job_id):
-    st = load_state(job_id)
-    if not st:
-        return None
-    blocks, unresolved, items, _decisions = visual_review.project(JOBS_DIR / job_id)
-    preview_blocks = visual_review.preview_blocks(JOBS_DIR / job_id)
-    text = "\n\n".join(block.get("text", "") for block in preview_blocks if block.get("text"))
-    if not unresolved:
-        with _STATE_LOCK:
-            current = load_state(job_id)
-            if current and current.get("status") not in ("queued", "extracting", "tagging", "narrating"):
-                current["review_previewed_hash"] = _review_signature(blocks)
-                save_state(current)
-    return {"text": text, "unresolved_count": len(unresolved), "item_count": len(items)}
+    with _STATE_LOCK:
+        st = load_state(job_id)
+        if not st:
+            return None
+        job_dir = JOBS_DIR / job_id
+        blocks, unresolved, items, _decisions = visual_review.project(job_dir, st)
+        preview_blocks = visual_review.preview_blocks(job_dir, st)
+        text = "\n\n".join(block.get("text", "") for block in preview_blocks if block.get("text"))
+        if not unresolved and st.get("status") not in ("queued", "extracting", "tagging", "narrating"):
+            st["review_previewed_hash"] = _preview_signature(st, job_dir, blocks)
+            save_state(st)
+        scope = visual_review.review_payload(job_dir, st)["narration_scope"]
+        return {"text": text, "unresolved_count": len(unresolved), "item_count": len(items),
+                "narration_scope": scope}
 
 
 def beta_test_report(job_id):
@@ -2083,8 +2281,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 out_dir = (JOBS_DIR / job_id / "output").resolve()
                 target = (out_dir / fname).resolve()
-                if (target.parent != out_dir or target.suffix.lower() not in AUDIO_EXTS
-                        or not target.is_file()):
+                if target.parent != out_dir or not _visible_output_audio(target):
                     self.send_error(404)
                     return
                 self.send_response(200)
@@ -2157,6 +2354,14 @@ class Handler(BaseHTTPRequestHandler):
                 _json_response(self, {"voices": list_voices()})
             elif path == "/api/ffmpeg":
                 _json_response(self, ffmpeg_status())
+            elif path == "/api/generation-settings":
+                from urllib.parse import parse_qs
+                query = parse_qs(urlparse(self.path).query)
+                try:
+                    defaults = default_settings(query.get("backend", [DEFAULT_BACKEND])[0], query.get("path", ["B"])[0])
+                    _json_response(self, {"defaults": defaults})
+                except ValueError as exc:
+                    _json_response(self, {"error": str(exc)}, 400)
             elif path == "/api/jobs":
                 _json_response(self, {"jobs": list_jobs()})
             elif path == "/api/update/check":
@@ -2239,7 +2444,7 @@ class Handler(BaseHTTPRequestHandler):
                 st = load_state(job_id)
                 if not st or _narration_is_stale(st):
                     _json_response(self, {"error": "This audio is retained as a prior version and is not the current narration."}, 409)
-                elif target.parent != out_dir or target.suffix.lower() not in AUDIO_EXTS:
+                elif target.parent != out_dir or not _visible_output_audio(target):
                     self.send_error(404)
                 else:
                     self._serve_audio(target)
@@ -2304,7 +2509,7 @@ class Handler(BaseHTTPRequestHandler):
                 verr = missing_voice_error(body.get("voice") or DEFAULT_VOICE)
                 if verr:
                     _json_response(self, {"error": verr}, 400)
-                    return
+                    return False
                 if backend == "vibevoice":
                     vibevoice_error = missing_vibevoice_error()
                     if vibevoice_error:
@@ -2320,6 +2525,11 @@ class Handler(BaseHTTPRequestHandler):
                 gerr = missing_gpu_error()
                 if gerr:
                     _json_response(self, {"error": gerr}, 400)
+                    return
+                try:
+                    settings = normalize_settings(backend, body.get("path", "B"), body.get("generation_settings"))
+                except ValueError as exc:
+                    _json_response(self, {"error": str(exc)}, 400)
                     return
                 job_id = str(uuid.uuid4())
                 job_dir = JOBS_DIR / job_id
@@ -2340,60 +2550,125 @@ class Handler(BaseHTTPRequestHandler):
                     "voice": body.get("voice") or DEFAULT_VOICE,
                     "format": body.get("format") if body.get("format") in ("m4b", "mp3", "wav") else "m4b",
                     "backend": backend,
+                    "generation_settings": settings,
                     "engine": body.get("engine") if body.get("engine") in ("parallel", "batched") else DEFAULT_ENGINE,
                     "status": "queued",
                     "created_at": time.time(),
                 }
-                save_state(st)
+                st["queued_at"] = time.time()
+                if not save_state(st):
+                    raise OSError("Could not save the queued job. Try again.")
                 log_line(job_id, f"created: {st['title']} path {st['path']} pages {st['page_from']}..{st['page_to']}")
                 enqueue(job_id)
                 _json_response(self, st)
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/cover", path):
                 job_id = path.split("/")[3]
-                st = load_state(job_id)
-                if not st:
-                    _json_response(self, {"error": "not found"}, 404)
-                    return
-                if st.get("status") != "done":
-                    _json_response(self, {"error": "A cover can be changed after the audiobook finishes."}, 400)
-                    return
                 length = int(self.headers.get("Content-Length", 0))
                 if not 0 < length <= MAX_COVER_BYTES:
                     _json_response(self, {"error": "Choose an image smaller than 20 MB."}, 400)
                     return
                 try:
-                    raw = self.rfile.read(length)
-                    png = _validated_cover_png(raw)
-                    job_dir = JOBS_DIR / job_id
-                    target = job_dir / "cover_override.png"
-                    temp = job_dir / "cover_override.tmp"
-                    temp.write_bytes(png)
-                    os.replace(temp, target)
-                    _json_response(self, {"ok": True, "cover_url": _job_cover_url(st)})
-                except ValueError as exc:
+                    with _job_mutation_lock(job_id):
+                        st = load_state(job_id)
+                        if not st:
+                            _json_response(self, {"error": "not found"}, 404)
+                            return
+                        if st.get("status") != "done" or _narration_is_stale(st):
+                            _json_response(self, {"error": "A cover can be changed after current narration finishes."}, 409)
+                            return
+                        png = _validated_cover_png(self.rfile.read(length))
+                        job_dir = JOBS_DIR / job_id
+                        upload = job_dir / f".cover-upload-{uuid.uuid4().hex}.png"
+                        try:
+                            upload.write_bytes(png)
+                            audio = _finished_audio_paths(st, {".m4b", ".mp3"})
+                            if audio:
+                                ffmpeg = ffmpeg_status().get("path")
+                                if not ffmpeg:
+                                    raise ValueError("Updating embedded artwork needs ffmpeg, which is not installed on this machine.")
+                                replace_finished_artwork(audio, upload, ffmpeg,
+                                                         cover_target=job_dir / "cover_override.png")
+                                message = "Cover updated in the finished audiobook files."
+                            else:
+                                target = job_dir / "cover_override.png"
+                                temporary = job_dir / f".cover-override-{uuid.uuid4().hex}.tmp"
+                                temporary.write_bytes(png)
+                                os.replace(temporary, target)
+                                message = "Cover updated for the app. WAV files do not support embedded artwork."
+                        finally:
+                            upload.unlink(missing_ok=True)
+                    _json_response(self, {"ok": True, "cover_url": _job_cover_url(st), "message": message})
+                except (ArtworkReplacementError, ValueError) as exc:
                     _json_response(self, {"error": str(exc)}, 400)
+            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/export", path):
+                job_id = path.split("/")[3]
+                body = self._read_json()
+                with _job_mutation_lock(job_id):
+                    st = load_state(job_id)
+                    if not st:
+                        _json_response(self, {"error": "not found"}, 404)
+                        return
+                    if st.get("status") != "done" or _narration_is_stale(st):
+                        _json_response(self, {"error": "Export is available after current narration finishes."}, 409)
+                        return
+                    try:
+                        output = _export_finished_output(st, body.get("format"))
+                    except ValueError as exc:
+                        _json_response(self, {"error": str(exc)}, 400)
+                        return
+                _json_response(self, {"ok": True, "output": {"name": output.name, "bytes": output.stat().st_size}})
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/cancel", path):
                 job_id = path.split("/")[3]
                 request_cancel(job_id)
                 _json_response(self, {"ok": True})
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/resume", path):
                 job_id = path.split("/")[3]
-                with _STATE_LOCK:
+                with _job_mutation_lock(job_id):
+                    with _STATE_LOCK:
+                        st = load_state(job_id)
+                        if st and st["status"] in ("failed", "canceled", "interrupted"):
+                            st.pop("error", None)
+                            _cancel_flags.pop(job_id, None)  # no stale cancel survives into the retry
+                            queue_persisted(st)
+                            _json_response(self, {"ok": True})
+                        else:
+                            _json_response(self, {"error": "job not resumable"}, 400)
+            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/visual-review/scope", path):
+                job_id = path.split("/")[3]
+                body = self._read_json()
+                with _job_mutation_lock(job_id), _STATE_LOCK:
                     st = load_state(job_id)
-                    if st and st["status"] in ("failed", "canceled", "interrupted"):
-                        st["status"] = "queued"
-                        st.pop("error", None)
-                        _cancel_flags.pop(job_id, None)  # no stale cancel survives into the retry
-                        save_state(st)
-                        enqueue(job_id)
-                        _json_response(self, {"ok": True})
-                    else:
-                        _json_response(self, {"error": "job not resumable"}, 400)
+                    if not st:
+                        _json_response(self, {"error": "not found"}, 404)
+                        return
+                    if narration_backend(st) != "vibevoice":
+                        _json_response(self, {"error": "Narrate through page is available for VibeVoice jobs only."}, 409)
+                        return
+                    if st.get("status") in ("queued", "extracting", "tagging", "narrating"):
+                        _json_response(self, {"error": "Stop or wait for the job before changing its narration range."}, 409)
+                        return
+                    job_dir = JOBS_DIR / job_id
+                    try:
+                        old_blocks, old_unresolved, _items, _decisions = visual_review.project(job_dir, st)
+                        old_signature = _preview_signature(st, job_dir, old_blocks)
+                        scope = visual_review.set_scope(job_dir, st, body.get("end_page"))
+                        blocks, unresolved, _items, _decisions = visual_review.project(job_dir, st)
+                    except ValueError as exc:
+                        _json_response(self, {"error": str(exc)}, 400)
+                        return
+                    if old_signature != _preview_signature(st, job_dir, blocks):
+                        st["narration_stale"] = True
+                    st["status"] = "review_required"
+                    st["visual_review_unresolved"] = len(unresolved)
+                    st.pop("review_previewed_hash", None)
+                    save_state(st)
+                _json_response(self, {"ok": True, "narration_scope": scope,
+                                      **_visual_review_detail(job_id)})
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/visual-review/[0-9a-f-]+", path):
                 parts = path.split("/")
                 job_id, item_id = parts[3], parts[5]
                 body = self._read_json()
-                with _STATE_LOCK:
+                with _job_mutation_lock(job_id), _STATE_LOCK:
                     st = load_state(job_id)
                     if not st:
                         _json_response(self, {"error": "not found"}, 404)
@@ -2401,23 +2676,24 @@ class Handler(BaseHTTPRequestHandler):
                     if st.get("status") in ("queued", "extracting", "tagging", "narrating"):
                         _json_response(self, {"error": "Stop or wait for the job before editing review decisions."}, 409)
                         return
-                    old_blocks = visual_review.load_blocks(JOBS_DIR / job_id / "blocks.json")
+                    job_dir = JOBS_DIR / job_id
+                    old_blocks, _old_unresolved, _old_items, _old_decisions = visual_review.project(job_dir, st)
                     old_output = JOBS_DIR / job_id / "output"
                     if (old_output.exists() and any(f.suffix.lower() in AUDIO_EXTS for f in old_output.iterdir())
                             and not _narrated_signature_path(job_id).exists()):
                         _record_narrated_signature(st, old_blocks)
-                    old_signature = _review_signature(old_blocks)
+                    old_signature = _preview_signature(st, job_dir, old_blocks)
                     try:
                         blocks, unresolved, _items, _decisions = visual_review.save_decision(
-                            JOBS_DIR / job_id, item_id, body.get("fingerprint"),
-                            body.get("decision"), body.get("spoken_text", ""),
+                            job_dir, item_id, body.get("fingerprint"),
+                            body.get("decision"), body.get("spoken_text", ""), st,
                         )
                     except ValueError as exc:
                         _json_response(self, {"error": str(exc)}, 400)
                         return
                     if not unresolved:
-                        visual_review._write(JOBS_DIR / job_id / "blocks.json", {"blocks": blocks})
-                        if old_signature != _review_signature(blocks):
+                        visual_review._write(job_dir / "blocks.json", {"blocks": blocks})
+                        if old_signature != _preview_signature(st, job_dir, blocks):
                             st["narration_stale"] = True
                     st["status"] = "review_required"
                     st["visual_review_unresolved"] = len(unresolved)
@@ -2426,7 +2702,7 @@ class Handler(BaseHTTPRequestHandler):
                 _json_response(self, _visual_review_detail(job_id))
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/visual-review/reopen", path):
                 job_id = path.split("/")[3]
-                with _STATE_LOCK:
+                with _job_mutation_lock(job_id), _STATE_LOCK:
                     st = load_state(job_id)
                     if not st:
                         _json_response(self, {"error": "not found"}, 404)
@@ -2434,7 +2710,7 @@ class Handler(BaseHTTPRequestHandler):
                     if st.get("status") in ("queued", "extracting", "tagging", "narrating"):
                         _json_response(self, {"error": "Stop or wait for the job before reopening review."}, 409)
                         return
-                    detail = visual_review.review_payload(JOBS_DIR / job_id)
+                    detail = visual_review.review_payload(JOBS_DIR / job_id, st)
                     st["status"] = "review_required"
                     st["visual_review_unresolved"] = detail["unresolved_count"]
                     st.pop("review_previewed_hash", None)
@@ -2442,41 +2718,77 @@ class Handler(BaseHTTPRequestHandler):
                 _json_response(self, {"ok": True, **_visual_review_detail(job_id)})
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/visual-review/start", path):
                 job_id = path.split("/")[3]
-                with _STATE_LOCK:
+                with _job_mutation_lock(job_id), _STATE_LOCK:
                     st = load_state(job_id)
                     if not st or st.get("status") not in ("review_required", "done", "failed", "canceled", "interrupted"):
                         _json_response(self, {"error": "review is not ready to start"}, 409)
                         return
-                    blocks, unresolved, _items, _decisions = visual_review.project(JOBS_DIR / job_id)
+                    job_dir = JOBS_DIR / job_id
+                    if narration_backend(st) != "vibevoice" and not st.get("regenerated_from") and visual_review.review_payload(job_dir, st)["narration_scope"]:
+                        _json_response(self, {"error": "Narrate through page is available for VibeVoice jobs only."}, 409)
+                        return
+                    blocks, unresolved, _items, _decisions = visual_review.project(job_dir, st)
                     if unresolved:
                         _json_response(self, {"error": "Save a decision for every visual before narration."}, 409)
                         return
                     if not any(str(block.get("text", "")).strip() for block in blocks):
                         _json_response(self, {"error": "No spoken text remains. Keep or describe a passage before narration."}, 409)
                         return
-                    signature = _review_signature(blocks)
+                    signature = _preview_signature(st, job_dir, blocks)
                     if st.get("review_previewed_hash") != signature:
                         _json_response(self, {"error": "Open the full narration preview after your latest review changes."}, 409)
                         return
                     snapshot = _snapshot_prior_audio(st)
-                    visual_review._write(JOBS_DIR / job_id / "blocks.json", {"blocks": blocks})
-                    st["status"] = "queued"
+                    visual_review._write(job_dir / "blocks.json", {"blocks": blocks})
                     st["visual_review_unresolved"] = 0
                     st.pop("error", None)
                     _cancel_flags.pop(job_id, None)
                     if snapshot:
                         st["previous_output_snapshot"] = snapshot
-                    save_state(st)
-                    enqueue(job_id)
+                    queue_persisted(st)
                 _json_response(self, {"ok": True})
+            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/regenerate", path):
+                job_id = path.split("/")[3]
+                body = self._read_json()
+                try:
+                    with _job_mutation_lock(job_id):
+                        result = regenerate_job(job_id, body.get("backend"), body.get("generation_settings"))
+                    _json_response(self, result)
+                except ValueError as exc:
+                    _json_response(self, {"error": str(exc)}, 400)
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/delete", path):
                 job_id = path.split("/")[3]
-                st = load_state(job_id)
-                if st and st["status"] in ("done", "failed", "canceled", "interrupted", "queued"):
-                    shutil.rmtree(JOBS_DIR / job_id, ignore_errors=True)
-                    _json_response(self, {"ok": True})
-                else:
-                    _json_response(self, {"error": "stop the job first"}, 400)
+                body = self._read_json()
+                if body.get("confirmed") is not True or body.get("mode") not in ("library", "generated"):
+                    _json_response(self, {"error": "Choose what to remove and confirm deletion."}, 400)
+                    return
+                with _job_mutation_lock(job_id), _STATE_LOCK:
+                    st = load_state(job_id)
+                    if not st or st.get("status") in ("queued", "extracting", "tagging", "narrating"):
+                        _json_response(self, {"error": "Stop the job before deleting it."}, 409)
+                        return
+                    freed = 0
+                    if body["mode"] == "generated":
+                        st["status"] = "deleting"
+                        st["delete_requested_at"] = time.time()
+                        if not save_state(st):
+                            raise OSError("Could not record deletion. No generated files were removed.")
+                        try:
+                            freed = delete_generated_files(JOBS_DIR / job_id, st, AUDIOBOOKS_DIR, list_jobs(include_hidden=True))
+                        except (ValueError, OSError) as exc:
+                            st["status"] = "delete_failed"
+                            st["error"] = str(exc)
+                            save_state(st)
+                            _json_response(self, {"error": str(exc)}, 409)
+                            return
+                        st["status"] = "deleted"
+                        st.pop("error", None)
+                        st["generated_files_deleted_at"] = time.time()
+                        st["segment_cache_bytes"] = 0
+                    st["library_hidden"] = True
+                    if not save_state(st):
+                        raise OSError("The file operation finished, but its library update could not be saved. Retry deletion to finish updating the record.")
+                _json_response(self, {"ok": True, "freed_bytes": freed})
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/cleanup-cache", path):
                 job_id = path.split("/")[3]
                 try:
@@ -2555,17 +2867,31 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def mark_interrupted_jobs():
+    queued = []
     for st in list_jobs():
         # Delete unsafe legacy metadata for every job state. It is never
         # authority to terminate a process, even if the job already failed.
         _discard_legacy_worker_pid_file(JOBS_DIR / st["id"])
-        if st["status"] in ("extracting", "tagging", "narrating", "queued"):
+        if st["status"] == "deleting":
+            st["status"] = "delete_failed"
+            st["error"] = "Deletion was interrupted. Retry Delete to remove any remaining generated files."
+            save_state(st)
+        elif st["status"] in ("extracting", "tagging", "narrating"):
             # New builds cannot orphan workers: the owning Job Object is
             # killed when the old server handle closes. Old PID metadata is
             # untrusted because Windows may have reused the number, so only
             # discard it; never taskkill an unknown process.
             st["status"] = "interrupted"
             save_state(st)
+        elif st["status"] == "queued":
+            queued.append(st)
+    def queued_time(st, key):
+        value = st.get(key)
+        return value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else 0
+    with _queue_cv:
+        _queue[:] = [st["id"] for st in sorted(queued, key=lambda st: (
+            queued_time(st, "queued_at") or queued_time(st, "created_at"), st["id"]))]
+        _queue_cv.notify_all()
 
 
 def main():

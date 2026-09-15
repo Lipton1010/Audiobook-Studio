@@ -30,7 +30,7 @@
   button,.button-link { min-height:44px; padding:9px 14px; border:1px solid var(--control-line); border-radius:9px; background:var(--paper); color:var(--ink); font-weight:650; text-decoration:none; } button:hover,.button-link:hover { border-color:var(--blue); } button.primary { border-color:var(--blue); background:var(--blue); color:#fff; } [data-theme="dark"] button.primary { color:#15223A; } button.primary:hover { background:var(--blue-strong); } button.danger { color:var(--bad); } button.danger:hover { border-color:var(--bad); background:var(--bad-bg); }
   .panel,.card,.job { background:var(--paper); border:1px solid var(--line); border-radius:16px; box-shadow:0 1px 0 rgba(21,34,58,.02); } .panel { padding:clamp(18px,2.4vw,28px); } .section-title { margin:0 0 5px; color:var(--navy); font-size:1.15rem; letter-spacing:-.025em; } .section-intro,.help,.meta,.detail { color:var(--muted); font-size:.9rem; }
   .pdf-preview { margin-top:14px; padding:12px; border:1px solid var(--line); border-radius:11px; background:var(--canvas); } .pdf-preview-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; } .pdf-preview-bar button { min-height:38px; padding:6px 10px; } .pdf-preview-status { color:var(--muted); font-size:.86rem; } .pdf-preview img { display:block; width:min(100%,560px); max-height:42vh; margin:10px auto 0; border:1px solid var(--line); background:var(--paper); object-fit:contain; } .pdf-preview .err { margin-top:8px; }
-  #jobs { display:flex; flex-wrap:wrap; gap:16px; } #jobs > .job:not(.completed-tile) { flex:1 0 100%; } .completed-tile { flex:0 1 220px; min-width:190px; margin-top:16px; overflow:hidden; } .completed-summary { display:grid; justify-items:center; gap:10px; width:100%; min-height:310px; padding:14px; border:0; border-radius:14px; text-align:center; background:transparent; color:var(--ink); } .completed-summary:hover { background:var(--soft-blue); } .completed-cover { width:154px; height:208px; object-fit:cover; border:1px solid var(--control-line); border-radius:9px; background:var(--soft-blue); box-shadow:0 4px 12px rgba(21,34,58,.13); } .completed-summary .title { display:block; color:var(--navy); font:700 1.08rem/1.2 Georgia,serif; overflow-wrap:anywhere; } .completed-summary .detail { display:block; margin-top:4px; } .cover-change { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:12px 0; }
+  #jobs { display:flex; flex-wrap:wrap; gap:16px; } #jobs > .job:not(.completed-tile) { flex:1 0 100%; } .completed-tile { flex:0 1 220px; min-width:190px; margin-top:16px; overflow:hidden; } .completed-summary { display:grid; justify-items:center; gap:10px; width:100%; min-height:310px; padding:14px; border:0; border-radius:14px; text-align:center; background:transparent; color:var(--ink); } .completed-summary:hover { background:var(--soft-blue); } .completed-cover { width:154px; height:208px; object-fit:cover; border:1px solid var(--control-line); border-radius:9px; background:var(--soft-blue); box-shadow:0 4px 12px rgba(21,34,58,.13); } .completed-summary .title { display:block; color:var(--navy); font:700 1.08rem/1.2 Georgia,serif; overflow-wrap:anywhere; } .completed-summary .detail { display:block; margin-top:4px; } .tile-actions { width:calc(100% - 28px); margin:0 14px 14px; } .cover-change { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:12px 0; }
   .create-callout { display:flex; align-items:center; gap:18px; padding:20px; margin-bottom:24px; border:1px solid color-mix(in srgb,var(--blue) 30%,var(--line)); border-radius:15px; background:var(--soft-blue); } .create-callout .mark { flex:0 0 auto; width:44px; height:44px; padding:8px; border-radius:12px; background:var(--paper); } .create-callout h2 { margin:0 0 3px; font-size:1.05rem; color:var(--navy); } .create-callout p { margin:0; color:var(--muted); font-size:.9rem; } .create-callout button { margin-left:auto; white-space:nowrap; }
   .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px; } .card { padding:20px; display:flex; flex-direction:column; align-items:flex-start; min-height:176px; } .card .book-head { display:flex; align-items:flex-start; gap:14px; width:100%; } .card .book-cover { flex:0 0 62px; width:62px; height:88px; border:1px solid var(--control-line); border-radius:7px; background:var(--soft-blue); object-fit:cover; } .card .book-copy { min-width:0; } .card .name { color:var(--navy); font:700 1.18rem/1.23 Georgia,serif; overflow-wrap:anywhere; } .card .meta { margin:7px 0 17px; } .card .primary { width:100%; margin-top:auto; }
   .upload-panel { margin-bottom:18px; } .upload-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; } .upload-drop { border:2px dashed color-mix(in srgb,var(--blue) 34%,var(--line)); background:var(--soft-blue); } input[type=file] { flex:1 1 240px; min-width:0; width:100%; color:var(--muted); font-size:.9rem; } input::file-selector-button { min-height:44px; margin-right:10px; padding:7px 11px; border:1px solid var(--control-line); border-radius:8px; background:var(--paper); color:var(--ink); font-weight:650; cursor:pointer; }
@@ -38,7 +38,7 @@
   .voice-row { display:flex; align-items:center; gap:14px; padding:17px 0; flex-wrap:wrap; } .voice-row+.voice-row { border-top:1px solid var(--line); } .voice-name { flex:1; min-width:180px; color:var(--navy); font-weight:700; } .voice-symbol { display:grid; place-items:center; width:35px; height:35px; border-radius:50%; background:var(--soft-blue); color:var(--blue); font-weight:800; }
   .empty { padding:34px 20px; border:1px dashed var(--line); border-radius:14px; color:var(--muted); text-align:center; grid-column:1 / -1; } .err { margin-top:10px; color:var(--bad); font-size:.9rem; overflow-wrap:anywhere; } .err:empty { display:none; } pre.log { max-height:210px; overflow:auto; padding:13px; border:1px solid var(--line); border-radius:10px; background:var(--canvas); color:var(--muted); white-space:pre-wrap; font-size:.8rem; }
   dialog { width:min(580px,calc(100% - 32px)); max-height:calc(100dvh - 32px); overflow:auto; padding:28px; border:1px solid var(--line); border-radius:18px; background:var(--paper); color:var(--ink); box-shadow:var(--shadow); } dialog::backdrop { background:rgba(8,15,28,.62); } dialog h3 { color:var(--navy); font:700 1.55rem/1.15 Georgia,serif; overflow-wrap:anywhere; } dialog .meta { margin-bottom:18px; } label,legend { display:block; margin:15px 0 5px; color:var(--muted); font-size:.87rem; font-weight:650; } input[type=number],input[type=text],select { width:100%; min-height:44px; padding:9px 11px; border:1px solid var(--control-line); border-radius:9px; background:var(--canvas); color:var(--ink); } fieldset { min-width:0; margin:17px 0 0; padding:0; border:0; } .radio-row { display:flex; gap:10px; flex-wrap:wrap; } .radio-row label { flex:1 1 200px; display:flex; gap:8px; margin:0; padding:10px; border:1px solid var(--control-line); border-radius:10px; color:var(--ink); cursor:pointer; } .radio-row label.sel { border-color:var(--blue); background:var(--soft-blue); } .radio-row .hint { color:var(--muted); font-size:.79rem; } .pagerow { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; } .dlg-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:25px; }
-  details { margin-top:12px; } summary { min-height:36px; padding:7px 0; color:var(--ink); cursor:pointer; font-weight:650; } #update-banner { margin-bottom:18px; padding:12px 14px; border:1px solid var(--blue); border-radius:11px; background:var(--soft-blue); color:var(--ink); }
+  details { margin-top:12px; } summary { min-height:36px; padding:7px 0; color:var(--ink); cursor:pointer; font-weight:650; } #update-banner { margin-bottom:18px; padding:12px 14px; border:1px solid var(--blue); border-radius:11px; background:var(--soft-blue); color:var(--ink); } .job-menu { position:fixed; z-index:20; display:grid; min-width:220px; max-width:min(320px,calc(100vw - 16px)); padding:6px; border:1px solid var(--control-line); border-radius:10px; background:var(--paper); box-shadow:var(--shadow); } .job-menu[hidden] { display:none; } .job-menu button { width:100%; min-height:38px; padding:7px 10px; border:0; border-radius:7px; background:transparent; color:var(--ink); text-align:left; } .job-menu button:hover,.job-menu button:focus-visible { background:var(--soft-blue); } .job-menu .menu-danger { color:var(--bad); } .job-action-status { margin:10px 0 0; }
   @media (max-width:760px) { .app-shell { display:block; } .sidebar { position:sticky; top:0; z-index:5; height:auto; padding:12px 16px; border-right:0; border-bottom:1px solid var(--line); gap:8px; } .sidebar-head { display:flex; align-items:center; gap:12px; } .brand img { width:29px; height:29px; } .tagline,.storage { display:none; } .nav { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); overflow:visible; padding-bottom:2px; } .nav button { width:100%; min-width:0; min-height:44px; justify-content:center; gap:5px; padding:6px; font-size:.78rem; } .nav-icon { width:auto; } .side-bottom { display:block; margin:0; } .theme-switch { width:150px; margin-left:auto; } .topbar { display:none; } main { padding:24px 16px 42px; } .screen-heading { align-items:flex-start; flex-direction:column; margin-bottom:20px; } .create-callout { align-items:flex-start; flex-wrap:wrap; } .create-callout button { margin-left:62px; } }
   @media (max-width:480px) { .nav button { font-size:.83rem; } .create-callout button { margin-left:0; width:100%; } .upload-row > button,.dlg-actions button { width:100%; } .pagerow { grid-template-columns:1fr; } .radio-row { display:grid; } }
 </style>
@@ -99,7 +99,7 @@
       <section class="screen" id="voices-screen" aria-labelledby="voices-heading">
         <div class="screen-heading"><div><h1 id="voices-heading">Narrator voices</h1><p>Choose the voice for each audiobook. Samples are stored locally.</p></div></div>
         <div class="panel"><div id="voices"><div class="empty">Loading narrator voices...</div></div></div>
-        <div class="panel upload-drop" style="margin-top:18px"><h2 class="section-title">Add a narrator voice</h2><p class="section-intro">Use a clean 10 to 20 second sample you have the rights to use.</p><div class="upload-row"><input type="file" id="voice-file" aria-label="Choose a voice sample" aria-describedby="voice-help voice-err" accept=".wav,.mp3,.flac,.ogg"><button class="primary" id="voice-upload-btn" onclick="uploadVoice()">Upload voice</button></div><p class="help" id="voice-help">Longer clips are trimmed to 20 seconds during conversion.</p><div class="err" id="voice-err" role="status"></div></div>
+        <div class="panel upload-drop" style="margin-top:18px"><h2 class="section-title">Add a narrator voice</h2><p class="section-intro">Use a clean 10 to 20 second sample you have the rights to use.</p><div class="upload-row"><input type="file" id="voice-file" aria-label="Choose a voice sample" aria-describedby="voice-help voice-err" accept=".wav,.mp3,.flac,.ogg"></div><p class="help" id="voice-help">Choose an audio file to add it. Longer clips are trimmed to 20 seconds during conversion.</p><div class="err" id="voice-err" role="status"></div></div>
       </section>
     </main>
   </div>
@@ -127,6 +127,7 @@
     <label><input type="radio" name="backend" value="chatterbox">
       <span>Chatterbox<br><span class="hint">Existing narrator option</span></span></label>
   </div></fieldset>
+  <details id="generation-options"><summary>Advanced options <span class="hint" id="generation-options-state">Recommended defaults</span></summary><p class="help">These settings apply only to this new audiobook. Quality checks, model files, and voice setup stay fixed.</p><div id="generation-options-fields"></div><button type="button" id="generation-options-reset">Restore recommended defaults</button><p class="err" id="generation-options-error" role="status"></p></details>
   <label for="f-format">Output format</label>
   <select id="f-format">
     <option value="m4b">M4B: audiobook with chapters (recommended)</option>
@@ -164,6 +165,15 @@
   <div id="review-status" role="status"></div>
   <div class="err" id="review-error" role="alert"></div>
   <div id="review-content" hidden>
+    <section id="review-scope" hidden aria-labelledby="review-scope-title">
+      <h4 id="review-scope-title">Narration range</h4>
+      <p class="help" id="review-scope-status"></p>
+      <label for="review-end-page">Narrate through PDF page</label>
+      <input id="review-end-page" type="number" inputmode="numeric">
+      <button type="button" id="review-save-scope">Apply range</button>
+      <button type="button" id="review-reset-scope">Use full selected range</button>
+      <p class="help">This changes which pages are narrated. Your original text and saved audio are preserved.</p>
+    </section>
     <div class="review-toolbar">
       <button type="button" id="review-prev">Previous</button>
       <label for="review-select">Passage</label><select id="review-select"></select>
@@ -202,12 +212,70 @@
   <div class="dlg-actions"><button type="button" id="review-close">Close</button><button type="button" class="primary" id="review-start" disabled>Start narration</button></div>
 </dialog>
 
+<dialog id="job-action-dialog" aria-labelledby="job-action-title" aria-describedby="job-action-copy">
+  <h3 id="job-action-title"></h3>
+  <p class="meta" id="job-action-copy"></p>
+  <div id="job-action-fields"></div>
+  <p class="err" id="job-action-error" role="status"></p>
+  <div class="dlg-actions"><button type="button" id="job-action-cancel">Cancel</button><button type="button" class="primary" id="job-action-confirm"></button></div>
+</dialog>
+
 <script>
 const dlg = document.getElementById('dlg');
 let dlgBook = null;
 let library = [];
 let previewPage = 1;
 let previewRequest = null;
+let generationDefaults = {};
+let generationRequest = 0, generationLoading = false;
+
+async function loadGenerationSettings(backend, path, host = document.getElementById('generation-options-fields')) {
+  const key = `${backend}:${path}`;
+  const request = ++generationRequest;
+  const error = document.getElementById('generation-options-error');
+  generationLoading = host.id === 'generation-options-fields';
+  if (generationLoading) document.getElementById('create-job-btn').disabled = true;
+  host.textContent = 'Loading recommended settings...';
+  try {
+    const response = await fetch(`/api/generation-settings?backend=${encodeURIComponent(backend)}&path=${encodeURIComponent(path)}`);
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Could not load recommended settings.');
+    if (request !== generationRequest) return;
+    generationDefaults[key] = result.defaults;
+    renderGenerationSettings(host, backend, result.defaults);
+    error.textContent = '';
+  } catch (e) { if (request === generationRequest) error.textContent = e.message; }
+  finally { if (request === generationRequest && generationLoading) { generationLoading = false; document.getElementById('create-job-btn').disabled = false; } }
+}
+
+function renderGenerationSettings(host, backend, values) {
+  host.replaceChildren();
+  const labels = backend === 'vibevoice'
+    ? [['passage_gap_ms','Passage gap (ms)',0,5000],['heading_lead_ms','Heading lead-in (ms)',0,5000],['cfg_scale','Guidance scale',1,5,.1],['ddpm_steps','DDPM steps',10,100]]
+    : [['gap_ms','Sentence gap (ms)',0,5000],['block_gap_ms','Paragraph gap (ms)',0,5000],['heading_before_ms','Heading lead-in (ms)',0,5000],['heading_after_ms','Heading gap (ms)',0,5000]];
+  for (const [key, label, min, max, step] of labels) {
+    const field = document.createElement('div'); const control = document.createElement('input');
+    control.type = 'number'; control.name = `generation-${key}`; control.value = values[key]; control.min = min; control.max = max; if (step) control.step = step;
+    const caption = document.createElement('label'); caption.textContent = label; control.id = `${host.id || 'generation'}-${key}`; caption.htmlFor = control.id;
+    control.addEventListener('input', updateGenerationState); field.append(caption, control); host.appendChild(field);
+  }
+  const mode = document.createElement('select'); mode.name = 'generation-performance_mode'; mode.id = `${host.id || 'generation'}-performance_mode`;
+  mode.append(new Option('Automatic performance', 'auto'), new Option('Conservative performance', 'conservative')); mode.value = values.performance_mode;
+  const caption = document.createElement('label'); caption.textContent = 'Performance mode'; caption.htmlFor = mode.id; mode.addEventListener('change', updateGenerationState); host.append(caption, mode);
+  if (host.id === 'generation-options-fields') updateGenerationState();
+}
+
+function readGenerationSettings(host = document.getElementById('generation-options-fields')) {
+  return Object.fromEntries(Array.from(host.querySelectorAll('[name^="generation-"]')).map(control => [control.name.slice(11), control.type === 'number' ? Number(control.value) : control.value]));
+}
+
+function updateGenerationState() {
+  const backend = document.querySelector('input[name=backend]:checked')?.value;
+  const path = document.querySelector('input[name=path]:checked')?.value;
+  const defaults = generationDefaults[`${backend}:${path}`];
+  const current = readGenerationSettings();
+  document.getElementById('generation-options-state').textContent = defaults && JSON.stringify(current) !== JSON.stringify(defaults) ? 'Modified' : 'Recommended defaults';
+}
 
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach(screen => {
@@ -362,6 +430,7 @@ function openDlg(book) {
   document.getElementById('dlg-err').textContent = '';
   document.querySelector(`input[name=path][value=${book.suggested_path}]`).checked = true;
   markPath();
+  loadGenerationSettings(document.querySelector('input[name=backend]:checked').value, book.suggested_path);
   dlg.showModal();
   setPreviewPage(Number(document.getElementById('f-from').value) || 1);
 }
@@ -439,7 +508,14 @@ document.getElementById('f-to').addEventListener('change', event => {
   const first = document.getElementById('f-from');
   if (+event.target.value < +first.value) event.target.value = first.value;
 });
-document.getElementById('path-row').addEventListener('change', markPath);
+document.getElementById('path-row').addEventListener('change', () => { markPath(); loadGenerationSettings(document.querySelector('input[name=backend]:checked').value, document.querySelector('input[name=path]:checked').value); });
+document.getElementById('backend-row').addEventListener('change', () => loadGenerationSettings(document.querySelector('input[name=backend]:checked').value, document.querySelector('input[name=path]:checked').value));
+document.getElementById('generation-options-reset').addEventListener('click', () => {
+  const backend = document.querySelector('input[name=backend]:checked').value;
+  const path = document.querySelector('input[name=path]:checked').value;
+  const defaults = generationDefaults[`${backend}:${path}`];
+  if (defaults) renderGenerationSettings(document.getElementById('generation-options-fields'), backend, defaults);
+});
 function markPath() {
   const v = document.querySelector('input[name=path]:checked')?.value;
   document.getElementById('lbl-A').classList.toggle('sel', v === 'A');
@@ -585,29 +661,35 @@ async function installFfmpeg() {
   if (!ffmpegPoll) ffmpegPoll = setInterval(loadFfmpeg, 2000);
 }
 
+let voiceImportInFlight = false;
+
 async function uploadVoice() {
   const inp = document.getElementById('voice-file');
   const err = document.getElementById('voice-err');
-  err.textContent = '';
-  if (!inp.files.length) { err.textContent = 'Choose an audio file first.'; return; }
+  const help = document.getElementById('voice-help');
+  if (voiceImportInFlight || !inp.files.length) return;
+  // Capture the file before the first await: reopening the picker may replace it.
   const f = inp.files[0];
+  voiceImportInFlight = true;
+  inp.disabled = true;
+  err.textContent = '';
   const name = f.name.replace(/\.[^.]+$/, '');
   const ext = (f.name.match(/\.[^.]+$/) || ['.wav'])[0];
-  const uploadBtn = document.getElementById('voice-upload-btn');
-  uploadBtn.disabled = true;
-  uploadBtn.textContent = 'Uploading voice...';
+  help.textContent = 'Adding voice sample...';
   try {
     const r = await fetch(`/api/voices?name=${encodeURIComponent(name)}&ext=${encodeURIComponent(ext)}`,
       {method: 'POST', body: f});
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || 'Upload failed. Please try again.');
-    inp.value = '';
     await loadVoices();
+    help.textContent = 'Voice added. Choose another audio file to add it.';
   } catch (e) {
-    err.textContent = e.message || 'Could not upload the voice. Please try again.';
+    err.textContent = (e.message || 'Could not upload the voice.') + ' Choose the file again to retry.';
+    help.textContent = 'Choose an audio file to add it. Longer clips are trimmed to 20 seconds during conversion.';
   } finally {
-    uploadBtn.disabled = false;
-    uploadBtn.textContent = 'Upload voice';
+    inp.value = '';
+    inp.disabled = false;
+    voiceImportInFlight = false;
   }
 }
 
@@ -645,6 +727,7 @@ async function createJob() {
   const createBtn = document.getElementById('create-job-btn');
   const error = document.getElementById('dlg-err');
   if (createBtn.disabled) return;
+  if (generationLoading) { error.textContent = 'Recommended settings are still loading.'; return; }
   error.textContent = '';
   const body = {
     pdf_path: dlgBook.path,
@@ -652,6 +735,7 @@ async function createJob() {
     path: document.querySelector('input[name=path]:checked').value,
     voice: document.getElementById('f-voice').value,
     backend: document.querySelector('input[name=backend]:checked').value,
+    generation_settings: readGenerationSettings(),
     format: document.getElementById('f-format').value,
     page_from: +document.getElementById('f-from').value,
     page_to: +document.getElementById('f-to').value,
@@ -665,13 +749,15 @@ async function createJob() {
   try {
     const r = await fetch('/api/jobs', {method: 'POST',
       headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    const response = await r.json().catch(() => ({}));
     if (!r.ok) {
-      const response = await r.json().catch(() => ({}));
       if (response.ffmpeg_missing) loadFfmpeg();
       throw new Error(response.error || 'Could not create the audiobook. Please try again.');
     }
     dlg.close();
-    refreshJobs();
+    showScreen('audiobooks');
+    pendingJobReveal = response.id || null;
+    await refreshJobs();
   } catch (e) {
     error.textContent = e.message || 'Could not reach the app server. Please try again.';
   } finally {
@@ -686,6 +772,8 @@ const jobNodes = new Map();
 let knownJobStatuses = new Map();
 let refreshInFlight = false;
 let refreshAgain = false;
+let pendingJobReveal = null;
+let openJobMenuId = null;
 
 function captureViewState() {
   const logs = new Map();
@@ -723,6 +811,7 @@ async function refreshJobs() {
   if (refreshInFlight) { refreshAgain = true; return; }
   refreshInFlight = true;
   const view = captureViewState();
+  const revealId = pendingJobReveal;
   try {
     const r = await fetch('/api/jobs');
     const response = await r.json();
@@ -752,13 +841,16 @@ async function refreshJobs() {
     const newlyDone = details.some(j =>
       knownJobStatuses.has(j.id) && knownJobStatuses.get(j.id) !== 'done' && j.status === 'done');
     knownJobStatuses = new Map(details.map(j => [j.id, j.status]));
-    details.sort((a, b) => (a.status === 'done') - (b.status === 'done'));
+    details.sort((a, b) => (a.status === 'done') - (b.status === 'done')
+      || Number(b.created_at || 0) - Number(a.created_at || 0)
+      || (a.id === revealId ? -1 : b.id === revealId ? 1 : 0));
 
     const wanted = new Set(details.map(j => j.id));
     details.forEach((j, index) => {
       const renderKey = JSON.stringify(j) + `|log=${openLogs.has(j.id)}|expanded=${expandedFinished.has(j.id)}`;
       let entry = jobNodes.get(j.id);
       if (!entry || entry.key !== renderKey) {
+        if (openJobMenuId === j.id) closeJobMenu();
         const replacement = renderJob(j);
         // Progress polling must not restart an audiobook the user is playing.
         if (entry && entry.outputs === JSON.stringify(j.outputs)) {
@@ -773,7 +865,10 @@ async function refreshJobs() {
       if (current !== entry.node) el.insertBefore(entry.node, current);
     });
     for (const child of Array.from(el.children)) {
-      if (!child.dataset.jobId || !wanted.has(child.dataset.jobId)) child.remove();
+      if (!child.dataset.jobId || !wanted.has(child.dataset.jobId)) {
+        if (openJobMenuId === child.dataset.jobId) closeJobMenu();
+        child.remove();
+      }
     }
     for (const id of Array.from(jobNodes.keys())) {
       if (!wanted.has(id)) jobNodes.delete(id);
@@ -784,6 +879,15 @@ async function refreshJobs() {
     document.querySelector('[data-jobs-loading]')?.remove();
   } finally {
     restoreViewState(view);
+    const revealed = revealId && jobNodes.get(revealId)?.node;
+    if (revealed) {
+      pendingJobReveal = null;
+      requestAnimationFrame(() => {
+        revealed.tabIndex = -1;
+        revealed.scrollIntoView({block: 'start'});
+        revealed.focus({preventScroll: true});
+      });
+    }
     refreshInFlight = false;
     if (refreshAgain) {
       refreshAgain = false;
@@ -792,10 +896,19 @@ async function refreshJobs() {
   }
 }
 
+function narrationRange(j) {
+  const range = j.narration_range;
+  if (range && Number.isInteger(range.from) && Number.isInteger(range.to) && Number.isInteger(range.original_to)) {
+    return `narration pages ${range.from} to ${range.to} · original selection pages ${range.from} to ${range.original_to}`;
+  }
+  return `pages ${j.page_from} to ${j.page_to}`;
+}
+
 function completedTile(j) {
   const tile = document.createElement('div');
   tile.className = 'job completed-tile';
   tile.dataset.jobId = j.id;
+  tile._jobData = j;
   const summary = btn('Show options', '', () => {
     expandedFinished.add(j.id);
     refreshJobs();
@@ -817,13 +930,17 @@ function completedTile(j) {
   title.textContent = j.title;
   const detail = document.createElement('span');
   detail.className = 'detail';
-  detail.textContent = `Completed · pages ${j.page_from} to ${j.page_to}`;
+  detail.textContent = `Completed · ${narrationRange(j)}`;
   copy.append(title, detail);
   const hint = document.createElement('span');
   hint.className = 'detail';
   hint.textContent = 'Show options';
   summary.replaceChildren(cover, copy, hint);
-  tile.appendChild(summary);
+  let actions;
+  actions = btn('More actions', '', () => openJobMenu(j, actions));
+  actions.classList.add('tile-actions');
+  actions.setAttribute('aria-label', `More actions for ${j.title}`);
+  tile.append(summary, actions);
   return tile;
 }
 
@@ -832,6 +949,7 @@ function renderJob(j) {
   const div = document.createElement('div');
   div.className = j.status === 'done' ? 'job completed-expanded' : 'job';
   div.dataset.jobId = j.id;
+  div._jobData = j;
   const running = ['queued','extracting','tagging','narrating'].includes(j.status);
   const badgeCls = running ? 'running' : (j.status === 'done' ? 'done' : j.status);
 
@@ -860,7 +978,7 @@ function renderJob(j) {
     if (j.pdf_archive_error) detail += ` · Source PDF move warning: ${j.pdf_archive_error}`;
   }
 
-  const pages = `pages ${j.page_from} to ${j.page_to}`;
+  const pages = narrationRange(j);
   div.innerHTML = `<div class="row1">
       <span class="title">${esc(j.title)}</span>
       <span class="badge ${badgeCls}">${esc(j.status.replaceAll('_', ' '))}</span>
@@ -872,6 +990,10 @@ function renderJob(j) {
   const row = document.createElement('div');
   row.className = 'job-actions';
   div.appendChild(row);
+  let actions;
+  actions = btn('More actions', '', () => openJobMenu(j, actions));
+  actions.setAttribute('aria-label', `More actions for ${j.title}`);
+  row.appendChild(actions);
   if (!running && (j.block_counts || j.status === 'review_required')) {
     row.appendChild(btn('Review narration text', j.status === 'review_required' ? 'primary' : '', () => openVisualReview(j.id, j.title)));
   }
@@ -882,11 +1004,7 @@ function renderJob(j) {
     row.appendChild(btn('Resume', 'primary', async () => {
       await jobAction(j.id, 'resume');
     }));
-    row.appendChild(btn('Delete', 'danger', async () => {
-      if (confirm('Delete this job and all its files?')) {
-        await jobAction(j.id, 'delete');
-      }
-    }));
+    row.appendChild(btn('Delete', 'danger', () => deleteFinishedJob(j)));
   }
   if (j.status === 'done') {
     const collapse = btn('Collapse', '', () => {
@@ -910,11 +1028,6 @@ function renderJob(j) {
         refreshJobs();
       }));
     }
-    row.appendChild(btn('Delete', 'danger', async () => {
-      if (confirm('Delete this job record and its temporary files? The copied audiobook in the output library will stay.')) {
-        await jobAction(j.id, 'delete');
-      }
-    }));
     const change = document.createElement('div');
     change.className = 'cover-change';
     const label = document.createElement('label');
@@ -1034,6 +1147,9 @@ function updateReviewControls() {
   reviewEl('select').disabled = reviewDirty || !items.length;
   reviewEl('save').disabled = !reviewData.editable || !items.length;
   reviewEl('start').disabled = !reviewData.editable || reviewDirty || reviewData.unresolved_count > 0 || !reviewPreviewed;
+  reviewEl('end-page').disabled = !reviewData.editable;
+  reviewEl('save-scope').disabled = !reviewData.editable;
+  reviewEl('reset-scope').disabled = !reviewData.editable || !reviewData.narration_scope;
 }
 
 function renderVisualReview() {
@@ -1052,6 +1168,16 @@ function renderVisualReview() {
   reviewEl('passage').hidden = !items.length;
   reviewEl('error').textContent = '';
   reviewEl('saved').textContent = '';
+  const range = reviewData.original_page_range;
+  const scope = reviewData.narration_scope;
+  reviewEl('scope').hidden = !reviewData.vibevoice_scope_available || !range || !Number.isInteger(range.from) || !Number.isInteger(range.to);
+  if (!reviewEl('scope').hidden) {
+    const endPage = scope ? scope.end_page : range.to;
+    reviewEl('end-page').min = range.from;
+    reviewEl('end-page').max = range.to;
+    reviewEl('end-page').value = endPage;
+    reviewEl('scope-status').textContent = `Original selection: PDF pages ${range.from}–${range.to}. Effective narration: PDF pages ${range.from}–${endPage}.`;
+  }
   reviewDirty = false;
   const item = items[reviewIndex];
   if (item) {
@@ -1130,6 +1256,29 @@ reviewEl('save').onclick = async () => {
     await refreshJobs();
   } catch (e) { reviewEl('error').textContent = e.message; updateReviewControls(); }
 };
+reviewEl('save-scope').onclick = async () => {
+  reviewEl('error').textContent = '';
+  try {
+    await reviewRequest('visual-review/scope', {end_page:Number(reviewEl('end-page').value)});
+    reviewData = await reviewRequest('visual-review');
+    reviewPreviewed = false;
+    reviewEl('full').open = false;
+    renderVisualReview();
+    reviewEl('scope-status').focus();
+    await refreshJobs();
+  } catch (e) { reviewEl('error').textContent = e.message; updateReviewControls(); }
+};
+reviewEl('reset-scope').onclick = async () => {
+  reviewEl('error').textContent = '';
+  try {
+    await reviewRequest('visual-review/scope', {end_page:null});
+    reviewData = await reviewRequest('visual-review');
+    reviewPreviewed = false;
+    reviewEl('full').open = false;
+    renderVisualReview();
+    await refreshJobs();
+  } catch (e) { reviewEl('error').textContent = e.message; updateReviewControls(); }
+};
 reviewEl('page').addEventListener('toggle', () => {
   if (!reviewEl('page').open) return;
   const item = reviewData?.items[reviewIndex];
@@ -1178,9 +1327,9 @@ async function uploadCover(jobId, input) {
     const response = await fetch(`/api/jobs/${jobId}/cover`, {method: 'POST', body: file});
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error || 'Could not save the cover.');
-    status.textContent = 'Cover updated.';
     input.value = '';
     await refreshJobs();
+    setJobActionStatus(jobId, body.message || 'Artwork updated in the library and finished audio.');
   } catch (e) {
     status.textContent = e.message || 'Could not save the cover.';
   } finally {
@@ -1197,6 +1346,280 @@ async function openOutputFolder(jobId) {
     alert(e.message || 'Could not open the output folder.');
   }
 }
+
+const jobMenu = document.createElement('div');
+jobMenu.className = 'job-menu';
+jobMenu.hidden = true;
+jobMenu.setAttribute('role', 'menu');
+document.body.appendChild(jobMenu);
+let jobMenuTrigger = null;
+
+function setJobActionStatus(jobId, message) {
+  const card = jobNodes.get(jobId)?.node;
+  if (!card) return;
+  let status = card.querySelector('.job-action-status');
+  if (!status) {
+    status = document.createElement('p');
+    status.className = 'detail job-action-status';
+    status.setAttribute('role', 'status');
+    card.appendChild(status);
+  }
+  status.textContent = message;
+}
+
+function closeJobMenu(returnFocus = false) {
+  if (jobMenu.hidden) return;
+  jobMenu.hidden = true;
+  jobMenu.replaceChildren();
+  if (returnFocus) jobMenuTrigger?.focus({preventScroll: true});
+  jobMenuTrigger = null;
+  openJobMenuId = null;
+}
+
+function leaveJobMenu(backward) {
+  const trigger = jobMenuTrigger;
+  closeJobMenu();
+  const focusable = Array.from(document.querySelectorAll('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled)'));
+  const index = focusable.indexOf(trigger);
+  focusable[index + (backward ? -1 : 1)]?.focus();
+}
+
+function menuItem(label, action, danger = false) {
+  const item = document.createElement('button');
+  item.type = 'button';
+  item.setAttribute('role', 'menuitem');
+  item.textContent = label;
+  if (danger) item.className = 'menu-danger';
+  item.addEventListener('click', async () => {
+    const trigger = jobMenuTrigger;
+    closeJobMenu();
+    try {
+      await action();
+    } catch (error) {
+      const jobId = trigger?.closest('.job')?.dataset.jobId;
+      if (jobId) setJobActionStatus(jobId, error.message || 'The action failed. Please try again.');
+    }
+  });
+  return item;
+}
+
+async function playFinishedJob(j) {
+  expandedFinished.add(j.id);
+  await refreshJobs();
+  const audio = jobNodes.get(j.id)?.node.querySelector('audio');
+  if (!audio) throw new Error('No finished audio is available to play.');
+  await audio.play();
+}
+
+async function chooseArtwork(j) {
+  expandedFinished.add(j.id);
+  await refreshJobs();
+  const input = document.getElementById(`cover-${j.id}`);
+  if (!input) throw new Error('The cover picker is unavailable. Please try again.');
+  input.click();
+}
+
+async function exportFinishedJob(j, format) {
+  expandedFinished.add(j.id);
+  setJobActionStatus(j.id, `Preparing ${format.toUpperCase()} export...`);
+  const response = await fetch(`/api/jobs/${j.id}/export`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({format}),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || `Could not export ${format.toUpperCase()}.`);
+  const name = result.output?.name || `${format.toUpperCase()} export`;
+  await refreshJobs();
+  setJobActionStatus(j.id, `${name} is ready. Use its Download link to choose where to save it.`);
+}
+
+function showJobLog(j) {
+  expandedFinished.add(j.id);
+  openLogs.add(j.id);
+  return refreshJobs();
+}
+
+const actionDialog = document.getElementById('job-action-dialog');
+const actionDialogEl = name => document.getElementById(`job-action-${name}`);
+
+function openActionDialog({title, copy, fields, confirm, run}) {
+  actionDialogEl('title').textContent = title;
+  actionDialogEl('copy').textContent = copy;
+  actionDialogEl('fields').replaceChildren(...fields);
+  actionDialogEl('error').textContent = '';
+  const confirmButton = actionDialogEl('confirm');
+  confirmButton.textContent = confirm();
+  actionDialogEl('cancel').onclick = () => actionDialog.close();
+  confirmButton.onclick = async () => {
+    confirmButton.disabled = true;
+    actionDialogEl('error').textContent = '';
+    try {
+      await run();
+      actionDialog.close();
+    } catch (error) {
+      actionDialogEl('error').textContent = error.message || 'The action failed. Please try again.';
+    } finally {
+      confirmButton.disabled = false;
+    }
+  };
+  actionDialog.showModal();
+}
+
+function deleteFinishedJob(j) {
+  const library = document.createElement('input');
+  library.type = 'radio'; library.name = 'delete-mode'; library.value = 'library'; library.checked = true;
+  const generated = document.createElement('input');
+  generated.type = 'radio'; generated.name = 'delete-mode'; generated.value = 'generated';
+  const option = (input, title, detail) => {
+    const label = document.createElement('label');
+    label.className = 'radio-row';
+    const copy = document.createElement('span');
+    const heading = document.createElement('strong');
+    heading.textContent = title;
+    const hint = document.createElement('span');
+    hint.className = 'hint';
+    hint.textContent = detail;
+    copy.append(heading, hint);
+    label.append(input, copy);
+    return label;
+  };
+  const scope = document.createElement('fieldset');
+  const legend = document.createElement('legend');
+  legend.textContent = 'Delete scope';
+  scope.append(legend,
+    option(library, 'Remove from the library', 'Keep generated audio and job files.'),
+    option(generated, 'Remove generated files too', 'Remove generated audio and checkpoints. Keep the job record, extraction, and logs. Source PDFs and narrator voices stay.'));
+  const selected = () => generated.checked ? 'generated' : 'library';
+  const update = () => actionDialogEl('confirm').textContent = selected() === 'generated'
+    ? 'Delete library and generated files' : 'Delete from library';
+  library.addEventListener('change', update); generated.addEventListener('change', update);
+  openActionDialog({
+    title: `Delete ${j.title}?`,
+    copy: 'Choose what to remove. This cannot be undone for generated files.',
+    fields: [scope],
+    confirm: () => 'Delete from library',
+    run: async () => {
+      const response = await fetch(`/api/jobs/${j.id}/delete`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({mode: selected(), confirmed: true}),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Could not delete this audiobook.');
+      await refreshJobs();
+    },
+  });
+  update();
+}
+
+async function regenerateJob(j) {
+  const label = document.createElement('label');
+  label.htmlFor = 'regenerate-backend'; label.textContent = 'Narration model';
+  const backend = document.createElement('select');
+  backend.id = 'regenerate-backend';
+  backend.append(new Option('VibeVoice', 'vibevoice'), new Option('Chatterbox', 'chatterbox'));
+  backend.value = j.backend || 'vibevoice';
+  const advanced = document.createElement('details'); advanced.open = false;
+  const summary = document.createElement('summary'); summary.textContent = 'Advanced options ';
+  const state = document.createElement('span'); state.className = 'hint'; state.textContent = 'Recommended defaults'; summary.appendChild(state);
+  const fields = document.createElement('div'); fields.id = `regenerate-generation-options-${j.id}`;
+  const reset = document.createElement('button'); reset.type = 'button'; reset.textContent = 'Restore recommended defaults';
+  advanced.append(summary, fields, reset);
+  const path = j.path || 'A';
+  let loadToken = 0, loading = false, defaults = null;
+  const sync = () => { state.textContent = defaults && JSON.stringify(readGenerationSettings(fields)) !== JSON.stringify(defaults) ? 'Modified' : 'Recommended defaults'; };
+  const load = async () => {
+    const token = ++loadToken;
+    loading = true;
+    fields.textContent = 'Loading recommended settings...';
+    const response = await fetch(`/api/generation-settings?backend=${encodeURIComponent(backend.value)}&path=${encodeURIComponent(path)}`);
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Could not load recommended settings.');
+    if (token !== loadToken) return;
+    defaults = result.defaults;
+    renderGenerationSettings(fields, backend.value, defaults);
+    fields.querySelectorAll('input,select').forEach(control => control.addEventListener('input', sync));
+    fields.querySelectorAll('select').forEach(control => control.addEventListener('change', sync));
+    sync(); loading = false;
+  };
+  await load();
+  reset.addEventListener('click', () => { if (defaults) { renderGenerationSettings(fields, backend.value, defaults); fields.querySelectorAll('input,select').forEach(control => control.addEventListener('input', sync)); fields.querySelectorAll('select').forEach(control => control.addEventListener('change', sync)); sync(); } });
+  backend.addEventListener('change', () => load().catch(error => { loading = false; fields.textContent = error.message; }));
+  openActionDialog({
+    title: `Regenerate ${j.title}?`,
+    copy: 'This creates a new queued copy. The completed audiobook and its files are preserved.',
+    fields: [label, backend, advanced], confirm: () => 'Queue new audiobook',
+    run: async () => {
+      if (loading) throw new Error('Recommended settings are still loading.');
+      const response = await fetch(`/api/jobs/${j.id}/regenerate`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({backend: backend.value, generation_settings: readGenerationSettings(fields)}),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Could not queue the new audiobook.');
+      showScreen('audiobooks');
+      pendingJobReveal = result.id || result.job?.id || null;
+      await refreshJobs();
+    },
+  });
+}
+
+function openJobMenu(j, trigger, clientX, clientY) {
+  closeJobMenu();
+  jobMenuTrigger = trigger;
+  openJobMenuId = j.id;
+  jobMenu.setAttribute('aria-label', `Actions for ${j.title}`);
+  const actions = [];
+  if (j.status === 'done') {
+    actions.push(menuItem('Play audiobook', () => playFinishedJob(j)));
+    actions.push(menuItem('Change artwork', () => chooseArtwork(j)));
+    for (const format of ['m4b', 'mp3', 'wav']) actions.push(menuItem(`Export ${format.toUpperCase()}`, () => exportFinishedJob(j, format)));
+    if (j.audiobook_dir) actions.push(menuItem('Show output folder', () => openOutputFolder(j.id)));
+    actions.push(menuItem('Details and log', () => showJobLog(j)));
+    actions.push(menuItem('Regenerate with different model', () => regenerateJob(j)));
+  } else if (['failed', 'canceled', 'interrupted'].includes(j.status)) {
+    actions.push(menuItem('Resume audiobook', () => jobAction(j.id, 'resume')));
+    actions.push(menuItem('Details and log', () => showJobLog(j)));
+  } else {
+    actions.push(menuItem('Details and log', () => showJobLog(j)));
+  }
+  actions.push(menuItem('Delete audiobook', () => deleteFinishedJob(j), true));
+  jobMenu.replaceChildren(...actions);
+  jobMenu.hidden = false;
+  const rect = trigger.getBoundingClientRect();
+  const left = clientX ?? rect.left;
+  const top = clientY ?? rect.bottom + 6;
+  const menuRect = jobMenu.getBoundingClientRect();
+  jobMenu.style.left = `${Math.max(8, Math.min(left, innerWidth - menuRect.width - 8))}px`;
+  jobMenu.style.top = `${Math.max(8, Math.min(top, innerHeight - menuRect.height - 8))}px`;
+  jobMenu.querySelector('[role=menuitem]')?.focus();
+}
+
+jobMenu.addEventListener('keydown', event => {
+  const items = Array.from(jobMenu.querySelectorAll('[role=menuitem]'));
+  const index = items.indexOf(document.activeElement);
+  if (event.key === 'Escape') { event.preventDefault(); closeJobMenu(true); }
+  if (event.key === 'Home') { event.preventDefault(); items[0]?.focus(); }
+  if (event.key === 'End') { event.preventDefault(); items.at(-1)?.focus(); }
+  if (event.key === 'ArrowDown') { event.preventDefault(); items[(index + 1 + items.length) % items.length]?.focus(); }
+  if (event.key === 'ArrowUp') { event.preventDefault(); items[(index - 1 + items.length) % items.length]?.focus(); }
+  if (event.key === 'Tab') { event.preventDefault(); leaveJobMenu(event.shiftKey); }
+});
+document.addEventListener('pointerdown', event => {
+  if (!jobMenu.hidden && !jobMenu.contains(event.target) && event.target !== jobMenuTrigger) closeJobMenu();
+});
+document.addEventListener('contextmenu', event => {
+  if (event.target.closest('input,audio,a')) return;
+  const card = event.target.closest('.job[data-job-id]');
+  if (!card?._jobData) return;
+  event.preventDefault();
+  openJobMenu(card._jobData, card.querySelector('[aria-label^="More actions"]') || card, event.clientX, event.clientY);
+});
+document.addEventListener('keydown', event => {
+  if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+  if (document.activeElement.closest('input,audio,a')) return;
+  const card = document.activeElement.closest('.job[data-job-id]');
+  if (!card?._jobData) return;
+  event.preventDefault();
+  openJobMenu(card._jobData, document.activeElement);
+});
 
 function monitorDownload(anchor, label) {
   // Keep the real link activation as the original user gesture so pywebview's
@@ -1276,6 +1699,7 @@ async function checkForUpdate() {
 restoreTheme();
 bindDropZone('pdf-file', uploadPdf);
 bindDropZone('voice-file', uploadVoice);
+document.getElementById('voice-file').addEventListener('change', uploadVoice);
 const requestedScreen = location.hash.slice(1);
 if (['library', 'audiobooks', 'voices'].includes(requestedScreen)) showScreen(requestedScreen);
 loadLibrary();

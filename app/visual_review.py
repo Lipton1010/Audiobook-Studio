@@ -11,6 +11,88 @@ from pathlib import Path
 
 _LOCK = threading.RLock()
 _DECISIONS = {"keep", "describe", "skip"}
+_SCOPE_FILE = "narration_scope.json"
+
+
+def _source_fingerprint(source):
+    return hashlib.sha256(json.dumps(source, ensure_ascii=False, sort_keys=True,
+                                     separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _page(value, name):
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ValueError(f"Narration scope has invalid {name}.")
+    return value
+
+
+def _bounds(state):
+    if not isinstance(state, dict):
+        raise ValueError("Narration scope needs the original selected page range.")
+    start = _page(state.get("page_from"), "original start page")
+    end = _page(state.get("page_to"), "original end page")
+    if start > end:
+        raise ValueError("Narration scope has invalid original page bounds.")
+    return start, end
+
+
+def _scope(job_dir, state, source):
+    path = Path(job_dir) / _SCOPE_FILE
+    if not path.exists():
+        return None
+    data = _required_json(path)
+    if not isinstance(data, dict):
+        raise ValueError("Narration scope is unreadable.")
+    start, end = _bounds(state)
+    effective_end = _page(data.get("end_page"), "end page")
+    if data.get("source_fingerprint") != _source_fingerprint(source):
+        raise ValueError("Narration scope no longer matches the original extraction.")
+    if data.get("page_from") != start or data.get("page_to") != end:
+        raise ValueError("Narration scope no longer matches the selected page range.")
+    if not start <= effective_end <= end:
+        raise ValueError("Narration scope is outside the original selected page range.")
+    return {"page_from": start, "page_to": end, "end_page": effective_end,
+            "source_fingerprint": data["source_fingerprint"]}
+
+
+def set_scope(job_dir, state, end_page):
+    """Persist an optional trailing narration boundary without changing extraction."""
+    source, _items, _decisions = prepare(job_dir, state)
+    start, end = _bounds(state)
+    path = Path(job_dir) / _SCOPE_FILE
+    if end_page is None:
+        path.unlink(missing_ok=True)
+        return None
+    effective_end = _page(end_page, "end page")
+    if not start <= effective_end <= end:
+        raise ValueError("Narration end page must be within the original selected range.")
+    for block in source:
+        _within_scope(block, effective_end)
+    payload = {"page_from": start, "page_to": end, "end_page": effective_end,
+               "source_fingerprint": _source_fingerprint(source)}
+    _write(path, payload)
+    return payload
+
+
+def scope_summary(job_dir, state):
+    """Return a validated, read-only scope summary for job-list display."""
+    path = Path(job_dir) / _SCOPE_FILE
+    if not path.exists():
+        return None
+    try:
+        source = load_blocks(Path(job_dir) / "source_blocks.json")
+        return _scope(job_dir, state, source)
+    except ValueError:
+        return None
+
+
+def _within_scope(block, end_page):
+    start = _page(block.get("source_page"), "source page")
+    end = _page(block.get("source_page_end", start), "source page end")
+    if end < start:
+        raise ValueError("Narration scope has invalid source-page provenance.")
+    if start <= end_page < end:
+        raise ValueError("Narration scope cannot cut through a cross-page passage.")
+    return end <= end_page
 
 
 def _json(path, default):
@@ -228,11 +310,14 @@ def prepare(job_dir, state=None):
         return source, items, decisions
 
 
-def project(job_dir):
-    source, items, decisions = prepare(job_dir)
+def project(job_dir, state=None):
+    source, items, decisions = prepare(job_dir, state)
+    scope = _scope(job_dir, state, source)
     by_index = {item["index"]: item for item in items}
     blocks, unresolved = [], []
     for index, block in enumerate(source):
+        if scope is not None and not _within_scope(block, scope["end_page"]):
+            continue
         item = by_index.get(index)
         if item is None:
             blocks.append(dict(block))
@@ -251,12 +336,15 @@ def project(job_dir):
     return blocks, unresolved, items, decisions
 
 
-def preview_blocks(job_dir):
+def preview_blocks(job_dir, state=None):
     """Projected spoken blocks, with unresolved notices at their source position."""
-    source, items, _decisions = prepare(job_dir)
+    source, items, _decisions = prepare(job_dir, state)
+    scope = _scope(job_dir, state, source)
     by_index = {item["index"]: item for item in items}
     blocks = []
     for index, block in enumerate(source):
+        if scope is not None and not _within_scope(block, scope["end_page"]):
+            continue
         item = by_index.get(index)
         if item is None:
             blocks.append(dict(block))
@@ -270,31 +358,39 @@ def preview_blocks(job_dir):
     return blocks
 
 
-def review_payload(job_dir):
-    _source, items, _decisions = prepare(job_dir)
+def review_payload(job_dir, state=None):
+    source, items, _decisions = prepare(job_dir, state)
+    scope = _scope(job_dir, state, source)
+    if scope is not None:
+        items = [item for item in items
+                 if _within_scope(source[item["index"]], scope["end_page"])]
     unresolved = sum(item["decision"] is None for item in items)
-    return {"items": items, "unresolved_count": unresolved, "editable": True}
+    return {"items": items, "unresolved_count": unresolved, "editable": True,
+            "narration_scope": scope}
 
 
-def write_projection(job_dir):
-    blocks, unresolved, _items, _decisions = project(job_dir)
+def write_projection(job_dir, state=None):
+    blocks, unresolved, _items, _decisions = project(job_dir, state)
     if unresolved:
         return False
     _write(Path(job_dir) / "blocks.json", {"blocks": blocks})
     return True
 
 
-def save_decision(job_dir, item_id, fingerprint_value, decision, spoken_text):
+def save_decision(job_dir, item_id, fingerprint_value, decision, spoken_text, state=None):
     if decision not in _DECISIONS:
         raise ValueError("Choose keep, describe, or skip.")
     spoken_text = str(spoken_text or "").strip()
     if decision == "describe" and not spoken_text:
         raise ValueError("A description needs spoken text.")
     with _LOCK:
-        _source, items, decisions = prepare(job_dir)
+        source, items, decisions = prepare(job_dir, state)
         item = next((entry for entry in items if entry["id"] == item_id), None)
         if item is None:
             raise ValueError("visual review item not found")
+        scope = _scope(job_dir, state, source)
+        if scope is not None and not _within_scope(source[item["index"]], scope["end_page"]):
+            raise ValueError("This visual is outside the selected narration range.")
         if item["fingerprint"] != fingerprint_value:
             raise ValueError("This visual changed. Reload the review before saving.")
         if decision == "keep" and not item["original_text"].strip():
@@ -303,4 +399,4 @@ def save_decision(job_dir, item_id, fingerprint_value, decision, spoken_text):
                               "spoken_text": item["original_text"] if decision == "keep" else spoken_text,
                               "updated_at": time.time()}
         _write(Path(job_dir) / "visual_review.json", {"decisions": decisions})
-        return project(job_dir)
+        return project(job_dir, state)

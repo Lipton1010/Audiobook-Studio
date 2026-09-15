@@ -1,3 +1,43 @@
+## 1.0.7 source candidate, 2026-09-15
+
+1.0.7 is source-only. No 1.0.7 installer, patch, tag, or public release has been
+built or published; the 1.0.6 installer artifacts remain current. This supersedes
+older notes that leave the real-book completion pending. Main/GitHub reconciliation
+is now authorized because the book and 1.0.6 handoff prerequisites are complete.
+Preserve the historical records below.
+
+The source now auto-imports selected voice files, shows each new job at the top, and persists a
+durable FIFO queue. Finished-book actions use a context menu. Artwork changes update
+local-library artwork and embedded artwork in owned finished audio where the format
+supports embedding. Completed-book deletion presents explicit choices. Regeneration
+creates a new job with the selected model, leaving the completed source job intact.
+Advanced settings can be reset to their defaults.
+
+The recovered Annihilation run completed story-PDF pages 6 through 98. It was not an
+uninterrupted run: 5:32:09 active time and 14:38:45 wall time produced 4:26:56.75 of
+finished audio. This records a recovered completion, not a clean-run prediction.
+
+Automatic performance enables bounded next-parent render-ahead while the persistent
+CPU checker verifies the current passage. Conservative mode disables it. A fixed-seed
+four-passage RTX 4090 comparison (off/on/on/off) took 92.48/73.13/71.67/92.89 seconds:
+21.9% less elapsed time on that sample, identical WAV hashes in all four runs, and
+unchanged 5.56 GiB peak Torch reservation. This is not a whole-book speed guarantee.
+Quality gates, finite retries, and checkpoint identities remain enforced. Physical
+12/16 GB cards are still untested; native batches remain two on the tested 24 GB
+class and one on smaller/unknown devices. Private timing telemetry is opt-in.
+
+The CPU-thread check retained four threads: four threads took 148.93 seconds, eight
+took 171.36 seconds, and twelve took 149.83 seconds. Each setting performed six
+checks and all 18 transcript hashes matched by input clip.
+
+Final source verification: 291 tests passed with 47 runtime-dependent skips; all
+100 focused VibeVoice/assembly tests passed in the isolated runtime with no skips.
+Two fresh synthetic PDF jobs completed through the app with automatic queue handoff,
+full audio decoding, library ownership checks, and cache-only reuse. Regeneration
+with another model stopped for its required preview. UI voice import, placement,
+context actions, artwork, export, and advanced reset were exercised. Sol's source
+and privacy audits passed; Graft reparsed 80 Python files and its wiring check passed.
+See RELEASE_1_0_7.md for the scope and remaining hardware/installer limits.
 # Local PDF to Audiobook Pipeline — Standing Rules
 
 Personal project. Local build on my own hardware, for legally purchased books, personal use only.

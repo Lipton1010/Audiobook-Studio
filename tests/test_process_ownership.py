@@ -146,7 +146,8 @@ class CancelOwnershipTests(unittest.TestCase):
         server._set_active_processes("active", [active])
         queued = {"id": "queued", "status": "queued", "backend": "chatterbox"}
 
-        with mock.patch.object(server, "load_state", return_value=queued):
+        with mock.patch.object(server, "load_state", return_value=queued), \
+             mock.patch.object(server, "save_state", return_value=True):
             server.request_cancel("queued")
 
         active_job.close.assert_not_called()
@@ -178,7 +179,8 @@ class CancelOwnershipTests(unittest.TestCase):
                     time.sleep(.05)
                 self.assertTrue(child_pid.exists())
                 descendant = int(child_pid.read_text(encoding="utf-8"))
-                with mock.patch.object(server, "load_state", return_value={"id": "queued", "status": "queued"}):
+                with mock.patch.object(server, "load_state", return_value={"id": "queued", "status": "queued"}), \
+                     mock.patch.object(server, "save_state", return_value=True):
                     server.request_cancel("queued")
                 self.assertTrue(_process_is_running(descendant))
             finally:

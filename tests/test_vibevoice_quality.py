@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from app import vibevoice_quality as quality
-from app.vibevoice_quality import assess, words
+from app.vibevoice_quality import assess, numbered_heading_assessment, words
 
 
 class VibeVoiceQualityTests(unittest.TestCase):
@@ -42,6 +42,73 @@ class VibeVoiceQualityTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["missing_words"], 1)
         self.assertEqual(result["inserted_words"], 1)
+
+    def test_conservative_compound_spacing_equivalence(self):
+        for expected, heard in (("A fernlike pattern.", "A fern like pattern."),
+                                ("Sea grass moves.", "Seagrass moves."),
+                                ("A fernlike pattern.", "A fern-like pattern."),
+                                ("A fern-like pattern.", "A fernlike pattern.")):
+            result = assess(expected, heard)
+            self.assertTrue(result["ok"], (expected, heard))
+            self.assertEqual((result["missing_words"], result["inserted_words"]), (0, 0))
+            self.assertTrue(result["differences"][0]["orthographic_equivalent"])
+
+    def test_compound_spacing_rejects_meaning_and_punctuation_changes(self):
+        for expected, heard in (("therapist", "the rapist"), ("nowhere", "now here"),
+                                ("manslaughter", "mans laughter"), ("fernlike", "fern, like"),
+                                ("fernlike", "fern. like"),
+                                ("fernlike", "fern"), ("fernlike", "fern like extra")):
+            result = assess(expected, heard)
+            self.assertTrue(result["differences"], (expected, heard))
+            self.assertFalse(any(item.get("orthographic_equivalent") for item in result["differences"]),
+                             (expected, heard))
+
+    def test_existing_hyphen_and_number_normalization_remain_equivalent(self):
+        self.assertTrue(assess("twenty-one fern-like", "21 fern like")["ok"])
+
+    def test_acknowledgment_spelling_variants_are_exact_one_word_equivalents(self):
+        for expected, heard in (
+            ("Acknowledgment", "acknowledgement"),
+            ("acknowledgement", "ACKNOWLEDGMENT"),
+            ("Acknowledgments", "acknowledgements"),
+            ("acknowledgements", "ACKNOWLEDGMENTS"),
+        ):
+            result = assess(expected, heard)
+            self.assertTrue(result["ok"], (expected, heard))
+            self.assertTrue(result["differences"][0]["orthographic_equivalent"])
+
+    def test_acknowledgment_variants_do_not_hide_real_or_identifier_differences(self):
+        adjacent = assess("Acknowledgments Cooke", "acknowledgements Cook")
+        self.assertEqual((adjacent["missing_words"], adjacent["inserted_words"]), (2, 2))
+        self.assertFalse(any(item.get("orthographic_equivalent") for item in adjacent["differences"]))
+        singular_plural = assess("acknowledgment", "acknowledgements")
+        self.assertTrue(singular_plural["differences"])
+        self.assertFalse(any(item.get("orthographic_equivalent") for item in singular_plural["differences"]))
+        identifier = assess("acknowledgment_id", "acknowledgement_id")
+        self.assertFalse(any(item.get("orthographic_equivalent") for item in identifier["differences"]))
+
+    def test_acknowledgment_variants_do_not_relax_real_coverage_gate_or_names(self):
+        five_missing = assess("acknowledgments one two three four five", "acknowledgements")
+        self.assertFalse(five_missing["ok"])
+        five_inserted = assess("acknowledgment", "acknowledgement one two three four five")
+        self.assertFalse(five_inserted["ok"])
+        names = assess("Cooke Ann Marks it's", "Cook Anne Mark's it")
+        self.assertTrue(names["differences"])
+        self.assertFalse(any(item.get("orthographic_equivalent") for item in names["differences"]))
+
+    def test_numbered_heading_requires_number_and_exact_title_but_accepts_spoken_number_forms(self):
+        for heard in ("01: INITIATION", "one Initiation", "zero one Initiation", "1 Initiation"):
+            result = numbered_heading_assessment("01: INITIATION", heard)
+            self.assertTrue(result["ok"], heard)
+            self.assertIn("normalized_heading_assessment", result)
+        self.assertFalse(numbered_heading_assessment("03: IMMOLATION", "three Immersion")["ok"])
+        self.assertFalse(numbered_heading_assessment("03: IMMOLATION", "Immolation")["ok"])
+        self.assertFalse(numbered_heading_assessment("03: IMMOLATION", "three Immolation extra")["ok"])
+        self.assertTrue(numbered_heading_assessment("03: ACKNOWLEDGMENTS", "three acknowledgements")["ok"])
+        for heard in ("009: NINE", "nine Nine", "zero zero nine Nine"):
+            self.assertTrue(numbered_heading_assessment("009: NINE", heard)["ok"], heard)
+        for heard in ("zero nine nine Ninety Nine", "zero ninety nine Ninety Nine"):
+            self.assertTrue(numbered_heading_assessment("099: NINETY NINE", heard)["ok"], heard)
 
     def test_distinct_signed_decimal_fraction_and_leading_zero_forms_remain_different(self):
         for expected, heard in (("one hundred", "101"), ("minus one hundred", "-100"),

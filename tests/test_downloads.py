@@ -84,6 +84,9 @@ class DownloadHeadTests(unittest.TestCase):
         request = urllib.request.Request(self.base + path, method="HEAD")
         return urllib.request.urlopen(request, timeout=5)
 
+    def get(self, path):
+        return urllib.request.urlopen(self.base + path, timeout=5)
+
     def test_beta_report_head_announces_zip_download(self):
         with self.head(f"/api/jobs/{self.job_id}/beta-log") as response:
             self.assertEqual(response.status, 200)
@@ -102,6 +105,18 @@ class DownloadHeadTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as raised:
             self.head(f"/api/jobs/{self.job_id}/audio/missing.wav")
         self.assertEqual(raised.exception.code, 404)
+
+    def test_assembler_temporary_audio_is_never_listed_or_served(self):
+        temporary = self.job_dir / "output" / ".synthetic.tmp123.m4b"
+        temporary.write_bytes(b"unfinished")
+        self.assertEqual([item["name"] for item in server.job_detail(self.job_id)["outputs"]],
+                         ["synthetic.wav"])
+        for request in (self.head, self.get):
+            with self.assertRaises(urllib.error.HTTPError) as rejected:
+                request(f"/api/jobs/{self.job_id}/audio/{temporary.name}")
+            self.assertEqual(rejected.exception.code, 404)
+        with self.get(f"/api/jobs/{self.job_id}/audio/{self.audio.name}") as response:
+            self.assertEqual(response.read(), self.audio.read_bytes())
 
 
 if __name__ == "__main__":

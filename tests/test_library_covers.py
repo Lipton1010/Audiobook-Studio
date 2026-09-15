@@ -152,18 +152,24 @@ class LibraryCoverRouteTests(unittest.TestCase):
         self.assertEqual(server._job_cover_bytes(state)[0], b"\x89PNG\r\n\x1a\noverride")
         self.assertEqual(audio.read_bytes(), before)
 
-    def test_done_cover_upload_persists_without_rewriting_job_state_or_audio(self):
+    def test_done_cover_upload_updates_finished_audio_without_rewriting_job_state(self):
         job_id, job_dir, audio, _state = self._done_job()
         before_state = (job_dir / "state.json").read_bytes()
-        before_audio = audio.read_bytes()
         request = urllib.request.Request(self.base + f"/api/jobs/{job_id}/cover",
                                          data=b"synthetic-upload", method="POST")
-        with mock.patch.object(server, "_validated_cover_png", return_value=b"\x89PNG\r\n\x1a\nnormalized"):
+        def updated(paths, _artwork, _ffmpeg, *, cover_target):
+            cover_target.write_bytes(b"\x89PNG\r\n\x1a\nnormalized")
+            for path in paths:
+                path.write_bytes(b"updated-audio")
+
+        with mock.patch.object(server, "_validated_cover_png", return_value=b"\x89PNG\r\n\x1a\nnormalized"), \
+             mock.patch.object(server, "ffmpeg_status", return_value={"path": "ffmpeg"}), \
+             mock.patch.object(server, "replace_finished_artwork", side_effect=updated):
             with urllib.request.urlopen(request, timeout=5) as response:
                 self.assertTrue(json.load(response)["cover_url"].startswith(f"/api/jobs/{job_id}/cover?v="))
         self.assertEqual((job_dir / "cover_override.png").read_bytes(), b"\x89PNG\r\n\x1a\nnormalized")
         self.assertEqual((job_dir / "state.json").read_bytes(), before_state)
-        self.assertEqual(audio.read_bytes(), before_audio)
+        self.assertEqual(audio.read_bytes(), b"updated-audio")
 
     def test_cover_upload_rejects_non_done_job_before_decoding(self):
         job_id, _job_dir, _audio, _state = self._done_job(status="narrating")
@@ -172,7 +178,7 @@ class LibraryCoverRouteTests(unittest.TestCase):
         with mock.patch.object(server, "_validated_cover_png") as decode:
             with self.assertRaises(urllib.error.HTTPError) as raised:
                 urllib.request.urlopen(request, timeout=5)
-        self.assertEqual(raised.exception.code, 400)
+        self.assertEqual(raised.exception.code, 409)
         decode.assert_not_called()
 
     def test_approved_mark_and_default_cover_assets_are_served(self):

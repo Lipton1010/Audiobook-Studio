@@ -104,6 +104,7 @@ def assemble(job_dir, passages, config, segment_path, cancelled=lambda: False):
             if after:
                 yield np.zeros(after, dtype=np.float32)
 
+    metadata_path = _metadata(job_dir, int(cursor / sr * 1000), config.get("metadata"), chapters)
     output = output_dir / f"{title}.{fmt}"
     temporary = output.with_name(f".{output.stem}.tmp{os.getpid()}{output.suffix}")
     try:
@@ -114,7 +115,7 @@ def assemble(job_dir, passages, config, segment_path, cancelled=lambda: False):
                     handle.write(audio)
         else:
             with (job_dir / "log.txt").open("a", encoding="utf-8") as log:
-                _encode(fmt, chunks(), sr, temporary, _metadata(job_dir, int(cursor / sr * 1000), config.get("metadata"), chapters), log, config.get("cover_image"))
+                _encode(fmt, chunks(), sr, temporary, metadata_path, log, config.get("cover_image"))
         if cancelled():
             raise SystemExit(2)
         temporary.replace(output)

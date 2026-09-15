@@ -5,10 +5,10 @@ import json
 
 try:
     from .vibevoice_plan import _split_oversize, normalize_text
-    from .vibevoice_quality import assess
+    from .vibevoice_quality import assess, numbered_heading_assessment
 except ImportError:  # Worker execution adds app/ directly to sys.path.
     from vibevoice_plan import _split_oversize, normalize_text
-    from vibevoice_quality import assess
+    from vibevoice_quality import assess, numbered_heading_assessment
 
 
 UNIT_TARGET_WORDS = 120
@@ -131,7 +131,8 @@ def parent_quality(passage, unit_reports, units=None):
     units = _validate_units(passage, repair_units(passage) if units is None else units)
     reports = _reports_by_unit(units, unit_reports)
     transcript = " ".join(str(reports[index].get("transcript", "")).strip() for index in range(len(units))).strip()
-    return assess(normalize_text(passage["text"]), transcript)
+    expected = normalize_text(passage["text"])
+    return numbered_heading_assessment(expected, transcript) if passage.get("heading") else assess(expected, transcript)
 
 
 def choose_repair_unit(units, reports, exclude=()):

@@ -291,7 +291,15 @@ def encode_stream(fmt, pcm_iter, sr, out_path, ffmeta_path, logf, cover_path=Non
 def load_plan(job_dir):
     blocks = json.loads((job_dir / "blocks.json").read_text(encoding="utf-8"))["blocks"]
     config = json.loads((job_dir / "config.json").read_text(encoding="utf-8"))
-    profile = PAUSE_PROFILES[config.get("path", "B")]
+    profile = dict(PAUSE_PROFILES[config.get("path", "B")])
+    settings = config.get("generation_settings")
+    if settings is not None:
+        try:
+            from .generation_settings import runtime_settings
+        except ImportError:
+            from generation_settings import runtime_settings
+        mapped = runtime_settings("chatterbox", config.get("path", "B"), settings)
+        profile.update({key: mapped[key] for key in profile})
     plan = build_plan(blocks, profile)
     return plan, config, profile
 
@@ -597,6 +605,7 @@ def run_assemble(job_dir, plan, config, profile):
     if chapters and chapters[0][0] > 1500:
         chapters.insert(0, (0, "Opening"))
     print(f"{len(chapters)} chapters, {total_ms/3600000:.2f} hours total")
+    ffmeta = write_chapters_file(job_dir, chapters, total_ms, config.get("metadata") or {})
 
     if fmt in ("m4b", "mp3"):
         out_path = out_dir / f"{safe_title}.{fmt}"
@@ -605,7 +614,6 @@ def run_assemble(job_dir, plan, config, profile):
         cover = config.get("cover_image")
         if cover and not Path(cover).exists():
             cover = None
-        ffmeta = write_chapters_file(job_dir, chapters, total_ms, metadata)
         with open(job_dir / "log.txt", "a", encoding="utf-8") as logf:
             encode_stream(fmt, audio_stream(), sr, out_path, ffmeta, logf, cover_path=cover)
         tags = ", ".join(k for k, v in metadata.items() if v) or "none"

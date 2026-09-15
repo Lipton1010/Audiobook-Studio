@@ -26,7 +26,7 @@
 ;
 #define MyAppName "Audiobook Studio"
 #define MyAppDirName "AudiobookStudio"
-#define MyAppVersion "1.0.6"
+#define MyAppVersion "1.0.7"
 #define MyAppPublisher "Audiobook Studio"
 
 [Setup]
@@ -62,6 +62,10 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 Source: "..\app\server.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\audiobook_exports.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\audiobook_files.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\audiobook_library.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\generation_settings.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\narrate_worker.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\vibevoice_plan.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\vibevoice_units.py"; DestDir: "{app}\app"; Flags: ignoreversion

@@ -181,6 +181,65 @@ class VisualReviewProjectionTests(unittest.TestCase):
         self.assertEqual(source[0]["text"], "ITERATION ONE")
         self.assertEqual(source[-1]["text"], '\u201cWe continue,\u201d Mina said.')
 
+    def test_scope_is_reversible_and_rejects_cross_boundary_source(self):
+        state = {"page_from": 4, "page_to": 6}
+        source = [
+            {"type": "body", "text": "First.", "source_page": 4},
+            {"type": "body", "text": "Second.", "source_page": 5},
+            {"type": "body", "text": "Third.", "source_page": 6},
+        ]
+        visual_review._write(self.job_dir / "source_blocks.json", {"blocks": source,
+                                                                       "source_available": True})
+        before = (self.job_dir / "source_blocks.json").read_bytes()
+        scope = visual_review.set_scope(self.job_dir, state, 5)
+        blocks, unresolved, _items, _decisions = visual_review.project(self.job_dir, state)
+        self.assertEqual(scope["end_page"], 5)
+        self.assertFalse(unresolved)
+        self.assertEqual([block["text"] for block in blocks], ["First.", "Second."])
+        self.assertEqual((self.job_dir / "source_blocks.json").read_bytes(), before)
+        changed = json.loads(json.dumps(source))
+        changed[0]["text"] = "Changed first."
+        visual_review._write(self.job_dir / "source_blocks.json", {"blocks": changed,
+                                                                       "source_available": True})
+        with self.assertRaisesRegex(ValueError, "no longer matches"):
+            visual_review.project(self.job_dir, state)
+        self.assertTrue((self.job_dir / "narration_scope.json").exists())
+        visual_review._write(self.job_dir / "source_blocks.json", {"blocks": source,
+                                                                       "source_available": True})
+        visual_review.set_scope(self.job_dir, state, None)
+        self.assertEqual([block["text"] for block in visual_review.project(self.job_dir, state)[0]],
+                         ["First.", "Second.", "Third."])
+
+        source[1]["source_page_end"] = 6
+        visual_review._write(self.job_dir / "source_blocks.json", {"blocks": source,
+                                                                       "source_available": True})
+        with self.assertRaisesRegex(ValueError, "cross-page"):
+            visual_review.set_scope(self.job_dir, state, 5)
+        self.assertFalse((self.job_dir / "narration_scope.json").exists())
+        with self.assertRaisesRegex(ValueError, "invalid end page"):
+            visual_review.set_scope(self.job_dir, state, True)
+
+    def test_scoped_decision_uses_the_same_projection_and_hides_tail_visuals(self):
+        state = {"page_from": 1, "page_to": 3}
+        source = [
+            {"type": "visual", "text": "First chart.", "visual_kind": "chart", "source_page": 1},
+            {"type": "body", "text": "Middle prose.", "source_page": 2},
+            {"type": "visual", "text": "Last chart.", "visual_kind": "chart", "source_page": 3},
+        ]
+        visual_review._write(self.job_dir / "source_blocks.json", {"blocks": source,
+                                                                       "source_available": True})
+        visual_review.set_scope(self.job_dir, state, 2)
+        payload = visual_review.review_payload(self.job_dir, state)
+        self.assertEqual(len(payload["items"]), 1)
+        item = payload["items"][0]
+        blocks, unresolved, _items, _decisions = visual_review.save_decision(
+            self.job_dir, item["id"], item["fingerprint"], "skip", "", state)
+        self.assertFalse(unresolved)
+        self.assertEqual([block["text"] for block in blocks], ["Middle prose."])
+        tail = visual_review.prepare(self.job_dir, state)[1][1]
+        with self.assertRaisesRegex(ValueError, "outside the selected"):
+            visual_review.save_decision(self.job_dir, tail["id"], tail["fingerprint"], "skip", "", state)
+
 
 class VisualReviewCacheAndGateTests(unittest.TestCase):
     def setUp(self):
@@ -242,6 +301,20 @@ class VisualReviewCacheAndGateTests(unittest.TestCase):
             with self.assertRaises(server._ReviewRequired):
                 server.run_narration(dict(self.state))
         metadata.assert_not_called()
+
+    def test_scoped_vibevoice_without_visuals_still_requires_preview(self):
+        state = dict(self.state, backend="vibevoice", page_from=1, page_to=2)
+        source = [
+            {"type": "body", "text": "Opening prose.", "source_page": 1},
+            {"type": "body", "text": "Closing prose.", "source_page": 2},
+        ]
+        visual_review._write(self.job_dir / "source_blocks.json", {"blocks": source,
+                                                                       "source_available": True})
+        visual_review.set_scope(self.job_dir, state, 1)
+        with mock.patch.object(server, "_run_vibevoice_narration") as narrate:
+            with self.assertRaises(server._ReviewRequired):
+                server.run_narration(state)
+        narrate.assert_not_called()
 
     def test_all_skipped_projection_blocks_direct_narration_before_worker_setup(self):
         visual_review._write(self.job_dir / "source_blocks.json", {
@@ -423,6 +496,57 @@ class VisualReviewHttpLifecycleTests(unittest.TestCase):
         self.assertNotIn("error", persisted)
         self.assertNotIn(self.job_id, server._cancel_flags)
 
+    def test_vibevoice_scope_persists_requires_a_new_preview_and_rejects_busy_or_generic_jobs(self):
+        state = server.load_state(self.job_id)
+        state.update({"backend": "vibevoice", "page_from": 1, "page_to": 3})
+        server.save_state(state)
+        source = [
+            {"type": "body", "text": "First.", "source_page": 1},
+            {"type": "body", "text": "Second.", "source_page": 2},
+            {"type": "body", "text": "Third.", "source_page": 3},
+        ]
+        visual_review._write(self.job_dir / "source_blocks.json", {"blocks": source,
+                                                                       "source_available": True})
+        visual_review._write(self.job_dir / "blocks.json", {"blocks": source})
+        source_before = (self.job_dir / "source_blocks.json").read_bytes()
+
+        changed = self.request("POST", "/scope", {"end_page": 2})
+        self.assertEqual(changed["narration_scope"]["end_page"], 2)
+        self.assertEqual((self.job_dir / "source_blocks.json").read_bytes(), source_before)
+        self.assertTrue((self.job_dir / "narration_scope.json").exists())
+        listed = next(job for job in server.list_jobs() if job["id"] == self.job_id)
+        self.assertEqual(listed["narration_range"], {"from": 1, "to": 2, "original_to": 3})
+        self.assertEqual(server.job_detail(self.job_id)["narration_range"], listed["narration_range"])
+        stale_source = json.loads(source_before)
+        stale_source["blocks"][0]["text"] = "Changed."
+        visual_review._write(self.job_dir / "source_blocks.json", stale_source)
+        self.assertNotIn("narration_range", next(job for job in server.list_jobs() if job["id"] == self.job_id))
+        visual_review._write(self.job_dir / "source_blocks.json", json.loads(source_before))
+        with self.assertRaises(urllib.error.HTTPError) as blocked:
+            self.request("POST", "/start", {})
+        self.assertEqual(blocked.exception.code, 409)
+
+        preview = self.request("GET", "/preview")
+        self.assertEqual(preview["text"], "First.\n\nSecond.")
+        with mock.patch.object(server, "enqueue") as enqueue:
+            self.request("POST", "/start", {})
+        enqueue.assert_called_once_with(self.job_id)
+
+        state = server.load_state(self.job_id)
+        state["status"] = "queued"
+        server.save_state(state)
+        scope_before = (self.job_dir / "narration_scope.json").read_bytes()
+        with self.assertRaises(urllib.error.HTTPError) as busy:
+            self.request("POST", "/scope", {"end_page": 1})
+        self.assertEqual(busy.exception.code, 409)
+        self.assertEqual((self.job_dir / "narration_scope.json").read_bytes(), scope_before)
+
+        state.update({"status": "review_required", "backend": "chatterbox"})
+        server.save_state(state)
+        with self.assertRaises(urllib.error.HTTPError) as generic:
+            self.request("POST", "/scope", {"end_page": 1})
+        self.assertEqual(generic.exception.code, 409)
+
     def test_queued_job_rejects_edit_without_changing_decision_or_projection(self):
         item = self.request("GET", "")["items"][0]
         state = server.load_state(self.job_id)
@@ -590,6 +714,127 @@ class NarrationPlanIntegrationTests(unittest.TestCase):
         spoken = [chunk["text"] for chunk in plan]
         self.assertEqual(spoken, ["Opening prose.", "The value increases by three.",
                                   "\u201cClosing words.\u201d"])
+
+
+class QueueRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.jobs = Path(self.temp.name) / "jobs"
+        self.jobs.mkdir()
+        server._queue.clear()
+        server._cancel_flags.clear()
+
+    def tearDown(self):
+        server._queue.clear()
+        server._cancel_flags.clear()
+        self.temp.cleanup()
+
+    def state(self, job_id, **extra):
+        job = self.jobs / job_id
+        job.mkdir()
+        st = {"id": job_id, "status": "queued", "created_at": 10,
+              "path": "A", "pdf_path": "synthetic.pdf"}
+        st.update(extra)
+        (job / "state.json").write_text(json.dumps(st), encoding="utf-8")
+        return st
+
+    def test_restart_rebuilds_queued_fifo_and_only_interrupts_active_work(self):
+        first = self.state("b", queued_at=20)
+        second = self.state("a", queued_at=10)
+        active = self.state("c", status="narrating")
+        with mock.patch.object(server, "JOBS_DIR", self.jobs):
+            server.mark_interrupted_jobs()
+            self.assertEqual(server._queue, [second["id"], first["id"]])
+            self.assertEqual(server.load_state(active["id"])["status"], "interrupted")
+
+    def test_restart_uses_legacy_created_time_and_enqueue_deduplicates(self):
+        old = self.state("a", created_at=3)
+        new = self.state("b", created_at={"bad": 1}, queued_at=True)
+        fallback = self.state("c", created_at="bad", queued_at=float("nan"))
+        with mock.patch.object(server, "JOBS_DIR", self.jobs):
+            server.mark_interrupted_jobs()
+        self.assertEqual(server._queue, [new["id"], fallback["id"], old["id"]])
+        server.enqueue(old["id"])
+        self.assertEqual(server._queue, [new["id"], fallback["id"], old["id"]])
+
+    def test_persistence_failure_never_enqueues(self):
+        st = self.state("a")
+        with mock.patch.object(server, "save_state", return_value=False):
+            with self.assertRaises(OSError): server.queue_persisted(st)
+        self.assertEqual(server._queue, [])
+
+    def test_requeue_moves_approved_job_to_tail(self):
+        first, approved = self.state("a"), self.state("b")
+        server.enqueue(first["id"])
+        with mock.patch.object(server, "save_state", return_value=True):
+            server.queue_persisted(approved)
+        self.assertEqual(server._queue, [first["id"], approved["id"]])
+
+    def test_cancelled_job_popped_from_queue_never_starts_extraction(self):
+        st = self.state("a")
+        server._queue[:] = [st["id"]]
+        server._cancel_flags[st["id"]] = True
+
+        class Drained(Exception): pass
+        class Queue:
+            def __enter__(self): return self
+            def __exit__(self, *_): return False
+            def wait(self): raise Drained()
+
+        with mock.patch.object(server, "JOBS_DIR", self.jobs), \
+             mock.patch.object(server, "_queue_cv", Queue()), \
+             mock.patch.object(server, "run_extraction") as extract:
+            with self.assertRaises(Drained): server.worker_loop()
+            self.assertEqual(server.load_state(st["id"])["status"], "canceled")
+        extract.assert_not_called()
+
+    def test_cancel_after_claim_stops_before_review_or_narration(self):
+        st = self.state("a")
+        server._queue[:] = [st["id"]]
+
+        class Drained(Exception): pass
+        class Queue:
+            def __enter__(self): return self
+            def __exit__(self, *_): return False
+            def wait(self): raise Drained()
+
+        def extraction(current):
+            server.request_cancel(current["id"])
+            return current
+
+        with mock.patch.object(server, "JOBS_DIR", self.jobs), \
+             mock.patch.object(server, "_queue_cv", Queue()), \
+             mock.patch.object(server, "run_extraction", side_effect=extraction), \
+             mock.patch.object(server, "_hold_for_visual_review") as hold, \
+             mock.patch.object(server, "run_narration") as narrate:
+            with self.assertRaises(Drained): server.worker_loop()
+            self.assertEqual(server.load_state(st["id"])["status"], "canceled")
+        hold.assert_not_called()
+        narrate.assert_not_called()
+
+    def test_failed_job_does_not_block_the_next_queued_job(self):
+        failed, next_job = self.state("a"), self.state("b")
+        server._queue[:] = [failed["id"], next_job["id"]]
+
+        class Drained(Exception): pass
+        class Queue:
+            def __enter__(self): return self
+            def __exit__(self, *_): return False
+            def wait(self): raise Drained()
+
+        seen = []
+        def extraction(current):
+            seen.append(current["id"])
+            if current["id"] == failed["id"]: raise RuntimeError("synthetic failure")
+            return current
+
+        with mock.patch.object(server, "JOBS_DIR", self.jobs), \
+             mock.patch.object(server, "_queue_cv", Queue()), \
+             mock.patch.object(server, "run_extraction", side_effect=extraction), \
+             mock.patch.object(server, "_hold_for_visual_review", return_value=True):
+            with self.assertRaises(Drained): server.worker_loop()
+            self.assertEqual(server.load_state(failed["id"])["status"], "failed")
+        self.assertEqual(seen, [failed["id"], next_job["id"]])
 
 
 if __name__ == "__main__":
