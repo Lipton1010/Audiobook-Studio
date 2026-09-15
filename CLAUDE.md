@@ -1,10 +1,10 @@
-## 1.0.7 source candidate, 2026-09-15
+## 1.0.7 beta candidate, 2026-09-15
 
-1.0.7 is source-only. No 1.0.7 installer, patch, tag, or public release has been
-built or published; the 1.0.6 installer artifacts remain current. This supersedes
-older notes that leave the real-book completion pending. Main/GitHub reconciliation
-is now authorized because the book and 1.0.6 handoff prerequisites are complete.
-Preserve the historical records below.
+The 1.0.7 full installer and patch were built from
+`21f4b3bf1f00a3496f4ad46447820bcd4b6f9e4c`. Source verification passed 291
+tests with 47 runtime-dependent skips, and the isolated runtime plus assembly
+checks passed 100 tests. The source remains public; no public GitHub release,
+tag, or asset has been published. Preserve the historical records below.
 
 The source now auto-imports selected voice files, shows each new job at the top, and persists a
 durable FIFO queue. Finished-book actions use a context menu. Artwork changes update
@@ -39,12 +39,29 @@ context actions, artwork, export, and advanced reset were exercised. Sol's sourc
 and privacy audits passed; Graft reparsed 80 Python files and its wiring check passed.
 See RELEASE_1_0_7.md for the scope and remaining hardware/installer limits.
 
-Main checkout and GitHub reconciliation are complete. Implementation commit 50afb28
-passed the same 291-test suite from the reconciled main checkout. Every prior dirty
-source/doc file was preserved with hash verification in an ignored local backup;
-unrelated branding and handoff files remain untracked and unchanged. The desktop
-shortcut now launches the main checkout's launcher, and the running app reports
-1.0.7. Existing runtime paths and job data are retained. No new installer was built.
+A fresh 16 GiB Windows Sandbox installation passed the direct installed-worker
+smoke for the standard `CHAPTER ONE` fixture: GPU narration, CPU quality checks,
+parent and unit receipts, native batches of two, cache-only reuse, M4B/MP3/WAV
+decodes, and M4B chapter and cover metadata. The patch upgrade's dependency
+failure, recovery, and repeat run passed; uninstall retained 76 user files.
+The Sandbox lacked `nvidia-smi`, so this is direct worker evidence rather than
+physical GPU telemetry. Legacy Chatterbox files were preserved, but Chatterbox
+inference was not tested. An earlier 4 GiB Torch native load failure and two
+rejected numbered-heading fixtures remain limitations. Do not claim
+numbered-colon heading audio passed.
+
+The authorized beta handoff is complete: the current full installer and patch
+were verified in the existing authorized folder, the prior 1.0.6 pair was
+archived, and both beta guides were read back. Sharing remains unchanged. Do
+not create a monitor. No public GitHub release has been published.
+
+The prior source handoff at `ebc7862` was reconciled before this beta work. The
+current local installer-message and documentation commits have not been pushed:
+the requested work was the installer handoff, not GitHub publication. Every
+prior dirty source/doc file was preserved with hash verification in an ignored
+local backup; unrelated branding and handoff files remain untracked and
+unchanged. The desktop shortcut now launches the main checkout's launcher, and
+the running app reports 1.0.7. Existing runtime paths and job data are retained.
 The requested personal iCloud upload remains pending sign-in and destination-access
 verification; the finished audiobook has not been uploaded there.
 # Local PDF to Audiobook Pipeline — Standing Rules
