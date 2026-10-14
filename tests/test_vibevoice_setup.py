@@ -9,6 +9,21 @@ from install import bootstrap_vibevoice as bootstrap
 
 
 class VibeVoiceSetupTests(unittest.TestCase):
+    def test_compiled_registration_preserves_legacy_runtime_and_tokenizer_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'config.json'
+            original = {'vibevoice_python': 'legacy.exe', 'vibevoice_model_dir': 'legacy-model',
+                        'vibevoice_cache_dir': 'legacy-cache'}
+            path.write_text(json.dumps(original))
+            with patch.object(sys, 'argv', ['bootstrap_vibevoice.py', '--configure-existing',
+                    '--backend', 'compiled', '--python', 'compiled.exe', '--model-dir', 'hf-model',
+                    '--quality-python', 'quality.exe', '--config', str(path)]), \
+                 patch.object(bootstrap, 'verify'):
+                bootstrap.main()
+            saved = json.loads(path.read_text())
+            self.assertEqual({key: saved[key] for key in original}, original)
+            self.assertEqual(saved['vibevoice_compiled_python'], str(Path('compiled.exe').resolve()))
+
     def test_register_preserves_unrelated_configuration(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'config.json'

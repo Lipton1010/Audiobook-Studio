@@ -68,17 +68,25 @@ Source: "..\app\audiobook_library.py"; DestDir: "{app}\app"; Flags: ignoreversio
 Source: "..\app\generation_settings.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\narrate_worker.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\vibevoice_plan.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\vibevoice_hf.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\vibevoice_delivery.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\vibevoice_units.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\vibevoice_worker.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\vibevoice_phases.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\vibevoice_quality.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\narration_review.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\transcript_review.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\vibevoice_assembly.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\vibevoice_audio.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\install\bootstrap_vibevoice.py"; DestDir: "{app}\install"; Flags: ignoreversion
+Source: "..\install\bootstrap_parakeet.py"; DestDir: "{app}\install"; Flags: ignoreversion
+Source: "..\install\requirements-parakeet.txt"; DestDir: "{app}\install"; Flags: ignoreversion
 Source: "..\install\check_running_app.ps1"; DestDir: "{app}\install"; Flags: ignoreversion
 ; PrepareToInstall runs before normal [Files] copying, so it extracts this
 ; duplicate temporary payload for the running-app guard on pre-1.0.5 targets.
 Source: "..\install\check_running_app.ps1"; Flags: dontcopy
 Source: "..\install\requirements-vibevoice.txt"; DestDir: "{app}\install"; Flags: ignoreversion
+Source: "..\install\requirements-vibevoice-compiled.txt"; DestDir: "{app}\install"; Flags: ignoreversion
 Source: "..\install\requirements-narration-quality.txt"; DestDir: "{app}\install"; Flags: ignoreversion
 Source: "..\app\narration_eta.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\batched_narrate.py"; DestDir: "{app}\app"; Flags: ignoreversion

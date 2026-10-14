@@ -4,16 +4,28 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP_DIR))
 
-from narration_eta import MIN_BUCKET_SAMPLES, estimate_remaining_seconds, write_progress
+from narration_eta import MIN_BUCKET_SAMPLES, estimate_remaining_seconds, estimate_word_remaining_seconds, write_progress
 
 sys.modules.setdefault("fitz", types.ModuleType("fitz"))
 import server
+
+
+class WordEtaTests(unittest.TestCase):
+    def test_waits_for_representative_prose_not_opening_headings(self):
+        self.assertIsNone(estimate_word_remaining_seconds(100, 50, 10000, 20))
+        self.assertIsNone(estimate_word_remaining_seconds(100, 800, 10000, 2))
+
+    def test_uses_only_this_runs_verified_work_and_remaining_word_weight(self):
+        self.assertEqual(estimate_word_remaining_seconds(160, 600, 1800, 3), 480)
+        self.assertEqual(estimate_word_remaining_seconds(320, 600, 1800, 3), 960)
+        self.assertEqual(estimate_word_remaining_seconds(160, 600, 0, 3), 0)
 
 
 class BucketEtaTests(unittest.TestCase):
@@ -45,6 +57,26 @@ class BucketEtaTests(unittest.TestCase):
             self.assertTrue(write_progress(path, {"eta_sec": 12.3}))
             self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["eta_sec"], 12.3)
 
+    def test_locked_progress_file_preserves_last_update_and_recovers(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'progress.json'
+            path.write_text('{"done": 1}')
+            with mock.patch('narration_eta.os.replace', side_effect=PermissionError('Windows sharing violation')), \
+                 mock.patch('narration_eta.time.sleep'):
+                self.assertFalse(write_progress(path, {'done': 2}))
+            self.assertEqual(json.loads(path.read_text()), {'done': 1})
+            self.assertTrue(write_progress(path, {'done': 2}))
+
+    def test_vibevoice_progress_lock_does_not_abort_narration(self):
+        try:
+            import vibevoice_worker as worker
+        except ModuleNotFoundError:
+            self.skipTest('requires isolated narration runtime')
+        with tempfile.TemporaryDirectory() as temp, \
+             mock.patch('narration_eta.os.replace', side_effect=PermissionError('Windows sharing violation')), \
+             mock.patch('narration_eta.time.sleep'):
+            worker._progress(Path(temp), 2, 4, 0, 'generating')
+
 
 class ServerProgressTests(unittest.TestCase):
     def setUp(self):
@@ -66,12 +98,51 @@ class ServerProgressTests(unittest.TestCase):
         (self.job_dir / "narration_progress.json").write_text(
             json.dumps({"eta_sec": 456.7}), encoding="utf-8"
         )
-        with unittest.mock.patch("server.time.time", return_value=101.0):
+        with mock.patch("server.time.time", return_value=101.0):
             progress = server._narration_progress(self.job_dir, self.state)
         self.assertEqual(progress["eta_sec"], 456.7)
 
+    def test_vibevoice_word_progress_and_eta_include_cpu_phase(self):
+        self.state["backend"] = "vibevoice"
+        path = self.job_dir / "vibevoice_progress.json"
+        path.write_text(json.dumps({"done": 8, "total": 113, "status": "quality_check",
+                                    "passage_index": 8, "verified_words": 600,
+                                    "total_words": 6000, "eta_sec": 900}), encoding="utf-8")
+        os.utime(path, (100, 100))
+        with mock.patch("server.time.time", return_value=101):
+            progress = server._narration_progress(self.job_dir, self.state)
+        self.assertEqual(progress["progress_fraction"], 0.1)
+        self.assertEqual(progress["eta_sec"], 900)
+        self.assertTrue(progress["eta_rough"])
+        self.assertIn("CPU", progress["message"])
+        self.assertIn("passage 9 of 113", progress["message"])
+        with mock.patch("server.time.time", return_value=221):
+            stale = server._narration_progress(self.job_dir, self.state)
+        self.assertIsNone(stale["eta_sec"])
+        self.assertIn("CPU", stale["message"])
+
+    def test_vibevoice_cache_loading_has_no_invented_eta(self):
+        self.state["backend"] = "vibevoice"
+        (self.job_dir / "vibevoice_progress.json").write_text(
+            json.dumps({"done": 8, "total": 113, "status": "checking_cache"}), encoding="utf-8")
+        progress = server._narration_progress(self.job_dir, self.state)
+        self.assertIsNone(progress["eta_sec"])
+        self.assertAlmostEqual(progress["progress_fraction"], 8 / 113)
+
+    def test_generated_progress_includes_review_without_claiming_verification(self):
+        self.state["backend"] = "vibevoice"
+        (self.job_dir / "vibevoice_progress.json").write_text(json.dumps({
+            "done": 5, "total": 10, "status": "quality_check", "review_passages": 2,
+            "verified_words": 500, "generated_words": 700, "total_words": 1000,
+        }), encoding="utf-8")
+        progress = server._narration_progress(self.job_dir, self.state)
+        self.assertEqual(progress["progress_fraction"], .7)
+        self.assertEqual(progress["verified_fraction"], .5)
+        self.assertEqual(progress["done"], 5)
+        self.assertTrue(progress["generated_progress"])
+
     def test_missing_batched_worker_eta_does_not_invent_chunk_rate(self):
-        with unittest.mock.patch("server.time.time", return_value=101.0):
+        with mock.patch("server.time.time", return_value=101.0):
             progress = server._narration_progress(self.job_dir, self.state)
         self.assertIsNone(progress["eta_sec"])
 
@@ -79,7 +150,7 @@ class ServerProgressTests(unittest.TestCase):
         progress_file = self.job_dir / "narration_progress.json"
         progress_file.write_text(json.dumps({"eta_sec": 7530}), encoding="utf-8")
         os.utime(progress_file, (100, 100))
-        with unittest.mock.patch("server.time.time", return_value=221):
+        with mock.patch("server.time.time", return_value=221):
             progress = server._narration_progress(self.job_dir, self.state)
         self.assertIsNone(progress["eta_sec"])
         self.assertIn("taking longer", progress["message"])

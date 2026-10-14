@@ -44,6 +44,9 @@
 </style>
 <style>
   #visual-review-dialog { width:min(1120px,calc(100% - 24px)); }
+  #visual-review-dialog[open] { display:flex; flex-direction:column; overflow:hidden; }
+  #review-body { min-height:0; overflow:auto; }
+  #review-footer { flex-shrink:0; border-top:1px solid var(--line); margin-top:16px; }
   .review-toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
   .review-toolbar select { flex:1; min-width:180px; }
   .review-columns { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:28px; margin-top:20px; }
@@ -57,7 +60,7 @@
   #review-page-image[hidden] { display:none; }
   #review-full-text { max-height:55vh; }
   #review-status { margin:14px 0; }
-  #visual-review-dialog .dlg-actions { flex-wrap:wrap; }
+  #visual-review-dialog .dlg-actions { flex-wrap:wrap; margin-top:12px; }
   @media(max-width:760px) { .review-columns { grid-template-columns:1fr; gap:16px; } #visual-review-dialog { padding:18px; } }
 </style>
 </head>
@@ -83,7 +86,7 @@
     <main>
       <div id="update-banner" style="display:none" role="status"></div>
       <section class="screen active" id="audiobooks-screen" aria-labelledby="jobs-heading">
-        <div class="screen-heading"><div><h1 id="jobs-heading">Audiobooks</h1><p>Follow progress, return to a paused narration, or listen to a finished book.</p></div><button class="primary" type="button" onclick="showScreen('library'); document.getElementById('pdf-file').focus()">New audiobook</button></div>
+        <div class="screen-heading"><div><h1 id="jobs-heading">Audiobooks</h1><p>Queue books to run one after another. Books needing text review will wait for you.</p></div><button class="primary" type="button" onclick="showScreen('library'); document.getElementById('pdf-file').focus()">New audiobook</button></div>
         <div id="jobs-err" class="err" role="status"></div>
         <div id="jobs"><div class="empty" data-jobs-loading>Loading audiobooks...</div></div>
       </section>
@@ -160,9 +163,9 @@
 </dialog>
 
 <dialog id="visual-review-dialog" aria-labelledby="review-title" aria-describedby="review-intro">
+  <div id="review-body">
   <h3 id="review-title">Review visual passages</h3>
   <p class="help" id="review-intro">Choose what each passage contributes to the story. Keep important counts, changes and warnings at their original place in the narrative.</p>
-  <div id="review-status" role="status"></div>
   <div class="err" id="review-error" role="alert"></div>
   <div id="review-content" hidden>
     <section id="review-scope" hidden aria-labelledby="review-scope-title">
@@ -206,10 +209,25 @@
         <p class="help" id="review-saved" role="status"></p>
       </section>
     </div>
-    <details id="review-full"><summary>Inspect final narration text</summary><p class="help">In narrative order. Unresolved passages must be reviewed before generation.</p><pre class="review-text" id="review-full-text"></pre></details>
+    <details id="review-full"><summary>Preview narration text (optional)</summary><p class="help">In narrative order, using your saved choices.</p><pre class="review-text" id="review-full-text"></pre></details>
     <p class="help">Changing spoken text requires new narration under Storybird’s cache rules. Original extraction and earlier finished audio are retained separately.</p>
   </div>
-  <div class="dlg-actions"><button type="button" id="review-close">Close</button><button type="button" class="primary" id="review-start" disabled>Start narration</button></div>
+  </div>
+  <div id="review-footer">
+    <div id="review-status" role="status"></div>
+    <div class="dlg-actions"><button type="button" id="review-close">Close</button><button type="button" id="review-preview" disabled>Preview text (optional)</button><button type="button" class="primary" id="review-start" disabled>Start narration</button></div>
+  </div>
+</dialog>
+
+<dialog id="audio-review-dialog" aria-labelledby="audio-review-title" style="width:min(900px,calc(100% - 32px))">
+  <h3 id="audio-review-title">Review audio</h3>
+  <p>Narration has finished. Review the collected clips before final assembly. Listen while reading the source, then accept the clip or regenerate it. Completed passages stay saved.</p>
+  <div id="audio-review-items"></div>
+  <p id="audio-review-error" class="err" role="alert"></p>
+  <div class="dlg-actions">
+    <button id="audio-review-close">Close</button>
+    <button id="audio-review-start" class="primary" disabled>Resume with these choices</button>
+  </div>
 </dialog>
 
 <dialog id="job-action-dialog" aria-labelledby="job-action-title" aria-describedby="job-action-copy">
@@ -849,6 +867,9 @@ async function refreshJobs() {
     details.forEach((j, index) => {
       const renderKey = JSON.stringify(j) + `|log=${openLogs.has(j.id)}|expanded=${expandedFinished.has(j.id)}`;
       let entry = jobNodes.get(j.id);
+      // Keep highlighted log/error text intact while progress polling continues.
+      const selection = window.getSelection();
+      if (entry && selection && !selection.isCollapsed && selection.containsNode(entry.node, true)) return;
       if (!entry || entry.key !== renderKey) {
         if (openJobMenuId === j.id) closeJobMenu();
         const replacement = renderJob(j);
@@ -951,6 +972,7 @@ function renderJob(j) {
   div.dataset.jobId = j.id;
   div._jobData = j;
   const running = ['queued','extracting','tagging','narrating'].includes(j.status);
+  const reviewReady = j.status === 'review_required' && j.visual_review_unresolved === 0;
   const badgeCls = running ? 'running' : (j.status === 'done' ? 'done' : j.status);
 
   let progressHtml = '', detail = '';
@@ -960,16 +982,31 @@ function renderJob(j) {
     detail = `Extracting pages: ${p.done} / ${p.total}`;
   } else if (j.status === 'narrating' && j.narrate_progress) {
     const p = j.narrate_progress;
-    progressHtml = bar(p.total ? p.done / p.total : 0);
-    detail = [p.total ? `Narrating: chunk ${p.done} / ${p.total}` : '', fmtEta(p.eta_sec), p.message].filter(Boolean).join(' · ');
+    const fraction = p.progress_fraction ?? (p.total ? p.done / p.total : 0);
+    progressHtml = bar(fraction);
+    const percent = Math.max(0, Math.min(100, Math.floor(fraction * 100)));
+    const eta = p.eta_rough
+      ? (p.eta_sec == null ? (p.message.includes('time estimate unavailable') ? 'Time estimate paused until the next update' : 'Time estimate available after enough verified prose')
+          : `Roughly ${fmtDuration(p.eta_sec * 0.75)} to ${fmtDuration(p.eta_sec * 1.5)} remaining, plus final export`)
+      : fmtEta(p.eta_sec);
+    const progressLabel = p.generated_progress
+      ? `${percent}% generated · ${p.done} / ${p.total} passages verified`
+      : `${percent}% ${p.eta_rough ? 'verified' : 'generated'} · ${p.done} / ${p.total} ${p.eta_rough ? 'passages' : 'chunks'}`;
+    detail = [p.total ? progressLabel : '', p.message,
+      p.message === 'assembling' ? 'Finishing the audio file; narration is complete' : eta].filter(Boolean).join(' · ');
   } else if (j.status === 'narrating') {
     detail = 'Narration starting (model loading)...';
   } else if (j.status === 'queued') {
-    detail = 'Queued. Visual passages will be reviewed before narration.';
+    detail = `${j.queue_position ? `Queue position ${j.queue_position}. ` : ''}Starts automatically when its turn arrives. Text review may pause this book.`;
   } else if (j.status === 'review_required') {
-    detail = 'Review visual passages and inspect the spoken text before starting narration.';
+    detail = reviewReady ? 'Your choices are saved. Ready to start narration.'
+      : 'Save a treatment for each flagged passage before starting narration.';
+  } else if (j.status === 'audio_review_required') {
+    detail = 'Narration has finished. Review the flagged clips before final assembly. Completed passages are saved.';
   } else if (j.status === 'failed') {
     detail = 'Error: ' + (j.error || 'see log');
+  } else if (j.status === 'canceled') {
+    detail = 'Paused. Completed work is saved; the unfinished section may restart when you resume.';
   } else if (j.status === 'done' && j.block_counts) {
     const wallTime = j.finished_at && j.created_at
       ? `Elapsed from creation to completion: ${fmtDuration(j.finished_at - j.created_at)} · ` : '';
@@ -981,7 +1018,7 @@ function renderJob(j) {
   const pages = narrationRange(j);
   div.innerHTML = `<div class="row1">
       <span class="title">${esc(j.title)}</span>
-      <span class="badge ${badgeCls}">${esc(j.status.replaceAll('_', ' '))}</span>
+      <span class="badge ${badgeCls}">${esc(reviewReady ? 'Ready to narrate' : j.status === 'canceled' ? 'Paused' : j.status.replaceAll('_', ' '))}</span>
     </div>
     <div class="detail job-meta">${j.path === 'B' ? 'Page images (OCR)' : 'PDF text'} · ${esc(pages)}${j.voice ? ' · ' + esc(j.voice) : ''}${j.format ? ' · ' + esc(j.format.toUpperCase()) : ''}</div>
     ${progressHtml}
@@ -994,10 +1031,14 @@ function renderJob(j) {
   actions = btn('More actions', '', () => openJobMenu(j, actions));
   actions.setAttribute('aria-label', `More actions for ${j.title}`);
   row.appendChild(actions);
-  if (!running && (j.block_counts || j.status === 'review_required')) {
-    row.appendChild(btn('Review narration text', j.status === 'review_required' ? 'primary' : '', () => openVisualReview(j.id, j.title)));
+  if (j.status === 'audio_review_required') {
+    row.appendChild(btn('Review audio', 'primary', () => openAudioReview(j.id)));
   }
-  if (running || j.status === 'review_required') row.appendChild(btn('Cancel', 'danger', async () => {
+  if (!running && (j.block_counts || j.status === 'review_required')) {
+    if (reviewReady) row.appendChild(btn('Start narration', 'primary', () => jobAction(j.id, 'visual-review/start')));
+    row.appendChild(btn(reviewReady ? 'Edit narration choices' : 'Review narration text', j.status === 'review_required' && !reviewReady ? 'primary' : '', () => openVisualReview(j.id, j.title)));
+  }
+  if (running || j.status === 'review_required') row.appendChild(btn(running ? 'Pause' : 'Cancel', '', async () => {
     await jobAction(j.id, 'cancel');
   }));
   if (['failed','canceled','interrupted'].includes(j.status)) {
@@ -1097,8 +1138,114 @@ function renderJob(j) {
   return div;
 }
 
+const audioReviewDialog = document.getElementById('audio-review-dialog');
+const audioReviewItems = document.getElementById('audio-review-items');
+const audioReviewError = document.getElementById('audio-review-error');
+const audioReviewStart = document.getElementById('audio-review-start');
+let audioReviewJob = null;
+let audioReviewSession = 0;
+async function audioReviewRequest(suffix = '', body) {
+  const response = await fetch(`/api/jobs/${audioReviewJob}/audio-review${suffix}`,
+    {signal:AbortSignal.timeout(15000), ...(body === undefined ? {} : {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})});
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Could not load audio review.');
+  return result;
+}
+async function openAudioReview(jobId) {
+  const session = ++audioReviewSession;
+  audioReviewJob = jobId;
+  audioReviewError.textContent = '';
+  audioReviewItems.textContent = 'Loading saved clips…';
+  audioReviewStart.disabled = true;
+  audioReviewDialog.showModal();
+  try {
+    const data = await audioReviewRequest();
+    if (!audioReviewDialog.open || audioReviewSession !== session) return;
+    document.getElementById('audio-review-title').textContent = `Review audio: ${data.passage_count} passage${data.passage_count === 1 ? '' : 's'}`;
+    audioReviewItems.replaceChildren();
+    audioReviewStart.disabled = data.unresolved_count > 0;
+    for (const item of data.items) {
+      const section = document.createElement('section');
+      section.style.cssText = 'border-top:1px solid var(--line);padding:18px 0';
+      section.innerHTML = `<h4>Passage ${item.passage} · Clip ${item.number}</h4>
+        <audio controls preload="none" style="width:100%" aria-label="Listen to passage ${item.passage}, clip ${item.number}" src="/api/jobs/${jobId}/audio-review/${item.index}/audio"></audio>
+        ${item.delivery_updated ? '<p class="muted">Revised audio with dialogue pauses and quieter parenthetical asides. Please check the delivery as well as the words.</p>' : ''}
+        ${item.transcript_review ? `<p class="muted">Local text review: ${esc(item.transcript_review.reason)}</p>` : ''}
+        <p><strong>Source text</strong></p><p style="white-space:pre-wrap">${esc(item.expected)}</p>
+        ${item.spoken_expected && item.spoken_expected !== item.expected ? `<p class="muted">Regenerated audio omits page references. The original source text is preserved above.</p>` : ''}
+        <details><summary>Checker transcript</summary><p>${esc(item.heard)}</p></details>
+        <p><strong>Differences to check</strong></p>
+        <ul>${item.differences.map(d => `<li>${!d.expected.length
+          ? `<strong>Possible added speech:</strong> “${esc(d.heard.join(' '))}” — not in the source.`
+          : !d.heard.length
+            ? `<strong>Possibly skipped words:</strong> “${esc(d.expected.join(' '))}” — not heard by the checker.`
+            : `Source: “${esc(d.expected.join(' '))}” → checker: “${esc(d.heard.join(' '))}”`}</li>`).join('')}</ul>`;
+      const player = section.querySelector('audio');
+      const playbackStatus = document.createElement('p');
+      playbackStatus.setAttribute('role', 'status');
+      const reloadAudio = btn('Reload audio', '', () => { player.load(); playbackStatus.textContent = 'Audio reloaded. Press Play to listen.'; });
+      reloadAudio.hidden = true;
+      player.addEventListener('play', () => {
+        audioReviewItems.querySelectorAll('audio').forEach(other => { if (other !== player) other.pause(); });
+        playbackStatus.textContent = '';
+      });
+      player.addEventListener('error', () => {
+        playbackStatus.textContent = 'Playback failed. Reload this audio to listen; regeneration is not needed for a playback error.';
+        reloadAudio.hidden = false;
+      });
+      player.addEventListener('loadedmetadata', () => { playbackStatus.textContent = ''; reloadAudio.hidden = true; });
+      player.after(playbackStatus, reloadAudio);
+      const confirmation = document.createElement('label');
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      confirmation.append(checkbox, ' I listened and this clip reads the source correctly.');
+      const status = document.createElement('p');
+      status.setAttribute('role', 'status');
+      const updateStatus = action => { status.textContent = action === 'accept' ? 'Saved: accept this audio.' : action === 'retry' ? 'Saved: regenerate this clip on resume.' : 'Choose an action for this clip.'; };
+      updateStatus(item.decision);
+      const controls = document.createElement('div');
+      controls.className = 'dlg-actions';
+      let saving = false;
+      const save = async action => {
+        if (saving) return;
+        saving = true;
+        accept.disabled = retry.disabled = listenAgain.disabled = true;
+        audioReviewStart.disabled = true;
+        audioReviewError.textContent = '';
+        status.textContent = 'Saving choice…';
+        try {
+          const result = await audioReviewRequest(`/${item.index}`, {fingerprint:item.fingerprint, action});
+          if (!audioReviewDialog.open || audioReviewSession !== session) return;
+          updateStatus(action);
+          audioReviewStart.disabled = result.unresolved_count > 0;
+        } catch (e) { status.textContent = `Choice not saved: ${e.message}`; audioReviewError.textContent = e.message; }
+        finally { saving = false; accept.disabled = !checkbox.checked; retry.disabled = listenAgain.disabled = false; }
+      };
+      const accept = btn('Accept this clip', '', () => save('accept'));
+      const retry = btn('Regenerate this clip', '', () => save('retry'));
+      const listenAgain = btn('Clear choice', '', () => save('listen'));
+      accept.disabled = true;
+      checkbox.onchange = () => { accept.disabled = saving || !checkbox.checked; };
+      controls.append(accept, retry, listenAgain);
+      section.append(confirmation, controls, status);
+      audioReviewItems.append(section);
+    }
+    if (!data.items.length) audioReviewItems.textContent = 'The updated checker found no remaining differences. You can resume.';
+  } catch (e) { audioReviewItems.textContent = ''; audioReviewError.textContent = e.message; }
+}
+audioReviewStart.onclick = async () => {
+  audioReviewStart.disabled = true;
+  try { await audioReviewRequest('/start', {}); audioReviewDialog.close(); await refreshJobs(); }
+  catch (e) { audioReviewError.textContent = e.message; audioReviewStart.disabled = false; }
+};
+document.getElementById('audio-review-close').onclick = () => audioReviewDialog.close();
+audioReviewDialog.addEventListener('close', () => {
+  audioReviewSession++;
+  audioReviewItems.querySelectorAll('audio').forEach(player => { player.pause(); player.removeAttribute('src'); player.load(); });
+});
+
 const reviewDialog = document.getElementById('visual-review-dialog');
-let reviewJob = null, reviewData = null, reviewIndex = 0, reviewDirty = false, reviewPreviewed = false, reviewSession = 0;
+let reviewJob = null, reviewData = null, reviewIndex = 0, reviewDirty = false, reviewSession = 0;
 const reviewEl = name => document.getElementById('review-' + name);
 
 async function reviewRequest(path, body) {
@@ -1116,12 +1263,12 @@ async function openVisualReview(jobId, title) {
   reviewData = null;
   reviewIndex = 0;
   reviewDirty = false;
-  reviewPreviewed = false;
   reviewEl('title').textContent = `Review narration: ${title}`;
   reviewEl('content').hidden = true;
   reviewEl('error').textContent = '';
   reviewEl('status').textContent = 'Loading extracted passages…';
   reviewEl('start').disabled = true;
+  reviewEl('preview').disabled = true;
   reviewEl('full').open = false;
   reviewEl('full-text').textContent = '';
   reviewDialog.showModal();
@@ -1132,7 +1279,7 @@ async function openVisualReview(jobId, title) {
     reviewEl('content').hidden = false;
     renderVisualReview();
     if (reviewData.items.length) reviewEl('select').focus();
-    reviewDialog.scrollTop = 0;
+    reviewEl('body').scrollTop = 0;
   } catch (e) {
     if (session !== reviewSession) return;
     reviewEl('status').textContent = ''; reviewEl('error').textContent = e.message;
@@ -1146,7 +1293,15 @@ function updateReviewControls() {
   reviewEl('next').disabled = reviewDirty || reviewIndex >= items.length - 1;
   reviewEl('select').disabled = reviewDirty || !items.length;
   reviewEl('save').disabled = !reviewData.editable || !items.length;
-  reviewEl('start').disabled = !reviewData.editable || reviewDirty || reviewData.unresolved_count > 0 || !reviewPreviewed;
+  reviewEl('start').disabled = !reviewData.editable || reviewDirty || reviewData.unresolved_count > 0;
+  reviewEl('preview').disabled = reviewDirty;
+  reviewEl('status').textContent = !reviewData.editable
+    ? 'Pause the job before editing or starting narration.'
+    : reviewDirty
+      ? 'Save your treatment before starting narration.'
+      : reviewData.unresolved_count > 0
+        ? `${reviewData.unresolved_count} of ${items.length} passages need a saved treatment.`
+        : 'All choices are saved. Ready to start narration.';
   reviewEl('end-page').disabled = !reviewData.editable;
   reviewEl('save-scope').disabled = !reviewData.editable;
   reviewEl('reset-scope').disabled = !reviewData.editable || !reviewData.narration_scope;
@@ -1154,10 +1309,6 @@ function updateReviewControls() {
 
 function renderVisualReview() {
   const items = reviewData.items;
-  reviewEl('status').textContent = items.length
-    ? `${reviewData.unresolved_count} of ${items.length} passages need a saved treatment.`
-    : 'No visual passages were flagged. You can inspect the narration text below.';
-  if (!reviewData.editable) reviewEl('status').textContent += ' Pause the job before editing.';
   reviewEl('select').replaceChildren(...items.map((item, index) => {
     const option = document.createElement('option');
     option.value = index;
@@ -1220,7 +1371,6 @@ function updateReviewSpeech() {
 
 function markReviewDirty() {
   reviewDirty = true;
-  reviewPreviewed = false;
   reviewEl('full').open = false;
   reviewEl('saved').textContent = 'Unsaved changes. Save this treatment before moving to another passage.';
   updateReviewSpeech();
@@ -1248,7 +1398,6 @@ reviewEl('save').onclick = async () => {
       spoken_text:reviewEl('treatment').value === 'skip' ? '' : reviewEl('editor').value
     });
     reviewData = await reviewRequest('visual-review');
-    reviewPreviewed = false;
     reviewEl('full').open = false;
     renderVisualReview();
     reviewEl('saved').textContent = 'Treatment saved. It will be here when you return.';
@@ -1261,7 +1410,6 @@ reviewEl('save-scope').onclick = async () => {
   try {
     await reviewRequest('visual-review/scope', {end_page:Number(reviewEl('end-page').value)});
     reviewData = await reviewRequest('visual-review');
-    reviewPreviewed = false;
     reviewEl('full').open = false;
     renderVisualReview();
     reviewEl('scope-status').focus();
@@ -1273,7 +1421,6 @@ reviewEl('reset-scope').onclick = async () => {
   try {
     await reviewRequest('visual-review/scope', {end_page:null});
     reviewData = await reviewRequest('visual-review');
-    reviewPreviewed = false;
     reviewEl('full').open = false;
     renderVisualReview();
     await refreshJobs();
@@ -1291,15 +1438,28 @@ reviewEl('page').addEventListener('toggle', () => {
   img.onload = () => { img.hidden = false; };
   img.src = item.preview_url;
 });
+reviewEl('preview').onclick = () => {
+  reviewEl('full').open = true;
+  reviewEl('full').scrollIntoView({block:'start'});
+  reviewEl('full').querySelector('summary').focus({preventScroll:true});
+};
 reviewEl('full').addEventListener('toggle', async () => {
   if (!reviewEl('full').open) return;
+  const session = reviewSession, data = reviewData;
+  reviewEl('error').textContent = '';
   reviewEl('full-text').textContent = 'Loading narration text…';
   try {
     const preview = await reviewRequest('visual-review/preview');
+    if (session !== reviewSession || data !== reviewData || !reviewDialog.open) return;
     reviewEl('full-text').textContent = preview.text || '(No spoken text.)';
-    reviewPreviewed = !reviewDirty && preview.unresolved_count === 0;
     updateReviewControls();
-  } catch (e) { reviewEl('full-text').textContent = e.message; }
+  } catch (e) {
+    if (session !== reviewSession || data !== reviewData || !reviewDialog.open) return;
+    reviewEl('full-text').textContent = e.message;
+    reviewEl('full').open = false;
+    reviewEl('error').textContent = e.message;
+    updateReviewControls();
+  }
 });
 reviewEl('start').onclick = async () => {
   reviewEl('start').disabled = true;

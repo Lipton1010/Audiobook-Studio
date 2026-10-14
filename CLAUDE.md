@@ -1,3 +1,716 @@
+## Evidence review after the broad audit, 2026-10-14
+
+The owner explicitly authorized interrupting Genesee to produce the audit's
+findings and recommendations. This supersedes the earlier pause-approval block.
+Evaluation only: no automatic Qwen approval, regeneration, job-configuration
+migration, or production restart was performed. Genesee remains stopped, with
+reviewer integration disabled. Its existing render failure preceded the authorized
+pause: pyloudnorm rejected an audio fragment shorter than its 400 ms block;
+the renderer's earlier minimum-length check permits fragments over 100 ms.
+Fix and verify that boundary before resuming; do not infer that dialogue splitting
+caused the short generation merely from this exception.
+
+Private evidence and runnable evaluation scripts are under
+`Output/Transcript_Review_2026_10_14/`; start with `REPORT.txt`.
+The frozen sample is 20 randomly accepted, 20 randomly flagged, and 20 targeted
+clips, seed 20261014, from 1,081 first-check records (580 not scheduled, 501
+scheduled). Targeted clips must never enter prevalence estimates. The blind
+listening page has separate content, pronunciation, and delivery labels, exact
+audio identities, browser saving and JSON export. Human labels are still pending;
+no audio-grounded false-accept/reject rates or end-to-end savings are established.
+
+GPU-only, sequential replay on the same 60 WAVs: Parakeet 18.80 s including load,
+Whisper 140.01 s. Fresh Parakeet transcripts exactly matched 59/60 saved reports;
+the remaining spelling variation had an independently hash-bound WAV. All 32
+chronologically associated archived takes reproduced the saved transcript exactly,
+which corroborates but does not replace missing historical audio hashes.
+
+Qwen shadow replay requested 52 reviews: 43 structured decisions and 9 unfinished
+responses; 8 clips did not trigger it. Total 37.83 s including load/unload; median
+successful review 0.627 s. A targeted replay confirmed `done_reason=length`, 192
+output tokens. The observation harness continued after failures; production would
+stop and retain audio at the first such failure. It cleared 2/20 randomly flagged
+clips but newly blocked 8/20 randomly accepted clips. These are decision changes,
+not demonstrated repairs or false positives. The strict private deterministic
+prototype also increased review burden and is not a replacement ready to deploy.
+
+The first 42 synthetic cases rejected all 24 planted errors and cleared 11/18
+harmless variations. A new 24-case control set then exposed an ACTUAL Qwen false
+equivalence for a paraphrase with changed words. It cleared 7/8 harmless controls
+and 1/16 deliberate fidelity errors; the old gate passed 13/16 errors. The first
+set overlaps prompt examples and is not independent validation. Do not enable
+Qwen as an approval authority on these results. Its raw replacement override
+remains unsafe even though insert/delete protections exist. LLM explanations are
+also fallible: one real-clip response described a curly apostrophe as an em dash.
+
+Three PDF pages were visually spot-checked against extraction and plan, separately
+from audio. The frozen job omits chapter number 15 on PDF page 221; page 87's opening
+continuation is preserved in the previous merged block/passage. This is limited
+source inspection, not whole-book extraction certification. Existing recordings
+use 2,645 delivery calls for 1,081 units (605 multi-call units); intact-context
+rendering remains a justified experiment, not a demonstrated speed/quality fix.
+
+Recommended order: obtain blind listening labels; replace the known five-word /
+numeric policy defects with narrowly tested rules; assess selective second-ASR
+triage on those labels; only then run a bounded intact-context VibeVoice comparison
+and matched Chatterbox baseline if needed. Keep Qwen observational. Count actual
+review time, failed responses, retries and rechecks when measuring total work.
+
+## GPU-only inference and local transcript reviewer, 2026-10-14
+
+The owner explicitly rejects CPU-only model inference because it is too slow on
+this RTX 4090 workstation. Use GPU inference and serialize competing model stages;
+do not introduce silent CPU fallback. This supersedes older CPU-checker and
+CPU-acoustic-model recommendations below. Ordinary application logic, file I/O,
+and synthetic unit tests are not model inference.
+
+The owner authorized a small local LLM to review narration transcript differences.
+Year pronunciation is part of fidelity: a year such as 1999 should be read
+"nineteen ninety-nine", not "one thousand nine hundred ninety-nine". A comma
+helps distinguish a quantity (1,999), but context is also necessary. Do not excuse
+wrong year pronunciation merely because its numerical value matches.
+
+Qwen3-4B-Instruct-2507 Q4_K_M has been downloaded through the existing Ollama
+installation (2,497,293,803 bytes, manifest digest
+`0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0`). Source integration
+is being validated and remains disabled. It runs after the Parakeet GPU process
+exits, before retry scheduling, checks full GPU residency, and unloads afterward.
+Original ASR reports and transcripts are retained; stored decisions bind exact
+source/transcript hashes, model digest and review policy. Uncertain cases retain
+audio for listening, and no human listening approvals are invented.
+
+The 159 affected synthetic regression tests passed across quality comparison,
+review, phase scheduling, unit/parent reuse, legacy repair, runtime audio, server
+configuration and progress. Python compilation, embedded JavaScript syntax,
+Graft reparse/check, and whitespace checks also passed. These are implementation
+checks, not evidence of the model's judgment accuracy. The one-shot 42-case GPU
+benchmark is prepared under `Output/Transcript_Review_2026_10_14/benchmark.py`;
+it refuses to run while an app job is actively extracting or narrating.
+Forced worker cancellation also releases the reviewer through the owning server
+after worker termination; a regression verifies that another phase does not
+trigger this cleanup. The review dialog exposes the model's reason as escaped text.
+
+An initial automatic approval rejection prevented pausing without explicit owner
+permission. The owner subsequently granted that permission; the completed GPU
+evaluation and narrower recommendation are recorded above. No job settings,
+audio, approvals, or application restart were changed for this integration.
+
+## Restart recovery and targeted Chatterbox repairs, 2026-10-14
+
+The owner authorized Chatterbox band-aids while retaining VibeVoice as the main
+narrator. The Voice now has six Chatterbox clips: 59/1, 59/3, 71/3, 77/3, 85/1,
+and 85/3, using its existing narrator reference. Four were saved retries; two
+neighboring failures were independently confirmed during checking. Each replacement
+has explicit Chatterbox generation provenance in its unit receipt. All other
+speech clips and listening approvals were preserved; 1,488 of the 1,508 baseline
+checkpoint files are byte-identical. The 20 changed files are six unit WAV/receipt
+pairs and four rebuilt parent WAV/receipt pairs. No listening approvals were added.
+
+Unprompted Whisper checked every final replacement. Parakeet cross-checked the
+initial four; its disagreement on 71/3 was retained, with Whisper as that clip's
+primary checker. DNSMOS and NISQA scored the generated takes. The last 85/1 take
+had a trailing addition after its final source word; trimming within the measured
+320 ms gap removed 0.48 seconds, and a fresh Whisper check matched the text exactly.
+All 113 parents passed assembly. The new 3:20:50 M4B is published in
+`audiobooks/The Voice (2)` and fully decoded without errors. The previous export
+remains in `audiobooks/The Voice`. Private scripts, backups, hashes and reports
+are under `Output/Chatterbox_Patches_2026_10_14`. This was a targeted repair, not
+an automatic fallback feature or a change of the book's main engine.
+
+The comparison gate now recognizes eight unambiguous pronoun contractions such
+as I am/I'm. Ambiguous forms, identifiers, repeated words and real omissions stay
+different. All 45 affected quality, review and unit tests passed with GPU access
+disabled. The running app imports this source change on its next normal restart;
+the repaired book was validated and assembled in a fresh process using the fix.
+
+Genesee Junction resumed through the app, preserving all 622 saved WAVs checked
+at restart. Its two GPU render workers are active. Additional Voice repairs,
+verification and assembly used CPU after Genesee resumed. Final API readback:
+Genesee narrating, The Voice done, neither reporting an error. No runtime install,
+commit, installer, release or upload was performed.
+
+## Homophones, added-speech labels, and live worker check, 2026-10-13
+
+The owner reports that source-empty differences usually correspond to bad audio,
+and specifically confirms many audible artifacts in The Voice passage 59 clip 3.
+Its existing fingerprint-bound retry decision was preserved. Private feedback
+and a read-only cached-review comparison are under
+`Output/Homophone_Review_2026_10_13`. The current five-item saved review had no
+differences affected by the new homophone rule; decisions remained byte-identical.
+
+The shared word checker now aligns a bounded list of common homophones (including
+be/bee) as identical sounds. It preserves original words, protects identifiers,
+and still counts extra occurrences and adjacent genuinely changed words. It does
+not use fuzzy phonetic matching or generalize to names or ambiguous read/red.
+The UI replaces `(nothing)` placeholders with explicit possible-added-speech and
+possibly-skipped-words labels. This is a checker/UI correction, not an audio repair.
+All 43 focused quality, review, and unit tests passed, with worker tests run in the
+isolated narration environment with GPU access disabled. Browser checks verified
+both labels and escaping. The running server's imported checker updates on its
+next restart; new checker subprocesses use the updated source. No restart occurred.
+
+The Devil at Genesee Junction is now job `f48b73b5-ba59-4604-9015-811f0d1d2608`,
+narrating with two render workers and native batch size four. The Voice is queued.
+A live RTX 4090 reading showed 13,965/24,564 MiB VRAM and 97% GPU utilization.
+Two workers remain the measured configuration (about 28% faster than one in the
+earlier controlled test); three/four workers have not been benchmarked. Worker
+settings, queued decisions, generated audio, and the active run were not changed.
+
+## Optional final-text preview, 2026-10-13
+
+The owner explicitly rejected an additional full-text review after saving the
+flagged passage choices. Saved treatments now suffice to start narration.
+The full-text preview remains optional and read-only. Its receipt is no longer
+required by the UI, start endpoint, direct narration, resume/worker gate, or new
+regeneration jobs. Old preview-required fields on existing jobs are ignored.
+The ready book card offers Start narration directly, with Edit narration choices
+as a secondary action, so saved choices do not require reopening review.
+Unresolved treatments, unsaved UI edits, and empty narration still prevent start;
+spoken-projection signatures still protect audio cache identity and stale output.
+
+All 46 visual-review tests and 8 finished-output tests passed. Browser checks
+confirmed that saved choices enable Start without any preview request, edits
+block it until saved, and unresolved choices remain blocked.
+
+The running server still had the old code. The Voice failed with a render-phase
+error and then resumed before restart; the idle check prevented any app closure.
+The Devil at Genesee Junction was queued at position 1 behind it using its eleven
+unchanged saved choices. As a one-time compatibility step the running server's
+projection was loaded programmatically, without asking the owner to inspect it.
+The new server behavior loads on the next ordinary app restart. No narration
+worker was interrupted, no audio-review approvals were added, and no release was
+built. Private evidence: `Output/Optional_Preview_2026_10_13`.
+
+## Discoverable visual-review completion, 2026-10-13 (preview gate superseded above)
+
+The Devil at Genesee Junction had all eleven currently flagged treatments saved
+and zero unresolved items, but no final-preview receipt. The remaining preview
+and Start controls were buried below long passage context. The visual-review
+dialog now scrolls its content separately from a persistent footer containing
+explicit preview/start actions and the next required step. Existing server-side
+preview and decision gates remain in place. Late preview responses from a closed
+session or superseded review are ignored; failed previews can be retried.
+
+All 37 visual-review integration tests passed. Browser checks with long synthetic
+context verified visible actions at desktop and a 501-pixel narrow viewport,
+preview-to-start, edit/save invalidation, unresolved blocking, failed-preview retry,
+and stale-response rejection. No real job was started or approved during testing.
+The Voice remained narrating. The already-open native window keeps its loaded UI;
+its existing bottom-of-dialog preview/start controls still work, and a fresh page
+load gets the improved layout without restarting the server. No release was built.
+
+## Selected twelve-clip regeneration, 2026-10-13
+
+The owner authorized regeneration of 49/2, 59/3, 67/1, 67/3, 71/2, 71/3,
+72/2, 77/3, 85/1, 85/3, 98/3, and 99/3. All twelve now have new audio hashes;
+all 380 protected peer audio/approval files remained unchanged. Selected originals
+and receipts are backed up under `Output/Regenerate12_2026_10_13/before`.
+No other clip was scheduled and no listening approvals were added.
+
+After up to three attempts, only 99/3 cleanly cleared the combined content and
+acoustic checks. Eleven remain in review. Independent unprompted Whisper confirmed
+substantive additions, omissions, or corrupted speech in most; 71/2 retains an
+acoustic outlier and disputed extra words. In particular, 67/3's two added words
+and 72/2's three omitted words can pass the five-word gate but are not evidence
+of faithful narration. All twelve were also scored with DNSMOS, NISQA, and
+NISQA-TTS across 141 windows. Better acoustics did not establish correct wording.
+
+The final render for 77/3 failed recoverably, and exhausting its limit stopped
+the coordinator before it resolved the later checked clips. The exact renderer
+error was not logged. Two earlier new takes were saved in rejected audio. The
+second was freshly rechecked using the normal Parakeet phase, then published as
+a listening candidate with its actual attempt number. Remaining checked clips
+were resolved without rendering again. A relative report path from this manual
+check was corrected to its verified absolute in-job path before normal cache-only
+resume restored `audio_review_required`. No application source fix was made for
+the exhausted-render recovery gap. The book is not assembled. See the private
+`REPORT.txt`, `results.json`, `recovery.json`, and preservation evidence in
+`Output/Regenerate12_2026_10_13`. No installer, release, commit, or upload occurred.
+
+## Local acoustic-quality models and review triage, 2026-10-13
+
+The owner requested installation, validation, and use of DNSMOS and NISQA on
+The Voice's current review clips. A dedicated CPU-only Python environment is at
+`runtime/acoustic-quality`; official source and weights are under
+`runtime/models/acoustic-quality`. The source receipt records upstream commit IDs,
+URLs, byte sizes, and SHA-256 hashes. No existing narration/ASR environment changed.
+DNSMOS weights total 1.38 MB, NISQA v2 1.05 MB, and NISQA-TTS 1.24 MB. The dedicated
+runtime occupies approximately 1.88 GB. NISQA weights are CC BY-NC-SA 4.0; this is
+an owner-authorized personal installation, not authorization to bundle a release.
+
+Private evidence and reusable inference scripts are in
+`Output/Acoustic_Quality_2026_10_13`. All 32 current review clips and 25 previously
+owner-approved clips were scored in 553 overlapping windows. Forty validation
+windows comprise eight unchanged samples and their noise, clipping, dropout, and
+click variants. All 32 degraded variants scored lower than their originals on each
+model's overall metric. NISQA's mean quality fell from 4.97 to 1.49/1.55/2.02/1.99;
+DNSMOS was less sensitive to non-noise damage. NISQA batched/single-file predictions
+agreed within 0.000001. CPU scoring took about 185 seconds for the real windows,
+with a 1.35 GB peak working set. Dependency checks passed. Clip 99/4 is 3.067 seconds;
+its whole recording was scored, with DNSMOS's upstream short-input repetition.
+
+NISQA found windows below every approved baseline window in 59/3, 98/3, 77/3,
+71/2, 85/3, and 67/1. These are acoustic leads, not a calibrated rejection gate.
+Several known content failures still score well acoustically: fluent unrelated
+speech is not necessarily noisy. Keep ASR content verification separate. No app
+quality gate, listening approval, original WAV, or regeneration state changed.
+
+The book is awaiting audio review, superseding the running-generation snapshot
+below. A fresh independent Whisper audit of its current 32 clips found strong
+content-error evidence in 49/2, 59/3, 67/3, 71/2, 71/3, 72/2, 77/3, 85/1, 98/3,
+and 99/3. The owner says name and word-ending differences are generally acceptable
+when heard; 18 clips were deprioritized on that basis without inventing approvals.
+Four uncertain checks (43/3, 67/1, 85/2, 85/3) were shortened to a combined 67-second
+private Drive listening file. Evidence: `Output/Short_Review_2026_10_13`. The new
+acoustic evidence raises the priority of 67/1 and 85/3; it does not establish that
+43/3 or 85/2 has no added speech. No new narration, installer, or release was run.
+
+## Reviewed retry queue and partial decisions, 2026-10-12
+
+After generation reached 88/113 verified passages, the owner requested a check of
+the 25-passage listening queue. Four passages already had decisions; independent,
+unprompted Whisper large-v3 checked the remaining 30 clips in 21 passages. Seventeen
+passed the existing word gate and 13 failed. Several failures contained substantial
+unrelated speech corroborated by Parakeet. This was a word-level audit, not listening
+approval of delivery or pronunciation. Evidence: `Output/Review25_2026_10_12`.
+
+The owner later authorized GPU use and resume. The 13 audited failures were marked
+retry through the app API, alongside two existing owner-selected retries. No new
+listening approvals were added. Seventeen clips remain undecided for later review.
+
+A partial-decision scheduling bug held passage 99 clip 3 behind its undecided peers.
+The Parakeet scheduler now excludes selected retries from the deferred-review set
+and removes an obsolete review candidate when its replacement passes. A regression
+reproduced the skipped retry before the fix and now verifies that only the selected
+clip renders, its replacement supersedes the old candidate, and the undecided peer's
+audio stays unchanged. All 141 narration-runtime tests passed.
+
+The live job was restarted at a saved batch to load the fix. It has exactly the 15
+requested clips pending, including four already-generated replacements reused from
+before restart. Both render children are active. All 82 saved approved audio/receipt
+files and 331 other audio files were unchanged after resume, as were the four ready
+replacement WAVs. Retry generation/checking remains in progress. No installer,
+release, commit, upload, recurring monitor, or additional runtime install occurred.
+
+## Two independent GPU render workers, 2026-10-12
+
+The owner authorized a two-worker comparison and implementation/resume only if
+faster without reducing quality, preserving every already-generated/approved clip.
+Private evidence is under `Output/Workers_2026_10_12`. An eight-clip synthetic
+workload (dialogue, asides, and plain narration) ran in 1/2/2/1 worker order.
+One-worker runs took 208.50/206.54 seconds; two-worker runs took 151.34/146.22
+seconds, including model startup/shutdown. Mean generation time fell from 207.52
+to 148.78 seconds (28.3% less time). Fixed per-clip seeds produced byte-identical
+WAVs for all eight clips across all four runs. All 32 clip and parent checks
+passed Parakeet. This is sample evidence, not a whole-book timing guarantee.
+
+The Parakeet workflow now supports `render_workers` 1 or 2. Children own disjoint
+units by fixed plan order, so completed work cannot shift another child's
+assignment. The coordinator prepares the voice once, starts both render children,
+and waits for both to exit before starting the single GPU checker. Failure or
+cancellation terminates and joins every child. Each two-worker model has a 40%
+CUDA allocator cap; the single-worker cap remains 85%. Voice, delivery profile,
+model settings, existing receipt identities, retry limits, and quality gates are
+unchanged. Portable defaults remain one worker. This owner's ignored app config
+and The Voice sidecar now select two render workers.
+
+Validation: full native suite 364 tests passed (79 dependency skips);
+all 140 narration-runtime tests passed, including stable partitioning, two-child
+cancellation, peer failure cleanup, and the UI worker count. All 1,175 saved book
+checkpoint files were unchanged before enabling the setting. The real production
+coordinator generated and verified four synthetic passages in 93.66 seconds;
+cache-only replay left all 20 audio/receipt files unchanged. The two render
+children used about 15 GiB total GPU memory with about 8.7 GiB free and 97%
+utilization during the observed sample; Parakeet ran only after both exited.
+
+Storybird was restarted and The Voice resumed successfully. Live verification
+showed one coordinator and exactly two GPU render children, with no GPU checker
+overlap. The 925 preserved files (existing audio, completed/approved receipts,
+ready provisional clips, and the canonical plan) were byte-identical after
+resume. The other 251 baseline entries are unrendered work receipts that will
+advance as new audio finishes; none was discarded. Book narration is still in
+progress. No installer, release, commit, or upload was performed.
+
+## Generate-first Parakeet workflow and book rerun, 2026-10-12
+
+The owner selected NVIDIA Parakeet after a local comparison, requested deletion
+of Granite, and authorized rerunning The Voice with the new workflow while
+preserving regenerated/approved clips. This supersedes the older CPU-checker
+and awaiting-listening snapshots below. No installer or release was built.
+
+`vibevoice_phases.py` implements `generate_first_parakeet_v1`: render all pending
+units in one GPU process, exit that process, check all provisional clips in a
+separate Parakeet GPU process, then render/check failed clips in bounded rounds.
+The existing unit receipts, cumulative parent gate, exact listening approvals,
+archiving, cancellation, and final assembly are reused. Interrupted checking
+resumes verified provisional WAVs without rendering them again. Exhausted clips
+go to listening review while other passages finish. The progress message names
+Parakeet on GPU. This workflow currently reports phase progress without an ETA.
+
+Parakeet is `nvidia/parakeet-tdt-0.6b-v3`, revision
+`541d1f99c6b0c3cd0b11a95167540bb8edefd82b`, native Transformers 5.19.0 TDT,
+float32, batch 4 with OOM bisection. The local dedicated runtime is
+`runtime/parakeet/Scripts/python.exe`; weights are at
+`runtime/models/parakeet-tdt-0.6b-v3`. This local venv reads the already-tested
+compiled-runtime libraries without changing that environment. Chatterbox,
+Fish, legacy VibeVoice, and dnd-transcribe environments were not modified.
+`install/bootstrap_parakeet.py` supports dedicated fresh installation and
+verification/registration of existing paths; its fresh-install path has not
+been exercised on a clean machine. Registration checks the pinned weight hash
+and stores the workflow as a literal, not a resolved path (regression tested).
+New jobs use the configured workflow; existing sidecars retain their workflow
+and checker paths unless explicitly migrated. Granite's downloaded model folder
+was deleted at the owner's request; historical measurements remain private.
+
+Private evidence: `Output/Workflow_2026_10_12`. The same 71 clips (~38 minutes)
+took ~148 seconds with GPU Whisper large-v3, ~17 seconds with Parakeet, and
+~8 seconds with Granite, including startup. All three caught six planted errors;
+Parakeet flagged 2/25 owner-approved book clips, Whisper 6/25, Granite 17/25.
+Batched Whisper was faster (~88 seconds) but dropped a five-word control phrase.
+Two 990-word workflow comparisons averaged 285 seconds for CPU overlap and
+182 seconds for generate-first/Parakeet (~36% lower). The implemented worker then
+completed all 8 synthetic parents/12 clips on real GPU. A separate real repair
+test rejected two planted bad clips, regenerated them together, and passed the
+recheck while reusing ten peers. Book-source disagreements without listening
+ground truth are not proof of ASR accuracy; expressive delivery still needs ears.
+
+The Voice scan found 171 single-quoted dialogue-boundary clips: 12 already used
+the new delivery profile and 159 used old rendering; 113 of those also contained
+in-word apostrophes. These were candidates, not 159 confirmed audible defects.
+The authorized broader rerun preserves 42/321 clips (all 27 exact listening
+approvals plus other clips already using the delivery profile) and replaces 279
+clips across 109 parents. `book_before_rerun` holds the original final M4B,
+metadata/receipt backups, the exact selection, and protected file hashes.
+All existing audio and the canonical plan were unchanged when queuing the rerun.
+The live book now uses Parakeet and is actively generating; narration is NOT
+complete. Protected clips and their approval receipts were verified unchanged.
+The refreshed Storybird desktop shortcut opens the source app with `app/icon.ico`.
+
+Validation: base suite 360 tests passed (76 runtime-dependent skips); 136
+narration tests passed in the dependency-equipped runtime, including the seven
+phase regressions. Native GPU generation and grouped-repair tests passed.
+
+## Listening-review repair and spoken delivery, 2026-10-12
+
+The owner reported non-playing review clips, delayed choices, a Windows progress
+replace failure, spoken page citations, and rushed dialogue/parenthetical delivery.
+The audio-review route held the per-job mutation lock while streaming audio. It now
+validates and snapshots the selected clip under that lock, then sends bytes after
+releasing it. Playback checks only the selected parent. Review players load on
+demand, pause other players, release requests on close, expose reload feedback,
+and show saving/failure status beside the selected clip. Requests time out after
+15 seconds; stale dialog responses cannot update a reopened review. Choices do
+not require playing through to the end. Clear choice explicitly restores listening.
+
+VibeVoice progress now uses the existing bounded-retry, nonfatal progress writer.
+A real Windows handle denying delete sharing reproduced the failure on a disposable
+sidecar: narration survived, preserved prior valid JSON, and updated successfully
+after unlock. Progress remains advisory; receipt/checkpoint writes still fail closed.
+
+`vibevoice_delivery.py` omits parenthetical numeric p./pp. references, preserving
+ordinary prose parentheses and any attached editorial prose. Projection spans
+existing unit boundaries, including a split citation in passage 24, without
+changing unit indices, canonical text, parent plans, or identities. The narration
+checker compares intended spoken text; generic spelling/number assessment and its
+five-word threshold are unchanged. New render receipts bind delivery profile and
+spoken-text hash. Selected accepted parents are marked for reassembly/replacement;
+old parent audio/receipts are archived before requested replacements publish.
+
+The delivery profile inserts 200 ms PCM gaps at closing dialogue quotes and both
+sides of parenthetical asides, with 5 ms join fades. In-word apostrophes and quoted
+terms are not turn boundaries. Attribution stays with following speech to avoid
+isolated tiny narrator fragments. Asides retain every word, render separately, and
+use gain 0.84; no time stretching, pitch processing, pronunciation substitution,
+or invented character voices. This provides explicit timing, not a guarantee of
+natural acting or correct pronunciation in every language.
+
+Private evidence: Output/Review_2026_10_12. Two local five-clip delivery runs used
+the original voice. Final replacement candidates are staged for passage 14 clip 1,
+28 clip 2, 33 clips 1/2, and 58 clip 2. Only 14/1 and 33/2 passed automatic word
+verification; the other three were NOT approved. The earlier description of
+these failures as only name/quoted-language disagreements was incorrect: passage
+58 clip 2 also contained substantial unrelated recognized speech, and the owner
+reported poor audio. These were not established as checker-only errors. All five
+required owner listening for delivery. Passage 14's citation is
+absent and its spoken transcript matches with only a safe spelling variant.
+Other reference-bearing units are queued for targeted regeneration on resume.
+Do not claim that the foreign-language pronunciation or overall delivery is fixed.
+
+At the owner's explicit request, passage 10 clips 2/3, 24 clip 2, 91 clip 3 and
+97 clip 2 were restored for listening rather than regenerating them for playback
+failure. Their WAVs remain unchanged. Live browser playback loaded and advanced
+all five, with durations 45.87/36.13/55.47/35.87/44.40 seconds and no media errors.
+A separate synthetic browser fixture played briefly, paused, saved, cleared and
+reopened choices successfully. A real HTTP concurrency regression held a stream
+stalled while a choice saved. Original baseline: 501 WAVs. Every original WAV
+remains either in place or archived; all accepted-parent and active-unit WAVs are
+unchanged at handoff. Existing genuine regeneration choices and listening approvals
+remain; no new listening approvals were invented.
+
+The idle app was restarted through the refreshed Storybird desktop shortcut. The
+book is now audio_review_required with TEN unresolved clips: the five restored
+originals and the five revised delivery candidates. It was deliberately not resumed
+because the owner requested listening first. Remaining scheduled replacements run
+after those choices. The full suite passed 348 tests with one skip; final focused
+checks passed 37 tests. Graft wiring and whitespace checks passed. No installer,
+release, commit, upload, checker-model switch, or DND environment change occurred.
+Whisper large-v3 remains CPU/int8 with its original unprompted transcription. Its
+model card acknowledges hallucination; a second recognizer needs an audio-grounded
+comparison before replacing it, especially for names and unsupported languages.
+
+## Checker workflow and optional compiled inference, 2026-10-12
+
+The owner requested the checker/workflow fix and compiled inference including
+Transformers' September 21 batch-row fix. Safe spelling normalization now uses
+an explicit UK/US whitelist and exact spacing/possessive equivalences. Adjacent
+safe variants are recognized together. Names, homophones, missing words, numbers,
+and substantive edits retain the existing gate; the five-word budget is unchanged.
+Review shows individually failing clips rather than every passing sibling, while
+still enforcing the cumulative parent gate. Previously retained candidates that
+now pass can be recovered with validated receipts, without fabricated approvals.
+The progress bar reports generated words separately from verified passages.
+
+Private recovery on The Voice recovered nine of twenty pending parents, leaving
+11 parents / 23 clips for listening before resuming. All 320 raw quality reports
+and all 110 pre-existing accepted-parent WAV/receipt files were unchanged. Of
+548 baseline checkpoint files, 546 were byte-identical; two unit receipts were
+updated through validated recovery. No audio was regenerated for this recovery.
+
+`app/vibevoice_hf.py` implements an isolated Transformers compiled backend, pinned
+to Transformers 5.19.0 (includes upstream #48902, September 21), Torch 2.10.0+cu128,
+and triton-windows 3.6.0.post26. The HF model is `vibevoice/VibeVoice-1.5B-hf` at
+`d4cd82eb4371bf3e3d088e1ea7fa4eefb60449bf`. It uses BF16, SDPA for the text model,
+static KV caches, torch.compile default mode, local-only assets, existing 85%
+GPU allocator cap, CPU verification, and per-row EOS/cap validation. It reuses
+the worker's normalization, repair, review, and checkpoint paths. The separate
+runtime is D:/ml_repos/vibevoice-compiled-20261012; legacy and other environments
+were not upgraded. New runtime/model paths are registered in ignored config.json.
+
+Setup supports `install/bootstrap_vibevoice.py --backend compiled` with the
+existing install/configure/check modes and separate requirements. To select it
+for NEW jobs, set `vibevoice_inference_backend` to `compiled` in app/config.json;
+`vibevoice_compiled_python` and `vibevoice_compiled_model_dir` select its assets.
+Existing job sidecars pin their original backend. Legacy identities are unchanged;
+compiled identities bind the model, Transformers version, and compile profile.
+Registering compiled paths preserves the legacy tokenizer cache. Default stays
+legacy because the short benchmark did not demonstrate a legacy-to-compiled gain.
+
+Measured on RTX 4090, two unequal synthetic passages: HF eager 17.30 seconds,
+compiled first call 70.24 seconds, warm 13.40 seconds (about 1.29x versus HF eager).
+Through the actual worker: compiled 72.32 / 13.64 seconds, legacy 14.87 / 13.15.
+Do not describe this as a 1.5x production improvement. Initial compilation and new
+batch/cache shapes can cost time; this is an optional validated implementation,
+not a reason to restart a partly narrated book. Synthetic evidence is under ignored
+Output/Inference_2026_10_12. All 14 probe and worker clips passed the CPU speech checker,
+including unequal-duration batches with the short row finishing first. Full suite: 335 tests passed with one skip; final focused checks after
+setup-preservation regression: 21 passed. Browser fixture confirmed generated vs
+verified wording. No installer, release, commit, or upload was performed.
+
+Storybird's desktop shortcut was verified and the idle app restarted. The Voice
+resumed on its pinned legacy runtime: live UI showed 69% generated, 65/113
+passages verified, generating passage 77/113, and 11 deferred review passages.
+
+## Checker language and priority experiments, 2026-10-12
+
+The owner authorized pausing The Voice, testing explicit English selection first,
+then lower CPU-checker priority, keeping only quality-preserving improvements,
+and resuming the book. Neither candidate was retained; production checker and
+worker source hashes remained unchanged throughout these experiments.
+
+Explicit `language="en"` was compared with unchanged automatic detection using
+saved audio, the same CPU/int8 model, beam five, and VAD. Five serial paired
+checks matched exactly and took 137.3 seconds with detection versus 113.8 with
+English selected. The remaining replay used two isolated CPU helpers. Testing
+stopped after the strict equivalence gate failed: of 17 completed pairs, 16 had
+identical transcripts and assessments; a 0.8-second clip was detected as Portuguese
+and produced a different word when English was forced. Both versions passed,
+and English had fewer differences from the source. This is not evidence of a
+quality regression, but it does not satisfy the agreed unchanged-results gate.
+Automatic language detection remains enabled. The planned 60-clip replay was
+stopped early rather than continuing a candidate that had failed its gate.
+
+The priority experiment used the current six-parent/820-word production-planned
+synthetic workload, two four-thread checkers, native batches up to four, fixed
+seeds, and normal/below-normal/below-normal/normal order. Elapsed times were
+235.16/210.29/207.07/203.48 seconds. Windows process priority was verified directly.
+All four runs completed every parent, produced identical WAV hashes, substantive
+receipts and all ten quality reports, and passed cache-only replay. The mean
+appeared 4.85% faster at lower priority, but the final normal-priority run beat
+both lower-priority runs; warmup or timing drift makes the early gain unreliable.
+Keep normal priority. Do not claim that checker contention was proved or fixed.
+
+Private scripts and evidence are under ignored `Output/Checker_2026_10_12`.
+All 258 saved book checkpoint files and its seven pending review passages were
+unchanged before and after resume. Storybird had been closed during testing;
+it was reopened through the existing desktop shortcut and The Voice resumed.
+Live verification showed passage 39 of 113 being checked, GPU generation active,
+31 accepted parents, seven passages retained for review, and both CPU helpers
+at normal priority. OCR was unloaded. No runtime settings, environments, or
+quality gates were changed, and no installer, release, or commit was made.
+
+## Measured narration throughput, 2026-10-12
+
+The owner authorized pausing The Voice, benchmarking four improvements in order,
+and resuming it afterward. GPU rendering now has one executor owner and continues
+while CPU speech checks run. Prefetch stays bounded to two native batches and
+retains the existing duration/byte limits. Cancellation waits for active writers
+before temporary-file cleanup. The optional second CPU checker keeps one request
+per helper, with bounded reuse and cleanup on startup/check failures.
+
+Portable defaults remain one four-thread checker and native batch size two.
+This owner's measured profile in ignored `app/config.json` uses two four-thread
+checkers and batch size four. Larger batches apply only on GPUs with at least
+23 GiB; smaller/unknown GPUs and conservative mode use one. The existing 85%
+allocator cap, CPU-only ASR, parent boundaries, retry limits, and quality gates
+remain in place. OCR and TTS still never overlap on the GPU.
+
+Evidence in ignored `Output/Performance_2026_10_12`:
+- The initial pipeline-only comparison averaged 238.5 versus 234.4 seconds
+  (1.7% less time); all WAV hashes and substantive receipt fields matched.
+- A 12-clip CPU benchmark in 1/2/2/1 order averaged 278.9 seconds with one
+  checker and 183.1 with two (34.3% less checking time). All transcripts and
+  verdicts matched; helper startup was excluded (about 16 versus 32 seconds).
+- Two synthetic parents/eight clips took 127.9/85.4/63.5 seconds of GPU
+  generation at native batch sizes 2/3/4. Peak reserved memory was
+  6.10/6.55/7.07 GiB. Every clip and cumulative parent quality gate passed.
+- The final combined six-parent/820-word comparison took 238.9 versus 203.9
+  seconds (14.7% less elapsed time). Both arms passed all parent gates and
+  cache-only replay. About 6.66 GiB system RAM remained with both checkers and
+  the narrator loaded. This is sample evidence, not a whole-book speed promise.
+
+Formatting equivalence now narrowly handles MA/M.A. and PhD/Ph.D. (with case
+and dotted-form guards), plus matching p/pp numbered citations such as p84/p.84.
+Wrong names, missing text, wrong numbers, signed/decimal/range/identifier forms,
+and ordinary lowercase "ma" remain strict. The threshold of five differences,
+Whisper model/beam settings, and two automatic retries are unchanged.
+Historical replay covered 607 mapped reports: six comparisons changed and three
+attempts of one clip changed verdict; 601 reports were unchanged. All 16 older
+unmapped reports lacked eligible transcript forms and therefore could not change.
+Existing receipts and listening approvals were not rewritten.
+
+The final source suite ran 328 tests successfully (64 runtime-dependent skips);
+all 114 VibeVoice runtime checks and seven listening-review checks passed.
+The full 83-file Graft reparse/check and Git whitespace check passed.
+Before restarting, all 158 saved checkpoint hashes and the complete pending
+review file were unchanged. The desktop shortcut was refreshed, Storybird reopened,
+and The Voice resumed with two live CPU helpers and configured batch size four.
+Live generation reached passage 27 of 113, with 21 accepted parents and five
+passages retained for end review. All 158 baseline checkpoint hashes and the
+review file were still unchanged after resume; OCR was unloaded. Evidence is in
+`Output/Performance_2026_10_12/live_checkpoint_validation.json`. Full-book completion
+remains pending. No installer, release, or commit was made.
+
+## Listening review recovery, 2026-10-11
+
+Follow-up: listening review now waits until all available narration is generated.
+The worker persists multiple flagged passages, continues remaining clips within
+each passage and later passages, and skips already-flagged clips on resume.
+Only final audiobook assembly waits for all listening decisions. Accept/retry
+decisions remain bound to exact clips. Existing single-passage review files migrate
+without changing their decisions. Progress reports the count saved for later review.
+Synthetic runtime regressions prove multi-passage continuation, interrupted recovery,
+cache-only replay, selective retry and assembly blocking. The source suite passed
+314 tests (53 runtime-dependent skips); all 53 focused runtime checks passed.
+Browser fixtures verified the combined review list and decision controls.
+The desktop shortcut was updated and The Voice resumed: passage 11 was generating
+with passage 10 retained for end review. All 20 pre-existing WAV hashes were
+unchanged; earlier listening approvals were preserved. Live evidence is in
+`Output/OCR_2026_10_11/listening_recovery/deferred_live_validation.json`.
+Full-book completion remains pending. No installer or release was built.
+
+The Voice stopped at parent passage 9 after cumulative ASR differences exhausted
+its retries. The checker now treats standalone favourite/favorite variants and
+valid unsigned ordinal notation (including mid-20th/mid-twentieth) as equivalent.
+Names and real omissions remain subject to the existing threshold. Replaying the
+saved reports reduced nine counted substitutions to seven across two clips.
+
+Exhausted speech checks now hold the job as `audio_review_required`. Review audio
+shows source text, ASR differences and playable clips, with explicit accept or
+selective-regenerate decisions. Approvals bind source identity, audio and report
+hashes. Rejected replacement clips stay separate until approved; regeneration
+archives the prior clip and preserves peers. Raw ASR evidence is retained in
+assembled receipts alongside the listening decision. The patch manifest includes
+the new dependency; no installer or release was built.
+
+The source suite passed 313 tests with 52 runtime-dependent skips. All 60 focused
+quality/recovery tests passed in the isolated narration runtime. Browser checks
+verified playback metadata, escaping, acceptance controls and resume dispatch.
+The real job is awaiting the owner's listening decisions; no subjective audio
+verdict or complete-book success is claimed. Eight accepted passages validate and
+all 40 existing checkpoint files retain their hashes. Evidence is in ignored
+`Output/OCR_2026_10_11/listening_recovery`. The desktop shortcut launches the
+updated main checkout. Do not automatically accept its remaining name differences.
+
+## Local OCR recovery, 2026-10-11
+
+Progress/queue follow-up: VibeVoice now reports verified source-word progress and
+a rough ETA calibrated from this run's missing-unit work. Calibration waits for
+three prose passages and 600 verified new words; cached units do not inflate
+the measured rate. Timing includes GPU generation, CPU checking, and retries,
+but excludes startup and final export. The UI displays a heuristic 0.75x to 1.5x
+range, not a statistical confidence interval. Stale updates suppress the ETA.
+Full-book estimate accuracy is not yet validated. Phase text distinguishes GPU
+generation from CPU word checking. Persistent FIFO queue positions and automatic
+start behavior are visible; books needing text/visual review still wait for it.
+The source suite ran 305 tests successfully (49 runtime-dependent skips), and all
+38 repair integration checks passed in the existing VibeVoice environment.
+Browser fixtures verified progress, warmup, ETA, and queue labels; the real book
+remains paused and the desktop shortcut opens the updated app. Graft's 81-file
+reparse and wiring check passed. No installer or release was built.
+
+The owner subsequently requested pausing The Voice and testing 16 CPU checker
+threads. The job was stopped through its resumable cancel endpoint with eight
+accepted parent passages preserved. Running jobs now show a Pause button and
+the existing canceled state is displayed as Paused, with an explanation that
+completed work is saved. The underlying queue/checkpoint contract is unchanged.
+Browser checks verified both labels and Pause/Resume action dispatch. The
+desktop shortcut was refreshed and the app reopened with the book still paused.
+
+The saved-passage CPU check ran in 4/16/16/4 thread order: 165.91/178.65/
+205.14/160.19 seconds, excluding model load. Four threads averaged 163.05
+seconds versus 191.90 for sixteen (17.7% slower). All four transcript hashes
+matched and all 42 existing segment/checkpoint file hashes remained unchanged.
+Keep the current four-thread default; the book remains paused. Private evidence:
+`Output/OCR_2026_10_11/thread_results.json`. This is a single-passage comparison,
+not a whole-book throughput prediction.
+
+Follow-up: the completed extraction then hit VibeVoice's exclusive-GPU guard
+because the app had no OCR unload at the narration boundary. Path B narration
+now unloads the configured OCR model through Ollama before starting either
+narrator, including cached-extraction resumes. An unload failure prevents worker
+startup; VibeVoice's independent GPU guard remains intact. A real synthetic OCR
+call loaded the model on GPU, and the new release call left `ollama ps` empty.
+Seven OCR tests, six desktop/download tests, seven narration-server tests, and
+36 review/queue integration tests passed. Full narration was not rerun.
+
+The native window now enables `text_select=True`; job polling preserves cards
+with highlighted text. A hidden native EdgeChromium check confirmed selectable
+log text with computed user-select `auto`. The desktop shortcut is refreshed to
+the main checkout launcher after these changes.
+
+Ollama 0.40.3 returned HTTP 500 with `prediction aborted, token repeat limit reached`
+on the owner's new Path B job, reproducible on PDF page 4. Its original GLM-OCR
+GGUF lacked `tokenizer.ggml.eot_token_id`; see upstream issue 18609 and PR 17195.
+Prompt and textual stop-sequence changes did not resolve this local failure.
+
+A separate local model, `storybird-glm-ocr-eot`, adds EOT token 59253 while
+preserving all 527 tensor hashes, the GLM renderer/parser, prompt, and sampling
+settings. Only the ignored local config selects it; the default model and original
+Ollama model remain unchanged. Local tools and recovery evidence are under ignored
+`Output/OCR_2026_10_11`; no narration environment was modified.
+
+The failed page and adjacent pages 3 and 5 now extract successfully. The original
+page 3 cache contained 7,856 characters of runaway output; it was backed up and
+replaced with the verified 109-character result. The job remains resumable; no
+narration or full-book validation was performed. Synthetic body text was accurate,
+but its heading and the real Introduction heading were omitted by OCR. This is
+not a claim of complete heading fidelity. Local configuration takes effect on
+the next app launch. No installer or release was built.
+
+Source error handling now includes bounded Ollama JSON error details and the
+failed PDF page, without caching failed output. Five new OCR regressions and all
+36 existing extraction/review integration tests passed outside the Windows sandbox.
+
 ## 1.0.7 beta candidate, 2026-09-15
 
 The 1.0.7 full installer and patch were built from

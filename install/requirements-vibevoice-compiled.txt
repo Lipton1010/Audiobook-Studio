@@ -1,0 +1,9 @@
+# Separate Python 3.11 environment; never upgrade the legacy VibeVoice runtime.
+transformers==5.19.0
+triton-windows==3.6.0.post26; sys_platform == "win32"
+diffusers==0.35.2
+accelerate==1.6.0
+soundfile==0.14.0
+pyloudnorm==0.1.1
+scipy==1.17.1
+librosa==0.11.0

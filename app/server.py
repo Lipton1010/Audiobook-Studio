@@ -34,6 +34,7 @@ import requests
 
 import pipeline_text as pt
 import visual_review
+import narration_review
 from audiobook_exports import AudiobookExportError, export_finished_audio
 from audiobook_files import ArtworkReplacementError, replace_finished_artwork
 from generation_settings import default_settings, normalize_settings, runtime_settings
@@ -275,14 +276,24 @@ def narration_backend(st):
     return st.get("backend") if st.get("backend") in ("chatterbox", "vibevoice") else "chatterbox"
 
 
-def missing_vibevoice_error():
+def missing_vibevoice_error(inference=None):
     """Return setup advice before extraction spends time on a VibeVoice job."""
-    if not VIBEVOICE_PY or not Path(VIBEVOICE_PY).exists():
+    inference = inference or CFG.vibevoice_inference_backend
+    if inference not in ("legacy", "compiled"):
+        return f"Unknown VibeVoice inference backend: {inference}"
+    compiled = inference == "compiled"
+    python = CFG.vibevoice_compiled_python if compiled else VIBEVOICE_PY
+    if not python or not Path(python).exists():
+        if compiled:
+            return "Compiled VibeVoice Python was not found. Run bootstrap_vibevoice.py --backend compiled to configure its isolated runtime."
         return ("VibeVoice Python was not found. Set vibevoice_python in app/config.json "
                 "or AUDIOBOOK_VIBEVOICE_PY to the isolated VibeVoice environment's python.exe.")
-    model_dir = Path(CFG.vibevoice_model_dir)
+    model_dir = Path(CFG.vibevoice_compiled_model_dir if compiled else CFG.vibevoice_model_dir)
     index = model_dir / "model.safetensors.index.json"
-    if not index.is_file() or not (model_dir / "config.json").is_file() or not (model_dir / "preprocessor_config.json").is_file():
+    processor_files = ("processor_config.json", "tokenizer.json", "chat_template.jinja") if compiled else ("preprocessor_config.json",)
+    if not index.is_file() or not (model_dir / "config.json").is_file() or any(not (model_dir / name).is_file() for name in processor_files):
+        if compiled:
+            return f"Compiled VibeVoice model is incomplete at {model_dir}. Configure vibevoice_compiled_model_dir with the pinned HF model."
         return (f"VibeVoice model is incomplete at {model_dir}. Set vibevoice_model_dir in "
                 "app/config.json or AUDIOBOOK_VIBEVOICE_MODEL_DIR to the verified local model folder.")
     try:
@@ -291,6 +302,11 @@ def missing_vibevoice_error():
         return f"VibeVoice model index is unreadable: {index}. Re-run the VibeVoice setup check."
     if not shards or any(not (model_dir / shard).is_file() for shard in shards):
         return "VibeVoice model weights are incomplete. Re-run the VibeVoice setup check before creating a job."
+    if CFG.vibevoice_workflow == "generate_first_parakeet_v1":
+        from vibevoice_quality import parakeet_setup_error
+        return parakeet_setup_error(CFG.parakeet_python, CFG.parakeet_model)
+    if CFG.vibevoice_workflow != "overlap_cpu":
+        return "Unknown narration workflow. Configure overlap_cpu or generate_first_parakeet_v1."
     if not CFG.vibevoice_quality_python or not Path(CFG.vibevoice_quality_python).exists():
         return ("VibeVoice quality Python was not found. Set vibevoice_quality_python in "
                 "app/config.json or AUDIOBOOK_VIBEVOICE_QUALITY_PY to the CPU verifier environment.")
@@ -1108,7 +1124,21 @@ def ocr_page(image_path):
         "options": {"temperature": 0, "num_ctx": 16384, "num_predict": 4096},
     }
     r = requests.post(OLLAMA_URL, json=payload, timeout=900)
-    r.raise_for_status()
+    try:
+        r.raise_for_status()
+    except requests.HTTPError as exc:
+        # Ollama puts the useful cause in JSON, not in the HTTP status text.
+        try:
+            detail = r.json().get("error", "")
+        except (ValueError, AttributeError):
+            detail = ""
+        if not isinstance(detail, str) or not detail.strip():
+            raise
+        detail = " ".join(detail.split())[:400]
+        hint = (" The OCR model repeated its output. Check Ollama/model compatibility; "
+                "resuming unchanged may fail again."
+                if "token repeat limit reached" in detail.lower() else "")
+        raise RuntimeError(f"OCR service error ({r.status_code}): {detail}.{hint}") from exc
     return r.json()["response"]
 
 
@@ -1152,7 +1182,10 @@ def run_extraction(st):
                 img_path = images_dir / f"page_{pno + 1:04d}.jpg"
                 if not img_path.exists():
                     pt.rasterize_page(pdf, pno, str(img_path))
-                md = ocr_page(str(img_path))
+                try:
+                    md = ocr_page(str(img_path))
+                except (requests.RequestException, RuntimeError) as exc:
+                    raise RuntimeError(f"OCR failed on PDF page {pno + 1}: {exc}") from exc
                 md_path.write_text(md, encoding="utf-8")
             # An empty OCR response may be a blank page, artwork, or an OCR
             # failure. Preserve the uncertainty for an explicit manual skip;
@@ -1388,6 +1421,9 @@ def _spawn_worker(job_dir, logf, extra_args, backend="chatterbox"):
     python, worker = (CHATTERBOX_PY, "narrate_worker.py")
     if backend == "vibevoice":
         python, worker = VIBEVOICE_PY, "vibevoice_worker.py"
+        config = json.loads((job_dir / "vibevoice_config.json").read_text(encoding="utf-8"))
+        if config.get("inference_backend") == "compiled":
+            python = CFG.vibevoice_compiled_python
     proc = subprocess.Popen(
         [python, str(APP_DIR / worker), str(job_dir), *extra_args],
         stdout=logf, stderr=subprocess.STDOUT, cwd=str(APP_DIR),
@@ -1467,10 +1503,32 @@ def _run_vibevoice_narration(st, job_dir, blocks):
         "attention": "sdpa",
         "quality_python": CFG.vibevoice_quality_python or None,
         "quality_model": CFG.vibevoice_quality_model or None,
+        "quality_workers": CFG.vibevoice_quality_workers,
+        "native_batch_size": CFG.vibevoice_batch_size,
         "quality_major_words": 5,
         "quality_max_retries": 2,
+        "transcript_review": CFG.vibevoice_transcript_review,
     }
     config.update(runtime_settings("vibevoice", st["path"], st.get("generation_settings")))
+    # Existing jobs retain their engine and identities when the default changes.
+    prior = job_dir / "vibevoice_config.json"
+    prior_config = json.loads(prior.read_text(encoding="utf-8")) if prior.exists() else None
+    inference = prior_config.get("inference_backend", "legacy") if prior_config is not None else CFG.vibevoice_inference_backend
+    if prior_config is not None:
+        config["workflow"] = prior_config.get("workflow", "overlap_cpu")
+        config["render_workers"] = prior_config.get("render_workers", 1)
+        config["transcript_review"] = prior_config.get("transcript_review", False)
+        for key in ("parakeet_python", "parakeet_model"):
+            if key in prior_config:
+                config[key] = prior_config[key]
+    else:
+        config.update(workflow=CFG.vibevoice_workflow, parakeet_python=CFG.parakeet_python,
+                      parakeet_model=CFG.parakeet_model, render_workers=CFG.vibevoice_render_workers)
+    config["inference_backend"] = inference
+    if inference == "compiled":
+        config.update(vibevoice_plan.runtime_profile(config))
+        config.update(runtime_settings("vibevoice", st["path"], st.get("generation_settings")))
+        config["model_dir"] = CFG.vibevoice_compiled_model_dir
     plan = vibevoice_plan.write_plan(job_dir, blocks, config)
     (job_dir / "cancel_flag.txt").unlink(missing_ok=True)
     progress_path = job_dir / "vibevoice_progress.json"
@@ -1498,6 +1556,8 @@ def _run_vibevoice_narration(st, job_dir, blocks):
             if _cancel_flags.pop(st["id"], False) or code == 2:
                 raise _Cancelled()
             if code != 0:
+                if code == 3 and (job_dir / narration_review.FILENAME).is_file():
+                    raise narration_review.ListeningRequired(_narration_failure_message(job_dir, [code], "vibevoice"))
                 raise RuntimeError(_narration_failure_message(job_dir, [code], "vibevoice"))
             log_line(st["id"], "generation complete, assembling")
             assembly = _spawn_worker(job_dir, logf, ["--assemble"], "vibevoice")
@@ -1514,21 +1574,43 @@ def _run_vibevoice_narration(st, job_dir, blocks):
     finally:
         _terminate_processes(owned)
         _clear_active_processes(st["id"])
+        if config.get("transcript_review"):
+            # A forced worker termination cannot run its Python finally block.
+            # Release only this workflow's reviewer, after its workers exit.
+            try:
+                progress = json.loads(progress_path.read_text(encoding="utf-8"))
+                if progress.get("status") == "transcript_review":
+                    from transcript_review import unload
+                    unload()
+            except Exception as exc:
+                log_line(st["id"], f"Transcript reviewer cleanup failed: {exc}")
     return st
+
+
+def _release_ocr():
+    """Unload our configured OCR model before the narration stage owns the GPU."""
+    try:
+        response = requests.post(
+            OLLAMA_URL, json={"model": OCR_MODEL, "keep_alive": 0}, timeout=60,
+        )
+        response.raise_for_status()
+        if response.json().get("done") is not True:
+            raise ValueError("Ollama did not confirm model unload")
+    except (requests.RequestException, ValueError, AttributeError) as exc:
+        raise RuntimeError(f"Could not release OCR model {OCR_MODEL} before narration: {exc}") from exc
 
 
 def run_narration(st):
     job_id = st["id"]
     job_dir = JOBS_DIR / job_id
-    blocks, unresolved, items, _decisions = visual_review.project(job_dir, st)
+    blocks, unresolved, _items, _decisions = visual_review.project(job_dir, st)
     if unresolved:
-        raise _ReviewRequired()
-    scope = visual_review.review_payload(job_dir, st)["narration_scope"]
-    if (items or scope or st.get("preview_required")) and st.get("review_previewed_hash") != _preview_signature(st, job_dir, blocks):
         raise _ReviewRequired()
     if not any(str(block.get("text", "")).strip() for block in blocks):
         raise _ReviewRequired("No spoken text remains. Keep or describe a passage before narration.")
     visual_review._write(job_dir / "blocks.json", {"blocks": blocks})
+    if st["path"] == "B":
+        _release_ocr()
     if narration_backend(st) == "vibevoice":
         return _run_vibevoice_narration(st, job_dir, blocks)
     engine = st.get("engine", DEFAULT_ENGINE)
@@ -1685,11 +1767,6 @@ def _hold_for_visual_review(st):
     job_dir = JOBS_DIR / st["id"]
     blocks, unresolved, _items, _decisions = visual_review.project(job_dir, st)
     if not unresolved:
-        if st.get("preview_required") and st.get("review_previewed_hash") != _preview_signature(st, job_dir, blocks):
-            st["status"] = "review_required"
-            st["visual_review_unresolved"] = 0
-            save_state(st)
-            return True
         if not any(str(block.get("text", "")).strip() for block in blocks):
             st["status"] = "review_required"
             st["error"] = "No spoken text remains. Keep or describe a passage before narration."
@@ -1846,6 +1923,11 @@ def worker_loop():
             )
             save_state(st)
             log_line(job_id, f"job complete, audiobook copied to {book_dir}")
+        except narration_review.ListeningRequired as exc:
+            st["status"] = "audio_review_required"
+            st["error"] = str(exc)
+            save_state(st)
+            log_line(job_id, str(exc))
         except _Cancelled:
             st["status"] = "canceled"
             save_state(st)
@@ -1888,6 +1970,12 @@ def _narration_progress(job_dir, st):
     eta = None
     progress_stale = False
     worker_status = None
+    parakeet_check = False
+    progress_fraction = None
+    verified_fraction = None
+    generated_progress = False
+    current_passage = None
+    review_passages = 0
     if vibevoice:
         try:
             progress_file = job_dir / "vibevoice_progress.json"
@@ -1896,6 +1984,21 @@ def _narration_progress(job_dir, st):
             done = int(progress.get("done", done))
             total = int(progress.get("total", st.get("vibevoice_total", total)))
             worker_status = progress.get("status")
+            parakeet_check = progress.get("workflow") == "generate_first_parakeet_v1"
+            if parakeet_check and worker_status == "generating":
+                n = int(progress.get("render_workers", 1))
+            review_passages = int(progress.get("review_passages", 0))
+            words_total = int(progress.get("total_words", 0))
+            words_done = int(progress.get("verified_words", 0))
+            if words_total > 0:
+                verified_fraction = max(0, min(1, words_done / words_total))
+                generated_progress = "generated_words" in progress
+                progress_fraction = max(0, min(1, int(progress.get("generated_words", words_done)) / words_total))
+            if progress.get("passage_index") is not None:
+                current_passage = int(progress["passage_index"]) + 1
+            worker_eta = progress.get("eta_sec")
+            if not progress_stale and worker_eta is not None and math.isfinite(float(worker_eta)) and float(worker_eta) >= 0:
+                eta = float(worker_eta)
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             total = st.get("vibevoice_total", total)
     elif st.get("engine") == "batched":
@@ -1914,20 +2017,35 @@ def _narration_progress(job_dir, st):
         eta = None
         message = "assembling"
     elif progress_stale:
-        message = "current batch is taking longer than expected; time estimate unavailable"
+        message = (("checking words with Parakeet on GPU; waiting for the next update, time estimate unavailable" if parakeet_check else
+                    "checking words on CPU; waiting for the next update, time estimate unavailable")
+                   if worker_status == "quality_check" else
+                   "current batch is taking longer than expected; time estimate unavailable")
     elif worker_status == "checking_cache":
         message = "checking resumable passages"
     elif worker_status == "quality_check":
-        message = f"checking generated passage quality ({n} worker{'s' if n > 1 else ''})"
+        message = ("checking generated clips with Parakeet on GPU" if parakeet_check else
+                   "checking generated passage quality: comparing words on CPU")
+    elif worker_status == "transcript_review":
+        message = "reviewing transcript differences with the local language model on GPU"
     elif worker_status == "loading_model" or (not worker_status and done == 0):
         message = f"loading model ({n} worker{'s' if n > 1 else ''})"
     else:
-        message = f"generating ({n} worker{'s' if n > 1 else ''})"
+        message = f"generating speech on GPU ({n} worker{'s' if n > 1 else ''})"
+    if current_passage and worker_status in ("generating", "quality_check", "transcript_review"):
+        message += f"; passage {current_passage} of {total}"
+    if review_passages:
+        message += f"; {review_passages} passage(s) saved for review after narration"
     return {
         "done": done,
         "total": total,
         "elapsed_sec": round(elapsed, 1),
         "eta_sec": round(eta, 1) if eta is not None else None,
+        "eta_rough": vibevoice,
+        "generated_progress": generated_progress,
+        "verified_fraction": verified_fraction,
+        "review_passages": review_passages,
+        "progress_fraction": progress_fraction if progress_fraction is not None else (done / total if total else 0),
         "message": message,
     }
 
@@ -2038,7 +2156,7 @@ def regenerate_job(job_id, backend, settings=None):
     destination = JOBS_DIR / new_id
     state = {key: original[key] for key in ("title", "path", "page_from", "page_to", "voice", "format", "engine") if key in original}
     state.update(id=new_id, pdf_path=str(pdf), backend=backend, status="queued",
-                 created_at=time.time(), regenerated_from=job_id, preview_required=True, generation_settings=settings)
+                 created_at=time.time(), regenerated_from=job_id, generation_settings=settings)
     destination.mkdir()
     for name in ("source_blocks.json", "legacy_blocks.json", "blocks.json", "visual_review.json",
                  "narration_scope.json", "cover_override.png", "cover.png", "cover.jpg", "cover.jpeg"):
@@ -2050,7 +2168,7 @@ def regenerate_job(job_id, backend, settings=None):
         visual_review.project(destination, state)
     with _STATE_LOCK:
         queue_persisted(state)
-    log_line(new_id, "created as a new generation; final text preview is required")
+    log_line(new_id, "created as a new generation using saved narration choices")
     return state
 
 
@@ -2078,6 +2196,10 @@ def job_detail(job_id):
     if not st:
         return None
     job_dir = JOBS_DIR / job_id
+    if st.get("status") == "queued":
+        with _queue_cv:
+            if job_id in _queue:
+                st["queue_position"] = _queue.index(job_id) + 1
     scope = visual_review.scope_summary(job_dir, st)
     if scope:
         st["narration_range"] = {"from": scope["page_from"],
@@ -2143,12 +2265,9 @@ def _full_narration_preview(job_id):
         if not st:
             return None
         job_dir = JOBS_DIR / job_id
-        blocks, unresolved, items, _decisions = visual_review.project(job_dir, st)
+        _blocks, unresolved, items, _decisions = visual_review.project(job_dir, st)
         preview_blocks = visual_review.preview_blocks(job_dir, st)
         text = "\n\n".join(block.get("text", "") for block in preview_blocks if block.get("text"))
-        if not unresolved and st.get("status") not in ("queued", "extracting", "tagging", "narrating"):
-            st["review_previewed_hash"] = _preview_signature(st, job_dir, blocks)
-            save_state(st)
         scope = visual_review.review_payload(job_dir, st)["narration_scope"]
         return {"text": text, "unresolved_count": len(unresolved), "item_count": len(items),
                 "narration_scope": scope}
@@ -2394,6 +2513,37 @@ class Handler(BaseHTTPRequestHandler):
                     self._serve_file(bl, "application/json; charset=utf-8")
                 else:
                     _json_response(self, {"error": "no blocks yet"}, 404)
+            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/audio-review(?:/\d+/audio)?", path):
+                parts = path.split("/")
+                job_id = parts[3]
+                audio = None
+                with _job_mutation_lock(job_id):
+                    st = load_state(job_id)
+                    if not st or st.get("status") != "audio_review_required":
+                        _json_response(self, {"error": "Audio review is not currently available."}, 409)
+                        return
+                    try:
+                        if len(parts) == 7:
+                            index = int(parts[5])
+                            entry = next((entry for entry in narration_review.entries(JOBS_DIR / job_id)
+                                          if any(unit["index"] == index for unit in entry["units"])), None)
+                            if entry is None:
+                                raise ValueError("Clip is not part of this review.")
+                            detail = narration_review.detail(JOBS_DIR / job_id, entry["parent"]["index"])
+                            if not any(item["index"] == index for item in detail["items"]):
+                                raise ValueError("Clip is not part of this review.")
+                            audio = narration_review.audio_path(JOBS_DIR / job_id, index)
+                            # Snapshot while validated, then release the job lock
+                            # before any potentially slow or paused network write.
+                            audio_bytes = audio.read_bytes()
+                        else:
+                            detail = narration_review.detail(JOBS_DIR / job_id)
+                            _json_response(self, detail)
+                    except (ValueError, OSError, KeyError) as exc:
+                        _json_response(self, {"error": str(exc)}, 409)
+                        return
+                if audio is not None:
+                    self._serve_audio(audio, data=audio_bytes)
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/visual-review", path):
                 detail = _visual_review_detail(path.split("/")[3])
                 _json_response(self, detail if detail else {"error": "not found"}, 200 if detail else 404)
@@ -2621,12 +2771,35 @@ class Handler(BaseHTTPRequestHandler):
                 job_id = path.split("/")[3]
                 request_cancel(job_id)
                 _json_response(self, {"ok": True})
+            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/audio-review/(?:\d+|start)", path):
+                parts = path.split("/")
+                job_id, action = parts[3], parts[5]
+                body = self._read_json()
+                with _job_mutation_lock(job_id), _STATE_LOCK:
+                    st = load_state(job_id)
+                    if not st or st.get("status") != "audio_review_required":
+                        _json_response(self, {"error": "Audio review is not currently available."}, 409)
+                        return
+                    try:
+                        if action == "start":
+                            detail = narration_review.detail(JOBS_DIR / job_id)
+                            if detail["unresolved_count"]:
+                                raise ValueError("Choose accept or regenerate for each flagged clip first.")
+                            st.pop("error", None)
+                            _cancel_flags.pop(job_id, None)
+                            queue_persisted(st)
+                            _json_response(self, {"ok": True})
+                        else:
+                            detail = narration_review.decide(JOBS_DIR / job_id, int(action), body.get("fingerprint"), body.get("action"))
+                            _json_response(self, detail)
+                    except (ValueError, OSError, KeyError) as exc:
+                        _json_response(self, {"error": str(exc)}, 409)
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/resume", path):
                 job_id = path.split("/")[3]
                 with _job_mutation_lock(job_id):
                     with _STATE_LOCK:
                         st = load_state(job_id)
-                        if st and st["status"] in ("failed", "canceled", "interrupted"):
+                        if st and st["status"] in ("failed", "canceled", "interrupted", "audio_review_required"):
                             st.pop("error", None)
                             _cancel_flags.pop(job_id, None)  # no stale cancel survives into the retry
                             queue_persisted(st)
@@ -2660,7 +2833,6 @@ class Handler(BaseHTTPRequestHandler):
                         st["narration_stale"] = True
                     st["status"] = "review_required"
                     st["visual_review_unresolved"] = len(unresolved)
-                    st.pop("review_previewed_hash", None)
                     save_state(st)
                 _json_response(self, {"ok": True, "narration_scope": scope,
                                       **_visual_review_detail(job_id)})
@@ -2697,7 +2869,6 @@ class Handler(BaseHTTPRequestHandler):
                             st["narration_stale"] = True
                     st["status"] = "review_required"
                     st["visual_review_unresolved"] = len(unresolved)
-                    st.pop("review_previewed_hash", None)
                     save_state(st)
                 _json_response(self, _visual_review_detail(job_id))
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/visual-review/reopen", path):
@@ -2713,7 +2884,6 @@ class Handler(BaseHTTPRequestHandler):
                     detail = visual_review.review_payload(JOBS_DIR / job_id, st)
                     st["status"] = "review_required"
                     st["visual_review_unresolved"] = detail["unresolved_count"]
-                    st.pop("review_previewed_hash", None)
                     save_state(st)
                 _json_response(self, {"ok": True, **_visual_review_detail(job_id)})
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/visual-review/start", path):
@@ -2733,10 +2903,6 @@ class Handler(BaseHTTPRequestHandler):
                         return
                     if not any(str(block.get("text", "")).strip() for block in blocks):
                         _json_response(self, {"error": "No spoken text remains. Keep or describe a passage before narration."}, 409)
-                        return
-                    signature = _preview_signature(st, job_dir, blocks)
-                    if st.get("review_previewed_hash") != signature:
-                        _json_response(self, {"error": "Open the full narration preview after your latest review changes."}, 409)
                         return
                     snapshot = _snapshot_prior_audio(st)
                     visual_review._write(job_dir / "blocks.json", {"blocks": blocks})
@@ -2830,12 +2996,12 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _serve_audio(self, fpath):
+    def _serve_audio(self, fpath, *, data=None):
         fpath = Path(fpath)
-        if not fpath.exists():
+        if data is None and not fpath.exists():
             self.send_error(404)
             return
-        size = fpath.stat().st_size
+        size = len(data) if data is not None else fpath.stat().st_size
         range_header = self.headers.get("Range")
         start, end = 0, size - 1
         if range_header:
@@ -2851,10 +3017,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(206 if range_header else 200)
         self.send_header("Content-Type", AUDIO_MIME.get(fpath.suffix.lower(), "application/octet-stream"))
         self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Cache-Control", "private, no-store")
         self.send_header("Content-Length", str(length))
         if range_header:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         self.end_headers()
+        if data is not None:
+            self.wfile.write(data[start:end + 1])
+            return
         with open(fpath, "rb") as f:
             f.seek(start)
             remaining = length

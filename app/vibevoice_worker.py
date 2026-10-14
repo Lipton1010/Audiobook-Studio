@@ -16,6 +16,7 @@ import time
 import re
 from queue import Empty, Queue
 from threading import Lock, Thread
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from pathlib import Path
 
 import numpy as np
@@ -25,8 +26,11 @@ from vibevoice_audio import mono_24k
 from vibevoice_plan import load_plan, normalize_text, sha256_file
 from vibevoice_assembly import _ffmpeg, assemble
 from vibevoice_units import repair_units, parent_quality, choose_repair_unit
-from vibevoice_quality import assess, integer_words, numbered_heading_assessment
+from vibevoice_quality import assess_narration as assess, integer_words, numbered_heading_assessment, unit_assessment
+import vibevoice_delivery as delivery
 from gpu_oom import bisect_cuda_oom
+from narration_eta import estimate_word_remaining_seconds, write_progress
+import narration_review
 
 
 SEGMENTS_DIR = "vibevoice_segments"
@@ -36,7 +40,7 @@ REJECTED_DIR = "vibevoice_rejected"
 UNITS_DIR = "units"
 CANCEL_FILE = "cancel_flag.txt"
 OVERLAP_TELEMETRY_FILE = "vibevoice_overlap.jsonl"
-PREFETCH_MAX_ITEMS = 2
+PREFETCH_MAX_ITEMS = 4
 PREFETCH_MAX_SECONDS = 240.0
 PREFETCH_MAX_BYTES = 32 * 1024 * 1024
 ASCII_APOSTROPHE_PROFILE = "ascii_intra_word_apostrophe_v1"
@@ -94,6 +98,8 @@ def _prefetch_within_limits(rendered):
 
 
 def _prefetch_next_parent(job_dir, parent, config, unit_dir, torch, processor, model, voice):
+    if narration_review.entry(job_dir, parent):
+        return None
     """Render one bounded, unaccepted batch for the immediately following parent."""
     units = _units_for_parent(parent, config)
     candidates = []
@@ -133,6 +139,8 @@ def _prefetch_next_parent(job_dir, parent, config, unit_dir, torch, processor, m
 def _render_text(text, profile=None, render_heading=None):
     if profile is None:
         return text
+    if profile == delivery.PROFILE:
+        return _INTRA_WORD_CURLY_APOSTROPHE.sub("'", delivery.spoken_text(text))
     if profile == NUMBERED_OUTLINE_HEADING_PROFILE:
         source = _NUMBERED_OUTLINE_RE.fullmatch(text)
         prefix, separator, title = (render_heading or "").partition(": ")
@@ -153,9 +161,13 @@ def _render_text(text, profile=None, render_heading=None):
 
 
 def _profiled_unit(unit, profile=None):
-    profile = profile or unit.get("render_profile", ASCII_APOSTROPHE_PROFILE)
+    profile = profile or unit.get("render_profile")
+    if profile is None:
+        parts = delivery.delivery_parts(unit["text"])
+        profile = (delivery.PROFILE if len(parts) > 1 or unit.get("spoken_text", delivery.spoken_text(unit["text"])) != unit["text"]
+                   else ASCII_APOSTROPHE_PROFILE)
     render_heading = unit.get("render_heading")
-    render_text = _render_text(unit["text"], profile, render_heading)
+    render_text = _render_text(unit.get("spoken_text", unit["text"]), profile, render_heading)
     return {**unit, "render_profile": profile, "render_text": render_text,
             "speaker_text": "Speaker 0: " + render_text}
 
@@ -184,7 +196,7 @@ def _render_with_numbered_heading_seed(torch, passage, attempt, render):
 
 
 def _render_text_sha256(unit, profile):
-    return hashlib.sha256(_render_text(unit["text"], profile, unit.get("render_heading")).encode("utf-8")).hexdigest()
+    return hashlib.sha256(_render_text(unit.get("spoken_text", unit["text"]), profile, unit.get("render_heading")).encode("utf-8")).hexdigest()
 
 
 def _outline_render_heading(parent, config):
@@ -209,7 +221,7 @@ def _outline_render_heading(parent, config):
 
 
 def _units_for_parent(parent, config):
-    units = repair_units(parent)
+    units = delivery.spoken_units(repair_units(parent))
     if _is_numbered_heading(parent):
         units[0] = {**units[0], "numbered_heading": True}
     numbered = _numbered_outline_heading(parent, config)
@@ -322,13 +334,16 @@ def _write_json(path, value):
     temporary.replace(path)
 
 
-def _progress(job_dir, done, total, shard, status, passage_index=None, attempt=None):
+def _progress(job_dir, done, total, shard, status, passage_index=None, attempt=None, metrics=None):
     payload = {"done": int(done), "total": int(total), "shard": int(shard), "status": str(status)}
     if passage_index is not None:
         payload["passage_index"] = int(passage_index)
     if attempt is not None:
         payload["attempt"] = int(attempt)
-    _write_json(Path(job_dir) / PROGRESS_FILE, payload)
+    if metrics:
+        payload.update(metrics)
+    # Progress is advisory. A browser/antivirus read must not abort narration.
+    write_progress(Path(job_dir) / PROGRESS_FILE, payload)
 
 
 def _cancelled(job_dir):
@@ -413,6 +428,7 @@ def _valid_segment(seg_dir, passage):
                 return False
     return bool(
         saved.get("identity") == passage["identity"]
+        and not saved.get("force_regenerate")
         and saved.get("wav_sha256") == sha256_file(wav)
         and info.samplerate == 24000
         and info.channels == 1
@@ -445,13 +461,15 @@ def _load_model(config):
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
     import torch
-    from vibevoice.modular.modeling_vibevoice_inference import VibeVoiceForConditionalGenerationInference
-    from vibevoice.processor.vibevoice_processor import VibeVoiceProcessor
 
     if not torch.cuda.is_available():
         raise RuntimeError("VibeVoice requires an NVIDIA CUDA GPU")
     torch.set_num_threads(4)
-    torch.cuda.set_per_process_memory_fraction(0.85)
+    render_workers = config.get("render_workers", 1)
+    if type(render_workers) is not int or render_workers not in (1, 2):
+        raise ValueError("Render workers must be one or two")
+    memory_fraction = 0.85 if render_workers == 1 else 0.40
+    torch.cuda.set_per_process_memory_fraction(memory_fraction)
     model_path = config.get("model_dir")
     if not model_path:
         raise RuntimeError("VibeVoice model_dir is not configured")
@@ -460,10 +478,17 @@ def _load_model(config):
         f"model={config['model_id']} revision={config['model_revision']} "
         f"tokenizer={config['tokenizer_revision']} dtype={config['dtype']} "
         f"cfg={config['cfg_scale']} steps={config['ddpm_steps']} "
-        f"attention={config['attention']} allocator=85% cpu_threads=4 "
+        f"attention={config['attention']} allocator={memory_fraction:.0%} cpu_threads=4 "
         f"fingerprint={config['model_fingerprint']}",
         flush=True,
     )
+    if config.get("inference_backend") == "compiled":
+        import vibevoice_hf
+        os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR", str(Path(model_path).parent / "inductor_cache"))
+        processor, model = vibevoice_hf.load(torch, config)
+        return torch, processor, model
+    from vibevoice.modular.modeling_vibevoice_inference import VibeVoiceForConditionalGenerationInference
+    from vibevoice.processor.vibevoice_processor import VibeVoiceProcessor
     processor = VibeVoiceProcessor.from_pretrained(
         model_path, revision=config["tokenizer_revision"], local_files_only=True
     )
@@ -543,8 +568,9 @@ class _QualityChecker:
             return response
 
     def check(self, wav_path, passage, attempt_label):
+        started = time.monotonic() if self.config.get("performance_telemetry") is True else None
         report = self.job_dir / REJECTED_DIR / f"seg_{passage['index']:06d}_{attempt_label}.quality.json"
-        request = {"audio": str(wav_path), "expected": passage["text"], "report": str(report),
+        request = {"audio": str(wav_path), "expected": passage.get("spoken_text", passage["text"]), "report": str(report),
                    "major_words": int(self.config.get("quality_major_words", 5))}
         process = self.process
         if process is None:
@@ -557,6 +583,9 @@ class _QualityChecker:
         response = self._wait_response("quality verifier timed out")
         if Path(response.get("report", "")) != report:
             raise RuntimeError("quality verifier returned an unexpected report path")
+        if started is not None:
+            _overlap_telemetry(self.job_dir, self.config, "quality_complete",
+                               units=[passage["index"]], elapsed_seconds=time.monotonic() - started)
         return bool(response.get("ok")), report
 
     def close(self):
@@ -584,6 +613,18 @@ def _quality_check(checker, wav_path, passage, attempt_label):
     return checker.check(wav_path, passage, attempt_label)
 
 
+def _wait_render(future, job_dir):
+    """Keep cancellation responsive while the single GPU owner finishes a batch."""
+    while True:
+        if _cancelled(job_dir):
+            raise SystemExit(2)
+        try:
+            return future.result(timeout=0.1)
+        except FutureTimeout:
+            if future.done():
+                raise
+
+
 class _QualityCheck:
     def __init__(self, checker, wav_path, passage, attempt_label):
         self.result, self.error = None, None
@@ -609,19 +650,25 @@ class _QualityCheck:
 
 def _render_one(torch, processor, model, voice, passage, config, tmp_path):
     _assert_no_ocr()
-    parsed = processor._parse_script(passage["speaker_text"])
-    if len(parsed) != 1 or normalize_text(parsed[0][1]) != passage.get("render_text", passage["text"]):
-        raise RuntimeError("VibeVoice processor did not preserve the complete passage text")
-    inputs = processor(text=[passage["speaker_text"]], voice_samples=[[voice]], padding=True, return_tensors="pt", return_attention_mask=True)
-    if inputs["input_ids"].shape[-1] > int(config["max_input_tokens"]):
-        raise RuntimeError("passage exceeds VibeVoice input-token ceiling; rebuild the plan with smaller passages")
-    inputs = {key: value.to("cuda") if torch.is_tensor(value) else value for key, value in inputs.items()}
-    with torch.inference_mode():
-        result = model.generate(**inputs, cfg_scale=float(config["cfg_scale"]), tokenizer=processor.tokenizer, max_new_tokens=int(config["max_new_tokens"]), do_sample=False)
+    if config.get("inference_backend") == "compiled":
+        import vibevoice_hf
+        with torch.inference_mode():
+            outputs, capped = vibevoice_hf.generate(torch, processor, model, voice, [passage], config)
+    else:
+        parsed = processor._parse_script(passage["speaker_text"])
+        if len(parsed) != 1 or normalize_text(parsed[0][1]) != passage.get("render_text", passage["text"]):
+            raise RuntimeError("VibeVoice processor did not preserve the complete passage text")
+        inputs = processor(text=[passage["speaker_text"]], voice_samples=[[voice]], padding=True, return_tensors="pt", return_attention_mask=True)
+        if inputs["input_ids"].shape[-1] > int(config["max_input_tokens"]):
+            raise RuntimeError("passage exceeds VibeVoice input-token ceiling; rebuild the plan with smaller passages")
+        inputs = {key: value.to("cuda") if torch.is_tensor(value) else value for key, value in inputs.items()}
+        with torch.inference_mode():
+            result = model.generate(**inputs, cfg_scale=float(config["cfg_scale"]), tokenizer=processor.tokenizer, max_new_tokens=int(config["max_new_tokens"]), do_sample=False)
+        outputs, capped = result.speech_outputs, result.reach_max_step_sample
     torch.cuda.synchronize()
-    if bool(result.reach_max_step_sample.any()):
+    if bool(capped.any()):
         raise RuntimeError("generation reached the 4000-token cap")
-    wav = result.speech_outputs[0].detach().float().cpu().numpy().squeeze()
+    wav = outputs[0].detach().float().cpu().numpy().squeeze()
     if wav.ndim != 1 or len(wav) <= 2400 or not np.isfinite(wav).all() or np.max(np.abs(wav)) <= 0.001:
         raise RuntimeError("generated audio was empty, nonfinite, or silent")
     import pyloudnorm as pyln
@@ -660,8 +707,11 @@ def _batch_size(torch, config=None):
     """Batch only on the measured 24 GiB class; smaller cards remain serial."""
     if (config or {}).get("batch_preference") == "conservative":
         return 1
+    size = (config or {}).get("native_batch_size", 2)
+    if type(size) is not int or not 1 <= size <= 4:
+        size = 2
     try:
-        return 2 if int(torch.cuda.get_device_properties(0).total_memory) >= 23 * 1024 ** 3 else 1
+        return size if int(torch.cuda.get_device_properties(0).total_memory) >= 23 * 1024 ** 3 else 1
     except Exception:
         return 1
 
@@ -682,31 +732,41 @@ def _normalize_wav(wav_tensor, config):
 
 
 def _render_batch(torch, processor, model, voice, items, config, unit_dir):
-    """Render up to two independent scripts and retain each row's own outcome."""
+    """Render a bounded native batch and retain each row's own outcome."""
     _assert_no_ocr()
     items = list(items)
     passages = [item[0] for item in items]
     if len(items) != 1 and any(passage.get("render_profile") == NUMBERED_OUTLINE_HEADING_PROFILE for passage in passages):
         raise RuntimeError("numbered outline headings must render as one seeded row")
-    for passage in passages:
-        parsed = processor._parse_script(passage["speaker_text"])
-        if len(parsed) != 1 or normalize_text(parsed[0][1]) != passage.get("render_text", passage["text"]):
-            raise RuntimeError("VibeVoice processor did not preserve the complete passage text")
-    inputs = processor(text=[p["speaker_text"] for p in passages], voice_samples=[[voice] for _ in passages],
-                       padding=True, return_tensors="pt", return_attention_mask=True)
-    counts = inputs["attention_mask"].sum(dim=-1).tolist()
-    if any(count > int(config["max_input_tokens"]) for count in counts):
-        raise RuntimeError("passage exceeds VibeVoice input-token ceiling; rebuild the plan with smaller passages")
-    inputs = {key: value.to("cuda") if torch.is_tensor(value) else value for key, value in inputs.items()}
-    def generate():
-        with torch.inference_mode():
-            return model.generate(**inputs, cfg_scale=float(config["cfg_scale"]), tokenizer=processor.tokenizer,
-                                  max_new_tokens=int(config["max_new_tokens"]), do_sample=False)
-    result = (_render_with_numbered_heading_seed(torch, passages[0], items[0][1], generate)
-              if len(items) == 1 else generate())
-    torch.cuda.synchronize()
-    outputs = result.speech_outputs
-    capped = result.reach_max_step_sample.detach().cpu().tolist()
+    if config.get("inference_backend") == "compiled":
+        import vibevoice_hf
+        def generate():
+            with torch.inference_mode():
+                return vibevoice_hf.generate(torch, processor, model, voice, passages, config)
+        outputs, capped = (_render_with_numbered_heading_seed(torch, passages[0], items[0][1], generate)
+                           if len(items) == 1 else generate())
+        torch.cuda.synchronize()
+        capped = capped.detach().cpu().tolist()
+    else:
+        for passage in passages:
+            parsed = processor._parse_script(passage["speaker_text"])
+            if len(parsed) != 1 or normalize_text(parsed[0][1]) != passage.get("render_text", passage["text"]):
+                raise RuntimeError("VibeVoice processor did not preserve the complete passage text")
+        inputs = processor(text=[p["speaker_text"] for p in passages], voice_samples=[[voice] for _ in passages],
+                           padding=True, return_tensors="pt", return_attention_mask=True)
+        counts = inputs["attention_mask"].sum(dim=-1).tolist()
+        if any(count > int(config["max_input_tokens"]) for count in counts):
+            raise RuntimeError("passage exceeds VibeVoice input-token ceiling; rebuild the plan with smaller passages")
+        inputs = {key: value.to("cuda") if torch.is_tensor(value) else value for key, value in inputs.items()}
+        def generate():
+            with torch.inference_mode():
+                return model.generate(**inputs, cfg_scale=float(config["cfg_scale"]), tokenizer=processor.tokenizer,
+                                      max_new_tokens=int(config["max_new_tokens"]), do_sample=False)
+        result = (_render_with_numbered_heading_seed(torch, passages[0], items[0][1], generate)
+                  if len(items) == 1 else generate())
+        torch.cuda.synchronize()
+        outputs = result.speech_outputs
+        capped = result.reach_max_step_sample.detach().cpu().tolist()
     if outputs is None or len(outputs) != len(items) or len(capped) != len(items):
         raise RuntimeError("VibeVoice native batch returned an unexpected number of rows")
     rendered = []
@@ -736,8 +796,7 @@ def _valid_unit(unit_dir, unit, allow_needs_repair=False):
         report = Path(receipt["quality_report"])
         payload = report.read_bytes()
         parsed = json.loads(payload)
-        assessment = (numbered_heading_assessment(unit["text"], parsed.get("transcript", ""))
-                      if unit.get("numbered_heading") else assess(unit["text"], parsed.get("transcript", "")))
+        assessment = unit_assessment(unit, parsed)
         profile = receipt.get("render_profile")
         if (unit.get("render_profile") == NUMBERED_OUTLINE_HEADING_PROFILE
                 and profile not in (None, ASCII_APOSTROPHE_PROFILE, NUMBERED_OUTLINE_HEADING_PROFILE)):
@@ -745,7 +804,7 @@ def _valid_unit(unit_dir, unit, allow_needs_repair=False):
         if (unit.get("render_profile") != NUMBERED_OUTLINE_HEADING_PROFILE
                 and unit.get("render_profile") and profile is not None and profile != unit["render_profile"]):
             return False
-        if profile not in (None, ASCII_APOSTROPHE_PROFILE, OUTLINE_PREFIX_CASE_PROFILE, NUMBERED_OUTLINE_HEADING_PROFILE):
+        if profile not in (None, ASCII_APOSTROPHE_PROFILE, OUTLINE_PREFIX_CASE_PROFILE, NUMBERED_OUTLINE_HEADING_PROFILE, delivery.PROFILE):
             return False
         if profile in (OUTLINE_PREFIX_CASE_PROFILE, NUMBERED_OUTLINE_HEADING_PROFILE) and receipt.get("render_heading") != unit.get("render_heading"):
             return False
@@ -760,7 +819,8 @@ def _valid_unit(unit_dir, unit, allow_needs_repair=False):
                               and receipt.get("attempt") == receipt.get("render_attempt"))
     except Exception:
         return False
-    return bool(valid_profile and valid_seed and (allow_needs_repair or not receipt.get("needs_repair"))
+    return bool(valid_profile and valid_seed and not receipt.get("force_regenerate") and not receipt.get("listen_again")
+                and (allow_needs_repair or not receipt.get("needs_repair"))
                 and receipt.get("report_sha256") == sha256_file(report)
                 and receipt.get("unit_index") == unit["unit_index"]
                 and receipt.get("parent_index") == unit["parent_index"]
@@ -771,11 +831,14 @@ def _valid_unit(unit_dir, unit, allow_needs_repair=False):
                 and parsed.get("unit_identity") == unit["identity"]
                 and parsed.get("unit_text_sha256") == unit["text_sha256"]
                 and parsed.get("audio_sha256") == receipt.get("wav_sha256")
-                and isinstance(parsed.get("transcript"), str) and assessment.get("ok"))
+                and isinstance(parsed.get("transcript"), str)
+                and (assessment.get("ok") or narration_review.approved(receipt, unit)))
 
 
 def _recover_parent_from_units(job_dir, parent, units, unit_dir, seg_dir):
     """Reuse a fully validated unit checkpoint after a checker-only correction."""
+    if not _apply_listening_decisions(job_dir, parent, units, unit_dir):
+        return False
     if not all(_valid_unit(unit_dir, unit, allow_needs_repair=True) for unit in units):
         return False
     reports = [_unit_report(unit_dir, unit) for unit in units]
@@ -796,20 +859,60 @@ def _recover_parent_from_units(job_dir, parent, units, unit_dir, seg_dir):
     return True
 
 
+def _apply_listening_decisions(job_dir, parent, units, unit_dir):
+    data = narration_review.entry(job_dir, parent)
+    if data is None:
+        return True
+    detail = narration_review.detail(job_dir, parent["index"])
+    if detail["unresolved_count"]:
+        return False
+    pending = unit_dir.parent / narration_review.CANDIDATES_DIR
+    for unit in units:
+        if unit["index"] not in data.get("candidates", []):
+            continue
+        receipt = json.loads(_receipt_path(pending, unit["index"]).read_text(encoding="utf-8"))
+        if receipt.get("force_regenerate"):
+            continue
+        if not _valid_unit(pending, unit):
+            raise RuntimeError("The reviewed clip no longer passes audio validation. Reopen audio review.")
+        if _cancelled(job_dir):
+            raise SystemExit(2)
+        archive = job_dir / REJECTED_DIR
+        archive.mkdir(exist_ok=True)
+        label = time.time_ns()
+        for existing in (_wav_path(unit_dir, unit["index"]), _receipt_path(unit_dir, unit["index"])):
+            if existing.exists():
+                shutil.copy2(existing, archive / f"{existing.stem}_before_review_{label}{existing.suffix}")
+        target = _wav_path(unit_dir, unit["index"])
+        temp = target.with_suffix(".review.tmp.wav")
+        shutil.copy2(_wav_path(pending, unit["index"]), temp)
+        temp.replace(target)
+        _write_json(_receipt_path(unit_dir, unit["index"]), receipt)
+    # Decisions now live in the exact unit receipts; a later failed attempt
+    # creates a fresh review instead of reviving an obsolete review screen.
+    narration_review.save_entries(job_dir, [record for record in narration_review.entries(job_dir)
+                                            if record["parent"] != parent])
+    return True
+
+
 def _unit_report(unit_dir, unit):
     receipt = json.loads(_receipt_path(unit_dir, unit["index"]).read_text(encoding="utf-8"))
     saved = json.loads(Path(receipt["quality_report"]).read_text(encoding="utf-8"))
-    report = (numbered_heading_assessment(unit["text"], saved.get("transcript", ""))
-              if unit.get("numbered_heading") else assess(unit["text"], saved.get("transcript", "")))
+    report = unit_assessment(unit, saved)
     report["transcript"] = saved.get("transcript", "")
     report["unit_index"] = unit["unit_index"]
+    if narration_review.approved(receipt, unit):
+        report["raw_assessment"] = dict(report)
+        report["transcript"] = unit.get("spoken_text", unit["text"])
+        report["listening_approval"] = receipt["listening_approval"]
+        report["ok"] = True
+        report.update(differences=[], major=[], missing_words=0, inserted_words=0)
     return report
 
 
 def _reported_unit(unit, report_path):
     saved = json.loads(Path(report_path).read_text(encoding="utf-8"))
-    report = (numbered_heading_assessment(unit["text"], saved.get("transcript", ""))
-              if unit.get("numbered_heading") else assess(unit["text"], saved.get("transcript", "")))
+    report = unit_assessment(unit, saved)
     report["transcript"] = saved.get("transcript", "")
     report["unit_index"] = unit["unit_index"]
     return report
@@ -825,6 +928,15 @@ def _publish_unit(unit_dir, passage, tmp, report, attempt):
     _write_json(Path(report), report_payload)
     if _cancelled(unit_dir.parent.parent):
         raise SystemExit(2)
+    prior_receipt = _receipt_path(unit_dir, passage["index"])
+    if final.exists() and prior_receipt.exists():
+        previous = json.loads(prior_receipt.read_text(encoding="utf-8"))
+        if previous.get("force_regenerate") or previous.get("listening_approval"):
+            archive = unit_dir.parent.parent / REJECTED_DIR
+            archive.mkdir(exist_ok=True)
+            stem = f"{final.stem}_before_listening_retry_{time.time_ns()}"
+            shutil.copy2(final, archive / f"{stem}.wav")
+            shutil.copy2(prior_receipt, archive / f"{stem}.json")
     if passage.get("numbered_heading"):
         _archive_replaced_heading_wav(final, unit_dir.parent.parent / REJECTED_DIR)
     if _cancelled(unit_dir.parent.parent):
@@ -879,6 +991,15 @@ def _assemble_parent_from_units(parent, units, unit_dir, seg_dir, aggregate):
             raise SystemExit(2)
         if _is_numbered_heading(parent):
             _archive_replaced_heading_wav(final, seg_dir.parent / REJECTED_DIR)
+        receipt_path = _receipt_path(seg_dir, parent["index"])
+        if final.exists() and receipt_path.exists():
+            previous = json.loads(receipt_path.read_text(encoding="utf-8"))
+            if previous.get("force_regenerate"):
+                archive = seg_dir.parent / REJECTED_DIR
+                archive.mkdir(exist_ok=True)
+                stem = f"{final.stem}_before_requested_update_{time.time_ns()}"
+                shutil.copy2(final, archive / f"{stem}.wav")
+                shutil.copy2(receipt_path, archive / f"{stem}.json")
         if _cancelled(seg_dir.parent):
             raise SystemExit(2)
         temp.replace(final)
@@ -903,6 +1024,46 @@ def _assemble_parent_from_units(parent, units, unit_dir, seg_dir, aggregate):
 
 
 def _render_items(torch, processor, model, voice, items, config, unit_dir):
+    if any(unit.get("render_profile") == delivery.PROFILE for unit, _ in items):
+        rendered = []
+        for unit, attempt in items:
+            if unit.get("render_profile") != delivery.PROFILE:
+                rendered.extend(_render_items(torch, processor, model, voice, [(unit, attempt)], config, unit_dir))
+                continue
+            tmp = _wav_path(unit_dir, unit["index"]).with_suffix(f".tmp{os.getpid()}.wav")
+            parts = delivery.delivery_parts(unit["render_text"])
+            clips = []
+            error = None
+            try:
+                for index, part in enumerate(parts):
+                    if _cancelled(unit_dir.parent.parent):
+                        raise SystemExit(2)
+                    try:
+                        os.utime(unit_dir.parent.parent / PROGRESS_FILE, None)
+                    except OSError:
+                        pass
+                    fragment = {**unit, "text": part["text"], "render_text": part["text"],
+                                "speaker_text": "Speaker 0: " + part["text"]}
+                    _render_one(torch, processor, model, voice, fragment, config, tmp)
+                    audio, sr = sf.read(str(tmp), dtype="float32")
+                    ramp = np.linspace(0.0, 1.0, 120, dtype=np.float32)
+                    if index:
+                        audio[:120] *= ramp
+                    if index + 1 < len(parts):
+                        audio[-120:] *= ramp[::-1]
+                    if index:
+                        clips.append(np.zeros(int(0.20 * sr), dtype="float32"))
+                    # A quiet aside retains the voice and words, with its own
+                    # sentence contour and explicit pauses on both sides.
+                    clips.append(audio * (0.84 if part["aside"] else 1.0))
+                if not clips:
+                    raise RuntimeError("generated audio was empty after spoken-text cleanup")
+                sf.write(str(tmp), np.concatenate(clips), 24000, subtype="PCM_16")
+            except Exception as exc:
+                tmp.unlink(missing_ok=True)
+                error = exc
+            rendered.append((unit, attempt, tmp, error))
+        return rendered
     return bisect_cuda_oom(
         items,
         lambda rows: _render_batch(torch, processor, model, voice, rows, config, unit_dir),
@@ -912,8 +1073,10 @@ def _render_items(torch, processor, model, voice, items, config, unit_dir):
 
 def _recover_with_render_profile(job_dir, parent, units, reports, unit_dir, rejected,
                                  torch, processor, model, voice, config, checker, retries,
-                                 done=0, total=0, shard=0):
+                                 done=0, total=0, shard=0, report_progress=None, render=None):
     """Try each spent legacy unit once, retaining its checkpoint unless the parent improves."""
+    if report_progress is None:
+        report_progress = lambda status, index, attempt: _progress(job_dir, done, total, shard, status, index, attempt)
     baseline = parent_quality(parent, reports, units=units)
     for unit in _profile_recovery_candidates(parent, units, reports, unit_dir, retries):
         if _cancelled(job_dir):
@@ -924,8 +1087,9 @@ def _recover_with_render_profile(job_dir, parent, units, reports, unit_dir, reje
         profiled = _profiled_unit(unit, profile)
         label = f"profile_{profile}_{time.time_ns()}"
         attempt = int(json.loads(_receipt_path(unit_dir, unit["index"]).read_text(encoding="utf-8")).get("attempt", 0)) + 1
-        _progress(job_dir, done, total, shard, "generating", parent["index"], attempt)
-        rendered = _render_items(torch, processor, model, voice, [(profiled, attempt)], config, unit_dir)
+        report_progress("generating", parent["index"], attempt)
+        rendered = (render([(profiled, attempt)]) if render else
+                    _render_items(torch, processor, model, voice, [(profiled, attempt)], config, unit_dir))
         _, _, tmp, render_error = rendered[0]
         if _cancelled(job_dir):
             tmp.unlink(missing_ok=True)
@@ -933,7 +1097,7 @@ def _recover_with_render_profile(job_dir, parent, units, reports, unit_dir, reje
         if render_error:
             tmp.unlink(missing_ok=True)
             continue
-        _progress(job_dir, done, total, shard, "quality_check", parent["index"], attempt)
+        report_progress("quality_check", parent["index"], attempt)
         pending = _QualityCheck(checker, tmp, profiled, label)
         ok, report_path = pending.wait(job_dir, checker)
         if _cancelled(job_dir):
@@ -957,7 +1121,14 @@ def run_generate(job_dir, shard=0, num_shards=1):
         raise RuntimeError("VibeVoice uses exactly one GPU worker; shard 0 of 1 is required")
     job_dir = Path(job_dir)
     plan, config = load_plan(job_dir)
+    if config.get("workflow") == "generate_first_parakeet_v1":
+        import vibevoice_phases
+        return vibevoice_phases.run_generate(job_dir)
+    if config.get("workflow", "overlap_cpu") != "overlap_cpu":
+        raise ValueError("Unknown narration workflow")
     passages = plan["passages"]
+    narration_review.save_entries(job_dir, [data for data in narration_review.entries(job_dir)
+                                            if data["parent"] in passages])
     seg_dir = job_dir / SEGMENTS_DIR
     rejected = job_dir / REJECTED_DIR
     unit_dir = seg_dir / UNITS_DIR
@@ -980,9 +1151,37 @@ def run_generate(job_dir, shard=0, num_shards=1):
         else:
             remaining.append(parent)
     todo = remaining
+    # Previously flagged passages with no missing clips need no GPU work.
+    deferred = []
+    for parent in todo:
+        review = narration_review.entry(job_dir, parent)
+        if review:
+            flagged = {item["index"] for item in narration_review.detail(job_dir, parent["index"])["items"]}
+            if all(unit["index"] in flagged or _valid_unit(unit_dir, unit)
+                   for unit in _units_for_parent(parent, config)):
+                deferred.append(parent)
+    todo = [parent for parent in todo if parent not in deferred]
     if not todo:
+        if narration_review.entries(job_dir):
+            _progress(job_dir, done, len(passages), shard, "awaiting_review",
+                      metrics={"review_passages": len(narration_review.entries(job_dir)),
+                               "generated_words": sum(len(p["text"].split()) for p in passages),
+                               "total_words": sum(len(p["text"].split()) for p in passages)})
+            raise narration_review.ListeningRequired("Narration has finished. Review the flagged clips before assembling the audiobook.")
         _progress(job_dir, done, len(passages), shard, "complete")
         return
+    # Only missing unit work calibrates a resumed run; existing receipts must
+    # not make its measured speed look artificially fast.
+    word_counts = {p["index"]: len(p["text"].split()) for p in passages}
+    pending_words = {
+        p["index"]: max(1, sum(len(unit["text"].split()) for unit in _units_for_parent(p, config)
+                              if not _valid_unit(unit_dir, unit)))
+        for p in todo
+    }
+    verified_words = sum(word_counts.values()) - sum(word_counts[p["index"]] for p in todo + deferred)
+    generated_words = verified_words + sum(word_counts[p["index"]] for p in deferred)
+    remaining_words = sum(pending_words.values())
+    measured_words = prose_samples = 0
     _assert_no_ocr()
     voice = _prepare_voice(job_dir, config, plan)
     if _cancelled(job_dir):
@@ -991,183 +1190,272 @@ def run_generate(job_dir, shard=0, num_shards=1):
     torch, processor, model = _load_model(config)
     retries = int(config.get("quality_max_retries", 2))
     checker = _QualityChecker(job_dir, config)
+    checkers = [checker]
+
+    def report_progress(status, passage_index=None, attempt=None):
+        eta = estimate_word_remaining_seconds(
+            time.monotonic() - timing_started, measured_words, remaining_words, prose_samples,
+        )
+        if status == "awaiting_review":
+            eta = None
+        _progress(job_dir, done, len(passages), shard, status, passage_index, attempt, metrics={
+            "verified_words": verified_words, "total_words": sum(word_counts.values()),
+            "generated_words": generated_words,
+            "eta_sec": eta, "eta_samples": prose_samples,
+            "review_passages": len(narration_review.entries(job_dir)),
+        })
+
     active_quality = None
+    active_checks = {}
     cross_parent_prefetch = None
+    renderer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vibevoice-render")
+
+    def render_batch(batch):
+        if _cancelled(job_dir):
+            raise SystemExit(2)
+        parents = sorted({unit["parent_index"] for unit, _ in batch})
+        indices = [unit["index"] for unit, _ in batch]
+        _overlap_telemetry(job_dir, config, "render_start", parents, indices)
+        result = _render_items(torch, processor, model, voice, batch, config, unit_dir)
+        _overlap_telemetry(job_dir, config, "render_end", parents, indices)
+        return result
+
+    def render(batch):
+        return _wait_render(renderer.submit(render_batch, batch), job_dir)
+
+    def prefetch(parent):
+        try:
+            return _prefetch_next_parent(job_dir, parent, config, unit_dir,
+                                         torch, processor, model, voice)
+        except Exception as exc:
+            _overlap_telemetry(job_dir, config, "prefetch_deferred", [parent["index"]],
+                               error_type=type(exc).__name__)
+            return None
+
+    def start_check(row, rendered):
+        if row >= len(rendered):
+            return
+        unit, attempt, tmp, error = rendered[row]
+        if error:
+            return
+        helper = checkers[row % len(checkers)]
+        label = f"attempt{attempt}_{time.time_ns()}"
+        report_progress("quality_check", unit["parent_index"], attempt)
+        active_checks[row] = (_QualityCheck(helper, tmp, unit, label), helper, label)
+        _overlap_telemetry(job_dir, config, "quality_start", [unit["parent_index"]], [unit["index"]])
+
     try:
+        # Keep additional CPU model memory opt-in for measured machines.
+        if config.get("quality_workers") == 2 and _batch_size(torch, config) > 1:
+            checkers.append(_QualityChecker(job_dir, config))
+        timing_started = time.monotonic()
         for parent_position, parent in enumerate(todo):
-            units = _units_for_parent(parent, config)
-            attempts, queued = {}, []
-            prefetched = None
-            for unit in units:
-                receipt = _receipt_path(unit_dir, unit["index"])
-                valid = _valid_unit(unit_dir, unit)
-                if valid:
-                    attempts[unit["index"]] = int(json.loads(receipt.read_text(encoding="utf-8")).get("attempt", 0))
-                else:
-                    attempts[unit["index"]] = 0
-                    queued.append(_profiled_unit(unit))
-            if cross_parent_prefetch and cross_parent_prefetch["parent_index"] == parent["index"]:
-                prefetched = cross_parent_prefetch["rendered"]
-                prefetched_indices = {unit["index"] for unit, _attempt, _tmp, _error in prefetched}
-                queued = [unit for unit in queued if unit["index"] not in prefetched_indices]
-                for unit, attempt, _tmp, _error in prefetched:
-                    attempts[unit["index"]] = attempt
-                _overlap_telemetry(job_dir, config, "prefetch_consumed", [parent["index"]], sorted(prefetched_indices))
-                cross_parent_prefetch = None
-            while queued or prefetched is not None:
-                if _cancelled(job_dir):
-                    _progress(job_dir, done, len(passages), shard, "cancelled")
-                    raise SystemExit(2)
-                if prefetched is None:
-                    batch = [(unit, attempts[unit["index"]] + 1) for unit in queued[:_batch_size(torch, config)]]
-                    del queued[:len(batch)]
-                    for unit, attempt in batch:
-                        _progress(job_dir, done, len(passages), shard, "generating", parent["index"], attempt)
-                    _overlap_telemetry(job_dir, config, "render_start", [parent["index"]], [unit["index"] for unit, _ in batch])
-                    rendered = _render_items(torch, processor, model, voice, batch, config, unit_dir)
-                    _overlap_telemetry(job_dir, config, "render_end", [parent["index"]], [unit["index"] for unit, _ in batch])
-                else:
-                    rendered, prefetched = prefetched, None
-                terminal_error = None
-                for row, (unit, attempt, tmp, render_error) in enumerate(rendered):
-                    if _cancelled(job_dir):
-                        tmp.unlink(missing_ok=True)
-                        raise SystemExit(2)
-                    if render_error:
+            try:
+                units = _units_for_parent(parent, config)
+                prior_review = narration_review.entry(job_dir, parent)
+                flagged = {item["index"] for item in narration_review.detail(job_dir, parent["index"])["items"]} if prior_review else set()
+                review_candidates = list(prior_review.get("candidates", [])) if prior_review else []
+                attempts, queued = {}, []
+                prefetched = None
+                prefetched_count = 0
+                for unit in units:
+                    receipt = _receipt_path(unit_dir, unit["index"])
+                    valid = _valid_unit(unit_dir, unit)
+                    if valid:
+                        attempts[unit["index"]] = int(json.loads(receipt.read_text(encoding="utf-8")).get("attempt", 0))
+                    elif unit["index"] not in flagged:
+                        attempts[unit["index"]] = 0
+                        queued.append(_profiled_unit(unit))
+                if cross_parent_prefetch is not None:
+                    cross_parent_prefetch = _wait_render(cross_parent_prefetch, job_dir)
+                if cross_parent_prefetch:
+                    prefetched = cross_parent_prefetch["rendered"]
+                    prefetched_count = len(prefetched)
+                    prefetched_indices = {unit["index"] for unit, _attempt, _tmp, _error in prefetched}
+                    queued = [unit for unit in queued if unit["index"] not in prefetched_indices]
+                    for unit, attempt, _tmp, _error in prefetched:
                         attempts[unit["index"]] = attempt
-                        if _recoverable_render_error(render_error) and attempt < _attempt_limit(unit, retries):
-                            queued.append(unit)
-                            continue
-                        terminal_error = render_error
-                        continue
-                    label = f"attempt{attempt}_{time.time_ns()}"
-                    _progress(job_dir, done, len(passages), shard, "quality_check", parent["index"], attempt)
-                    pending = active_quality = _QualityCheck(checker, tmp, unit, label)
-                    _overlap_telemetry(job_dir, config, "quality_start", [parent["index"]], [unit["index"]])
-                    # One CPU verification may overlap one following GPU batch.
-                    # The verifier remains a single persistent process and we do
-                    # not submit another request until this one has completed.
-                    if row == 0 and queued:
-                        next_batch = [(candidate, attempts[candidate["index"]] + 1)
-                                      for candidate in queued[:_batch_size(torch, config)]]
-                        del queued[:len(next_batch)]
-                        for candidate, next_attempt in next_batch:
-                            _progress(job_dir, done, len(passages), shard, "generating", parent["index"], next_attempt)
-                        try:
-                            if _cancelled(job_dir):
-                                raise SystemExit(2)
-                            _overlap_telemetry(job_dir, config, "render_start", [parent["index"]], [unit["index"] for unit, _ in next_batch])
-                            prefetched = _render_items(torch, processor, model, voice, next_batch, config, unit_dir)
-                            _overlap_telemetry(job_dir, config, "render_end", [parent["index"]], [unit["index"] for unit, _ in next_batch])
-                        except Exception as exc:
-                            # Finish the already-running CPU verdict before
-                            # surfacing a following GPU failure.
-                            terminal_error = exc
-                    elif (row == len(rendered) - 1 and not queued and prefetched is None
-                          and _cross_parent_enabled(config) and cross_parent_prefetch is None
-                          and parent_position + 1 < len(todo)):
-                        try:
-                            cross_parent_prefetch = _prefetch_next_parent(
-                                job_dir, todo[parent_position + 1], config, unit_dir,
-                                torch, processor, model, voice,
-                            )
-                        except Exception as exc:
-                            _overlap_telemetry(job_dir, config, "prefetch_deferred", [todo[parent_position + 1]["index"]],
-                                               error_type=type(exc).__name__)
-                            cross_parent_prefetch = None
-                        _progress(job_dir, done, len(passages), shard, "quality_check", parent["index"], attempt)
-                    _overlap_telemetry(job_dir, config, "quality_wait_start", [parent["index"]], [unit["index"]])
-                    ok, report = pending.wait(job_dir, checker)
-                    _overlap_telemetry(job_dir, config, "quality_wait_end", [parent["index"]], [unit["index"]])
-                    active_quality = None
-                    candidate_report = _reported_unit(unit, report) if ok else None
-                    if ok and candidate_report["ok"]:
+                    _overlap_telemetry(job_dir, config, "prefetch_consumed", [parent["index"]], sorted(prefetched_indices))
+                    cross_parent_prefetch = None
+                while queued or prefetched is not None:
+                    if _cancelled(job_dir):
+                        report_progress("cancelled")
+                        raise SystemExit(2)
+                    if prefetched is None:
+                        batch = [(unit, attempts[unit["index"]] + 1) for unit in queued[:_batch_size(torch, config)]]
+                        del queued[:len(batch)]
+                        for unit, attempt in batch:
+                            report_progress("generating", parent["index"], attempt)
+                        rendered = render(batch)
+                    else:
+                        rendered = (_wait_render(prefetched, job_dir) if hasattr(prefetched, "result") else prefetched)
+                        prefetched = None
+                        prefetched_count = 0
+                    terminal_error = None
+                    for row in range(min(len(checkers), len(rendered))):
+                        start_check(row, rendered)
+                    for row, (unit, attempt, tmp, render_error) in enumerate(rendered):
                         if _cancelled(job_dir):
                             tmp.unlink(missing_ok=True)
                             raise SystemExit(2)
-                        _publish_unit(unit_dir, unit, tmp, report, attempt)
-                        attempts[unit["index"]] = attempt
-                    else:
-                        tmp.replace(rejected / f"unit_{unit['index']:010d}_{label}.wav")
-                        attempts[unit["index"]] = attempt
-                        if attempt < _attempt_limit(unit, retries):
-                            queued.append(unit)
-                        else:
-                            terminal_error = RuntimeError(f"major ASR coverage error; report {report.name}")
-                if terminal_error:
-                    raise terminal_error
-            reports = [_unit_report(unit_dir, unit) for unit in units]
-            aggregate = parent_quality(parent, reports, units=units)
-            while not aggregate["ok"]:
-                exhausted = {unit["unit_index"] for unit in units
-                             if attempts[unit["index"]] >= _attempt_limit(unit, retries)}
-                try:
-                    unit = choose_repair_unit(units, reports, exclude=exhausted)
-                except ValueError as exc:
-                    recovered = _recover_with_render_profile(
-                        job_dir, parent, units, reports, unit_dir, rejected, torch, processor,
-                        model, voice, config, checker, retries, done, len(passages), shard,
-                    )
-                    if recovered:
-                        reports, aggregate = recovered
-                        continue
-                    raise RuntimeError("parent quality failed after exhausting repair attempts") from exc
-                receipt_path = _receipt_path(unit_dir, unit["index"])
-                saved = json.loads(receipt_path.read_text(encoding="utf-8"))
-                saved["needs_repair"] = True
-                _write_json(receipt_path, saved)
-                accepted = False
-                while attempts[unit["index"]] < _attempt_limit(unit, retries):
-                    if _cancelled(job_dir):
-                        _progress(job_dir, done, len(passages), shard, "cancelled")
-                        raise SystemExit(2)
-                    attempt = attempts[unit["index"]] + 1
-                    _progress(job_dir, done, len(passages), shard, "generating", parent["index"], attempt)
-                    rendered_unit = _profiled_unit(unit)
-                    rendered = _render_items(torch, processor, model, voice, [(rendered_unit, attempt)], config, unit_dir)
-                    _, _, tmp, render_error = rendered[0]
-                    attempts[unit["index"]] = attempt
-                    if render_error:
-                        tmp.unlink(missing_ok=True)
-                        if _recoverable_render_error(render_error):
+                        if render_error:
+                            attempts[unit["index"]] = attempt
+                            if _recoverable_render_error(render_error) and attempt < _attempt_limit(unit, retries):
+                                queued.append(unit)
+                                start_check(row + len(checkers), rendered)
+                                continue
+                            terminal_error = render_error
+                            start_check(row + len(checkers), rendered)
                             continue
-                        raise render_error
-                    label = f"attempt{attempt}_{time.time_ns()}"
-                    _progress(job_dir, done, len(passages), shard, "quality_check", parent["index"], attempt)
-                    pending = active_quality = _QualityCheck(checker, tmp, rendered_unit, label)
-                    ok, report = pending.wait(job_dir, checker)
-                    active_quality = None
-                    if _cancelled(job_dir):
-                        tmp.unlink(missing_ok=True)
-                        raise SystemExit(2)
-                    candidate_report = _reported_unit(unit, report) if ok else None
-                    if not ok or not candidate_report["ok"]:
-                        tmp.replace(rejected / f"unit_{unit['index']:010d}_{label}.wav")
-                        continue
-                    _publish_unit(unit_dir, rendered_unit, tmp, report, attempt)
-                    accepted = True
-                    break
-                if not accepted:
-                    raise RuntimeError(f"parent quality failed after repairing unit {unit['unit_index']}")
-                reports = [_unit_report(unit_dir, candidate) for candidate in units]
+                        pending, helper, label = active_checks.pop(row)
+                        active_quality = pending
+                        # Render ahead without blocking subsequent checks. Keep
+                        # at most two configured batches, including a partial
+                        # batch retained at the end of the current parent.
+                        if queued and prefetched is None and cross_parent_prefetch is None:
+                            next_batch = [(candidate, attempts[candidate["index"]] + 1)
+                                          for candidate in queued[:_batch_size(torch, config)]]
+                            del queued[:len(next_batch)]
+                            for candidate, next_attempt in next_batch:
+                                report_progress("generating", parent["index"], next_attempt)
+                            if _cancelled(job_dir):
+                                raise SystemExit(2)
+                            prefetched = renderer.submit(render_batch, next_batch)
+                            prefetched_count = len(next_batch)
+                        elif (not queued
+                              and _cross_parent_enabled(config) and cross_parent_prefetch is None
+                              and parent_position + 1 < len(todo)
+                              and len(rendered) - row + prefetched_count
+                                  + min(PREFETCH_MAX_ITEMS, _batch_size(torch, config))
+                                  <= 2 * _batch_size(torch, config)):
+                            cross_parent_prefetch = renderer.submit(prefetch, todo[parent_position + 1])
+                            report_progress("quality_check", parent["index"], attempt)
+                        _overlap_telemetry(job_dir, config, "quality_wait_start", [parent["index"]], [unit["index"]])
+                        ok, report = pending.wait(job_dir, helper)
+                        _overlap_telemetry(job_dir, config, "quality_wait_end", [parent["index"]], [unit["index"]])
+                        active_quality = None
+                        candidate_report = _reported_unit(unit, report) if ok else None
+                        if ok and candidate_report["ok"]:
+                            if _cancelled(job_dir):
+                                tmp.unlink(missing_ok=True)
+                                raise SystemExit(2)
+                            _publish_unit(unit_dir, unit, tmp, report, attempt)
+                            attempts[unit["index"]] = attempt
+                        else:
+                            attempts[unit["index"]] = attempt
+                            if attempt < _attempt_limit(unit, retries):
+                                tmp.replace(rejected / f"unit_{unit['index']:010d}_{label}.wav")
+                                queued.append(unit)
+                            else:
+                                pending_dir = seg_dir / narration_review.CANDIDATES_DIR
+                                pending_dir.mkdir(exist_ok=True)
+                                _publish_unit(pending_dir, unit, tmp, report, attempt)
+                                review_candidates.append(unit["index"])
+                                narration_review.record(job_dir, parent, units, review_candidates)
+                                terminal_error = terminal_error or narration_review.ListeningRequired("Clip needs listening review")
+                        start_check(row + len(checkers), rendered)
+                    if terminal_error:
+                        if isinstance(terminal_error, narration_review.ListeningRequired):
+                            continue
+                        raise terminal_error
+                if review_candidates or prior_review:
+                    narration_review.hold(job_dir, parent, units, review_candidates)
+                reports = [_unit_report(unit_dir, unit) for unit in units]
                 aggregate = parent_quality(parent, reports, units=units)
-            if _cancelled(job_dir):
-                _progress(job_dir, done, len(passages), shard, "cancelled")
-                raise SystemExit(2)
-            _assemble_parent_from_units(parent, units, unit_dir, seg_dir, aggregate)
-            done += 1
-            _progress(job_dir, done, len(passages), shard, "generating")
+                while not aggregate["ok"]:
+                    exhausted = {unit["unit_index"] for unit in units
+                                 if attempts[unit["index"]] >= _attempt_limit(unit, retries)}
+                    try:
+                        unit = choose_repair_unit(units, reports, exclude=exhausted)
+                    except ValueError as exc:
+                        recovered = _recover_with_render_profile(
+                            job_dir, parent, units, reports, unit_dir, rejected, torch, processor,
+                            model, voice, config, checker, retries, done, len(passages), shard, report_progress,
+                            render=render,
+                        )
+                        if recovered:
+                            reports, aggregate = recovered
+                            continue
+                        narration_review.hold(job_dir, parent, units)
+                    receipt_path = _receipt_path(unit_dir, unit["index"])
+                    saved = json.loads(receipt_path.read_text(encoding="utf-8"))
+                    saved["needs_repair"] = True
+                    _write_json(receipt_path, saved)
+                    accepted = False
+                    while attempts[unit["index"]] < _attempt_limit(unit, retries):
+                        if _cancelled(job_dir):
+                            report_progress("cancelled")
+                            raise SystemExit(2)
+                        attempt = attempts[unit["index"]] + 1
+                        report_progress("generating", parent["index"], attempt)
+                        rendered_unit = _profiled_unit(unit)
+                        rendered = render([(rendered_unit, attempt)])
+                        _, _, tmp, render_error = rendered[0]
+                        attempts[unit["index"]] = attempt
+                        if render_error:
+                            tmp.unlink(missing_ok=True)
+                            if _recoverable_render_error(render_error):
+                                continue
+                            raise render_error
+                        label = f"attempt{attempt}_{time.time_ns()}"
+                        report_progress("quality_check", parent["index"], attempt)
+                        pending = active_quality = _QualityCheck(checker, tmp, rendered_unit, label)
+                        ok, report = pending.wait(job_dir, checker)
+                        active_quality = None
+                        if _cancelled(job_dir):
+                            tmp.unlink(missing_ok=True)
+                            raise SystemExit(2)
+                        candidate_report = _reported_unit(unit, report) if ok else None
+                        if not ok or not candidate_report["ok"]:
+                            tmp.replace(rejected / f"unit_{unit['index']:010d}_{label}.wav")
+                            continue
+                        _publish_unit(unit_dir, rendered_unit, tmp, report, attempt)
+                        accepted = True
+                        break
+                    if not accepted:
+                        narration_review.hold(job_dir, parent, units)
+                    reports = [_unit_report(unit_dir, candidate) for candidate in units]
+                    aggregate = parent_quality(parent, reports, units=units)
+                if _cancelled(job_dir):
+                    report_progress("cancelled")
+                    raise SystemExit(2)
+                _assemble_parent_from_units(parent, units, unit_dir, seg_dir, aggregate)
+                done += 1
+                verified_words += word_counts[parent["index"]]
+                generated_words += word_counts[parent["index"]]
+                measured_words += pending_words[parent["index"]]
+                remaining_words -= pending_words[parent["index"]]
+                if not parent.get("heading") and pending_words[parent["index"]] >= 40:
+                    prose_samples += 1
+                report_progress("generating")
+            except narration_review.ListeningRequired:
+                remaining_words -= pending_words[parent["index"]]
+                generated_words += word_counts[parent["index"]]
+                report_progress("generating", parent["index"])
+                continue
     finally:
-        checker.close()
-        if active_quality:
-            active_quality.thread.join(timeout=10)
+        for helper in checkers:
+            helper.close()
+        for pending in [active_quality] + [item[0] for item in active_checks.values()]:
+            thread = getattr(pending, "thread", None)
+            if thread is not None:
+                thread.join(timeout=10)
+        # A render may still be writing a provisional WAV after cancellation.
+        # Join its owner before cleaning files; the server can terminate the
+        # entire owned worker if generation does not stop promptly.
+        renderer.shutdown(wait=True, cancel_futures=True)
         for tmp in unit_dir.glob("*.tmp*.wav"):
             tmp.unlink(missing_ok=True)
-    _progress(job_dir, done, len(passages), shard, "complete")
+    if narration_review.entries(job_dir):
+        report_progress("awaiting_review")
+        raise narration_review.ListeningRequired("Narration has finished. Review the flagged clips before assembling the audiobook.")
+    report_progress("complete")
 
 
 def run_assemble(job_dir):
     job_dir = Path(job_dir)
+    if narration_review.entries(job_dir):
+        raise narration_review.ListeningRequired("Review the flagged clips before assembling the audiobook.")
     plan, config = load_plan(job_dir)
     seg_dir = job_dir / SEGMENTS_DIR
     missing = [p["index"] for p in plan["passages"] if not _valid_segment(seg_dir, p)]
@@ -1193,6 +1481,10 @@ def main():
             run_assemble(args.job_dir)
     except SystemExit:
         raise
+    except narration_review.ListeningRequired as exc:
+        _write_json(Path(args.job_dir) / ERROR_FILE, {"reason": "listening_required", "message": str(exc)})
+        print(str(exc), flush=True)
+        raise SystemExit(3)
     except Exception as exc:
         error = Path(args.job_dir) / ERROR_FILE
         if not error.exists():

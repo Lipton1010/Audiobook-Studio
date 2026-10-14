@@ -72,6 +72,53 @@ class VibeVoiceServerTests(unittest.TestCase):
         with mock.patch.object(server.time, "time", return_value=901):
             self.assertEqual(server._wait_for_generation(proc, self.job_dir, "", "vibevoice"), 0)
 
+    def test_parakeet_progress_names_the_gpu_checker(self):
+        (self.job_dir / "vibevoice_progress.json").write_text(json.dumps({
+            "done": 0, "total": 7, "status": "quality_check", "workflow": "generate_first_parakeet_v1",
+            "generated_words": 700, "verified_words": 0, "total_words": 700,
+        }), encoding="utf-8")
+        progress = server._narration_progress(self.job_dir, self.state)
+        self.assertIn("Parakeet on GPU", progress["message"])
+        self.assertNotIn("CPU", progress["message"])
+
+    def test_generation_progress_counts_render_children(self):
+        (self.job_dir / "vibevoice_progress.json").write_text(json.dumps({
+            "done": 0, "total": 7, "status": "generating", "workflow": "generate_first_parakeet_v1",
+            "render_workers": 2,
+        }), encoding="utf-8")
+        progress = server._narration_progress(self.job_dir, self.state)
+        self.assertIn("2 workers", progress["message"])
+
+    def test_transcript_review_progress_names_gpu_without_claiming_narration(self):
+        (self.job_dir / "vibevoice_progress.json").write_text(json.dumps({
+            "done": 0, "total": 7, "status": "transcript_review", "workflow": "generate_first_parakeet_v1",
+            "passage_index": 2,
+        }), encoding="utf-8")
+        progress = server._narration_progress(self.job_dir, self.state)
+        self.assertIn("local language model on GPU", progress["message"])
+        self.assertNotIn("CPU", progress["message"])
+        self.assertNotIn("generating speech", progress["message"])
+
+    def test_new_workflow_does_not_migrate_existing_book(self):
+        captured = {}
+        def write_plan(job_dir, blocks, config):
+            captured.update(config)
+            return {"passages": []}
+        (self.job_dir / "vibevoice_config.json").write_text('{"inference_backend":"legacy"}', encoding="utf-8")
+        fake_plan = types.SimpleNamespace(write_plan=write_plan)
+        process = mock.Mock()
+        process.wait.return_value = 0
+        with mock.patch.dict(sys.modules, {"vibevoice_plan": fake_plan}), \
+             mock.patch.object(server.CFG, "vibevoice_workflow", "generate_first_parakeet_v1"), \
+             mock.patch.object(server.CFG, "vibevoice_transcript_review", True), \
+             mock.patch.object(server, "voice_wav_path", return_value=str(self.voice)), \
+             mock.patch.object(server, "extract_book_meta", return_value=({}, None, [])), \
+             mock.patch.object(server, "save_state"), mock.patch.object(server, "log_line"), \
+             mock.patch.object(server, "_spawn_worker", return_value=process):
+            server._run_vibevoice_narration(self.state, self.job_dir, [{"text": "Synthetic."}])
+        self.assertEqual(captured["workflow"], "overlap_cpu")
+        self.assertFalse(captured["transcript_review"])
+
     def test_vibevoice_watchdog_still_stops_a_stale_phase(self):
         progress = self.job_dir / "vibevoice_progress.json"
         progress.write_text(json.dumps({"done": 1, "total": 154, "status": "quality_check"}), encoding="utf-8")
@@ -94,6 +141,9 @@ class VibeVoiceServerTests(unittest.TestCase):
         worker = mock.Mock()
         worker.wait.return_value = 0
         with mock.patch.dict(sys.modules, {"vibevoice_plan": fake_plan}), \
+             mock.patch.object(server.CFG, "vibevoice_quality_workers", 2), \
+             mock.patch.object(server.CFG, "vibevoice_batch_size", 4), \
+             mock.patch.object(server.CFG, "vibevoice_transcript_review", True), \
              mock.patch.object(server, "voice_wav_path", return_value=str(self.voice)), \
              mock.patch.object(server, "extract_book_meta", return_value=({}, None, [])), \
              mock.patch.object(server, "save_state"), \
@@ -108,6 +158,11 @@ class VibeVoiceServerTests(unittest.TestCase):
         self.assertEqual(captured["config"]["cfg_scale"], 2.0)
         self.assertEqual(captured["config"]["ddpm_steps"], 20)
         self.assertEqual(captured["config"]["attention"], "sdpa")
+        self.assertEqual(captured["config"]["quality_workers"], 2)
+        self.assertEqual(captured["config"]["native_batch_size"], 4)
+        self.assertEqual(captured["config"]["quality_major_words"], 5)
+        self.assertEqual(captured["config"]["quality_max_retries"], 2)
+        self.assertTrue(captured["config"]["transcript_review"])
 
     def test_voice_upload_prefers_vibevoice_runtime(self):
         vibe_python = self.job_dir / "vibevoice.exe"
@@ -118,6 +173,42 @@ class VibeVoiceServerTests(unittest.TestCase):
              mock.patch.object(server.subprocess, "run", return_value=result) as run:
             self.assertEqual(server.save_voice("Fresh", b"audio", ".wav"), "Fresh")
         self.assertEqual(run.call_args.args[0][0], str(vibe_python))
+
+    def test_listening_hold_does_not_start_assembly(self):
+        fake_plan = types.SimpleNamespace(write_plan=lambda *_args: {"passages": [{"index": 0}]})
+        (self.job_dir / server.narration_review.FILENAME).write_text("{}")
+        (self.job_dir / "vibevoice_error.json").write_text(json.dumps({"message": "Listen to passage 1"}))
+        process = mock.Mock()
+        process.wait.return_value = 3
+        with mock.patch.dict(sys.modules, {"vibevoice_plan": fake_plan}), \
+             mock.patch.object(server, "voice_wav_path", return_value=str(self.voice)), \
+             mock.patch.object(server, "extract_book_meta", return_value=({}, None, [])), \
+             mock.patch.object(server, "save_state"), mock.patch.object(server, "log_line"), \
+             mock.patch.object(server, "_spawn_worker", return_value=process) as spawn:
+            with self.assertRaisesRegex(server.narration_review.ListeningRequired, "Listen to passage 1"):
+                server._run_vibevoice_narration(self.state, self.job_dir, [{"text": "Synthetic."}])
+        self.assertEqual(spawn.call_count, 1)
+
+    def test_forced_worker_exit_unloads_reviewer_only_during_its_owned_phase(self):
+        fake_plan = types.SimpleNamespace(write_plan=lambda *_args: {"passages": []})
+        process = mock.Mock()
+        for status in ("transcript_review", "generating"):
+            events = []
+            def canceled(*args):
+                (self.job_dir / "vibevoice_progress.json").write_text(json.dumps({"status": status}))
+                return 2
+            with mock.patch.dict(sys.modules, {"vibevoice_plan": fake_plan}), \
+                 mock.patch.object(server.CFG, "vibevoice_transcript_review", True), \
+                 mock.patch.object(server, "voice_wav_path", return_value=str(self.voice)), \
+                 mock.patch.object(server, "extract_book_meta", return_value=({}, None, [])), \
+                 mock.patch.object(server, "save_state"), mock.patch.object(server, "log_line"), \
+                 mock.patch.object(server, "_spawn_worker", return_value=process), \
+                 mock.patch.object(server, "_wait_for_generation", side_effect=canceled), \
+                 mock.patch.object(server, "_terminate_processes", side_effect=lambda *_: events.append("stopped")), \
+                 mock.patch("transcript_review.unload", side_effect=lambda: events.append("unloaded")):
+                with self.assertRaises(server._Cancelled):
+                    server._run_vibevoice_narration(self.state, self.job_dir, [{"text": "Synthetic."}])
+            self.assertEqual(events, ["stopped", "unloaded"] if status == "transcript_review" else ["stopped"])
 
 
 if __name__ == "__main__":

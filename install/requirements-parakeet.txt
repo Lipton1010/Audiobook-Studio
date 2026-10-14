@@ -1,0 +1,5 @@
+# Dedicated checker runtime. Do not install into legacy narration environments.
+transformers==5.19.0
+soundfile==0.14.0
+scipy==1.17.1
+pyloudnorm==0.1.1

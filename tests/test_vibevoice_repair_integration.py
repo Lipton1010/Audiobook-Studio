@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import unittest
+from threading import Barrier, Event, Lock, get_ident
 from pathlib import Path
 from unittest import mock
 
@@ -71,13 +72,15 @@ class VibeVoiceRepairIntegrationTests(unittest.TestCase):
 
     def _publish(self, unit_dir, unit, tmp, _report, attempt):
         tmp.unlink(missing_ok=True)
-        self.valid.add(unit["index"])
+        if unit_dir.name == worker.UNITS_DIR:
+            self.valid.add(unit["index"])
         worker._write_json(worker._receipt_path(unit_dir, unit["index"]), {
             "attempt": attempt,
             "identity": unit["identity"],
         })
 
-    def _run(self, *, quality=None, aggregate=None, assemble=None, retries=2):
+    def _run(self, *, quality=None, aggregate=None, assemble=None, retries=2, checker=None,
+             quality_workers=1, quality_runner=None, batch_size=2, batch_preference="auto"):
         quality = quality or (lambda *_args: (True, self.job / "quality.json"))
         aggregate = aggregate or (lambda *_args, **_kwargs: {"ok": True})
         assemble = assemble or mock.Mock()
@@ -91,14 +94,18 @@ class VibeVoiceRepairIntegrationTests(unittest.TestCase):
             def wait(_self, _job, _checker):
                 return _self.value
 
-        with mock.patch.object(worker, "load_plan", return_value=({"passages": [self.parent]}, {"quality_max_retries": retries})), \
+        helpers = checker if isinstance(checker, list) else [checker or mock.Mock()]
+        with mock.patch.object(worker, "load_plan", return_value=({"passages": [self.parent]}, {
+            "quality_max_retries": retries, "quality_workers": quality_workers,
+            "batch_preference": batch_preference,
+        })), \
              mock.patch.object(worker, "_valid_segment", return_value=False), \
              mock.patch.object(worker, "_assert_no_ocr"), \
              mock.patch.object(worker, "_prepare_voice", return_value=object()), \
              mock.patch.object(worker, "_load_model", return_value=(object(), object(), object())), \
-             mock.patch.object(worker, "_QualityChecker"), \
-             mock.patch.object(worker, "_QualityCheck", ImmediateQuality), \
-             mock.patch.object(worker, "_batch_size", return_value=2), \
+             mock.patch.object(worker, "_QualityChecker", side_effect=helpers), \
+             mock.patch.object(worker, "_QualityCheck", quality_runner or ImmediateQuality), \
+             mock.patch.object(worker, "_batch_size", return_value=1 if batch_preference == "conservative" else batch_size), \
              mock.patch.object(worker, "repair_units", return_value=self.units), \
              mock.patch.object(worker, "_valid_unit", side_effect=lambda _directory, unit, **_kwargs: unit["index"] in self.valid), \
              mock.patch.object(worker, "_render_items", side_effect=self._render), \
@@ -109,6 +116,26 @@ class VibeVoiceRepairIntegrationTests(unittest.TestCase):
              mock.patch.object(worker, "_assemble_parent_from_units", side_effect=assemble):
             worker.run_generate(self.job)
         return assemble
+
+    def test_progress_counts_verified_text_and_excludes_cached_peer_from_rate(self):
+        unit_dir = self.job / worker.SEGMENTS_DIR / worker.UNITS_DIR
+        unit_dir.mkdir(parents=True)
+        self.valid.add(self.units[0]["index"])
+        worker._write_json(worker._receipt_path(unit_dir, self.units[0]["index"]), {"attempt": 1})
+        with mock.patch.object(worker, "estimate_word_remaining_seconds", wraps=worker.estimate_word_remaining_seconds) as estimate:
+            self._run()
+        progress = json.loads((self.job / worker.PROGRESS_FILE).read_text())
+        self.assertEqual(progress["verified_words"], len(self.parent["text"].split()))
+        self.assertEqual(progress["total_words"], progress["verified_words"])
+        self.assertEqual(estimate.call_args.args[1], len(self.units[1]["text"].split()))
+        self.assertEqual(progress["eta_sec"], 0)
+
+    def test_failed_parent_is_not_counted_as_verified_text(self):
+        with self.assertRaises(RuntimeError):
+            self._run(aggregate=lambda *_args, **_kwargs: {"ok": False}, retries=0)
+        progress = json.loads((self.job / worker.PROGRESS_FILE).read_text())
+        self.assertEqual(progress["verified_words"], 0)
+        self.assertIsNone(progress["eta_sec"])
 
     def test_stale_invalid_receipt_does_not_consume_new_identity_retry_budget(self):
         unit_dir = self.job / worker.SEGMENTS_DIR / worker.UNITS_DIR
@@ -150,7 +177,7 @@ class VibeVoiceRepairIntegrationTests(unittest.TestCase):
             missing_words=2, differences=[{"kind": "delete", "expected": ["two", "words"], "heard": []}]
         )
         assemble = mock.Mock()
-        with self.assertRaisesRegex(RuntimeError, "parent quality failed"):
+        with self.assertRaisesRegex(worker.narration_review.ListeningRequired, "Narration has finished"):
             self._run(aggregate=lambda *_args, **_kwargs: {"ok": False}, assemble=assemble)
 
         assemble.assert_not_called()
@@ -161,7 +188,7 @@ class VibeVoiceRepairIntegrationTests(unittest.TestCase):
         def quality(_checker, _wav, unit, _label):
             return unit["unit_index"] != 0, self.job / f"quality-{unit['unit_index']}.json"
 
-        with self.assertRaisesRegex(RuntimeError, "major ASR coverage error"):
+        with self.assertRaisesRegex(worker.narration_review.ListeningRequired, "Narration has finished"):
             self._run(quality=quality, retries=0)
 
         self.assertNotIn(self.units[0]["index"], self.valid)
@@ -192,6 +219,12 @@ class VibeVoiceRepairIntegrationTests(unittest.TestCase):
         self.assertEqual(self.valid, {unit["index"] for unit in self.units})
 
     def test_cross_parent_prefetch_renders_while_prior_quality_waits(self):
+        self._check_cross_parent_prefetch(2)
+
+    def test_partial_batch_leaves_room_for_next_parent_during_second_check(self):
+        self._check_cross_parent_prefetch(3)
+
+    def _check_cross_parent_prefetch(self, first_count):
         second_parent = {
             "index": 5, "identity": "parent-2", "text_sha256": "parent-text-2",
             "text": "Second synthetic sentence.", "speaker_text": "Speaker 0: Second synthetic sentence.",
@@ -202,9 +235,20 @@ class VibeVoiceRepairIntegrationTests(unittest.TestCase):
             "speaker_text": "Speaker 0: Second synthetic unit.",
         }
         first_units = list(self.units)
+        if first_count == 3:
+            first_units.append({**self.units[0], "index": 40002, "unit_index": 2,
+                                "identity": "unit-4-2", "text_sha256": "text-4-2"})
         events, reports = [], {}
+        second_check_started = Event()
+        next_render_started = Event()
+        render_threads = set()
 
         def render(_torch, _processor, _model, _voice, items, _config, unit_dir):
+            render_threads.add(get_ident())
+            if items[0][0]["parent_index"] == 5:
+                next_render_started.set()
+                # A blocking main-thread render cannot reach the second check.
+                self.assertTrue(second_check_started.wait(3), "render blocked the next CPU check")
             rows = []
             for unit, attempt in items:
                 events.append(("render", unit["parent_index"], unit["unit_index"]))
@@ -220,11 +264,13 @@ class VibeVoiceRepairIntegrationTests(unittest.TestCase):
                 worker._write_json(report, {"transcript": unit["text"]})
                 _self.value = (True, report)
                 events.append(("quality_start", unit["parent_index"], unit["unit_index"]))
+                if unit["parent_index"] == 4 and unit["unit_index"] == 1:
+                    second_check_started.set()
 
             def wait(_self, _job, _checker):
                 events.append(("quality_wait", _self.unit["parent_index"], _self.unit["unit_index"]))
-                if _self.unit["parent_index"] == 4 and _self.unit["unit_index"] == 1:
-                    self.assertIn(("render", 5, 0), events)
+                if _self.unit["parent_index"] == 4 and _self.unit["unit_index"] == first_count - 2:
+                    self.assertTrue(next_render_started.wait(3), "no render during first check")
                 return _self.value
 
         units_by_parent = {4: first_units, 5: [second_unit]}
@@ -260,7 +306,8 @@ class VibeVoiceRepairIntegrationTests(unittest.TestCase):
             worker.run_generate(self.job)
 
         self.assertLess(events.index(("quality_start", 4, 1)), events.index(("render", 5, 0)))
-        self.assertLess(events.index(("render", 5, 0)), events.index(("quality_wait", 4, 1)))
+        self.assertEqual(len(render_threads), 1)
+        self.assertNotIn(get_ident(), render_threads)
         self.assertEqual(self.valid, {unit["index"] for unit in first_units} | {second_unit["index"]})
 
     def test_overlap_telemetry_is_opt_in_and_best_effort(self):
@@ -270,6 +317,190 @@ class VibeVoiceRepairIntegrationTests(unittest.TestCase):
         with mock.patch.object(Path, "open", side_effect=OSError("private telemetry unavailable")):
             worker._overlap_telemetry(self.job, {"performance_telemetry": True}, "render_start", [4], [40000])
         self.assertFalse(path.exists())
+
+    def test_next_batch_does_not_block_second_check_and_stays_bounded(self):
+        for index in range(2, 8):
+            unit = {**self.units[0], "index": 40000 + index, "unit_index": index,
+                    "identity": f"unit-{index}", "text_sha256": f"text-{index}"}
+            self.units.append(unit)
+            self.reports[unit["index"]] = {**self.reports[40000], "unit_index": index}
+        next_render_started, second_check_started = Event(), Event()
+        original_render = self._render
+        checked, rendered, owners = [], [], set()
+
+        def render(*args):
+            owners.add(get_ident())
+            indices = [unit["unit_index"] for unit, _ in args[4]]
+            if indices == [2, 3]:
+                next_render_started.set()
+                self.assertTrue(second_check_started.wait(3), "second check stalled on generation")
+            rendered.extend(indices)
+            self.assertLessEqual(len(rendered) - len(checked), 4)
+            return original_render(*args)
+
+        def quality(_checker, _wav, unit, _label):
+            index = unit["unit_index"]
+            if index == 1:
+                self.assertTrue(next_render_started.wait(3))
+                second_check_started.set()
+            checked.append(index)
+            return True, self.job / f"quality-{index}.json"
+
+        self._render = render
+        self._run(quality=quality)
+        self.assertEqual(checked, list(range(8)))
+        self.assertEqual(len(owners), 1)
+        self.assertNotIn(get_ident(), owners)
+
+    def test_background_render_error_preserves_both_verified_peers(self):
+        third = {**self.units[0], "index": 40002, "unit_index": 2, "identity": "third"}
+        self.units.append(third)
+        original_render = self._render
+
+        def render(*args):
+            if args[4][0][0]["unit_index"] == 2:
+                raise RuntimeError("synthetic render failure")
+            return original_render(*args)
+
+        self._render = render
+        with self.assertRaisesRegex(RuntimeError, "synthetic render failure"):
+            self._run()
+        self.assertEqual(self.valid, {40000, 40001})
+        self.assertFalse(list((self.job / worker.SEGMENTS_DIR / worker.UNITS_DIR).glob("*.tmp*.wav")))
+
+    def test_cancel_joins_active_render_before_removing_temporary_audio(self):
+        third = {**self.units[0], "index": 40002, "unit_index": 2, "identity": "third"}
+        self.units.append(third)
+        original_render = self._render
+        rendering, checker_closed, finished = Event(), Event(), Event()
+        checker = mock.Mock()
+        checker.close.side_effect = checker_closed.set
+
+        def render(*args):
+            if args[4][0][0]["unit_index"] == 2:
+                rendering.set()
+                self.assertTrue(checker_closed.wait(3))
+                result = original_render(*args)
+                finished.set()
+                return result
+            return original_render(*args)
+
+        def quality(_checker, _wav, unit, _label):
+            if unit["unit_index"] == 1:
+                self.assertTrue(rendering.wait(3))
+                (self.job / worker.CANCEL_FILE).write_text("cancel", encoding="utf-8")
+            return True, self.job / f"quality-{unit['index']}.json"
+
+        self._render = render
+        with self.assertRaises(SystemExit) as raised:
+            self._run(quality=quality, checker=checker)
+        self.assertEqual(raised.exception.code, 2)
+        self.assertTrue(finished.is_set())
+        self.assertEqual(self.valid, {40000})
+        self.assertFalse(list((self.job / worker.SEGMENTS_DIR / worker.UNITS_DIR).glob("*.tmp*.wav")))
+
+    def test_two_checkers_verify_peers_concurrently_and_close_both(self):
+        barrier, used = Barrier(2), []
+        helpers = [mock.Mock(), mock.Mock()]
+        busy, lock = set(), Lock()
+        for index in range(2, 4):
+            unit = {**self.units[0], "index": 40000 + index, "unit_index": index,
+                    "identity": f"unit-{index}", "text_sha256": f"text-{index}"}
+            self.units.append(unit)
+            self.reports[unit["index"]] = {**self.reports[40000], "unit_index": index}
+
+        def quality(helper, _wav, unit, _label):
+            with lock:
+                self.assertNotIn(id(helper), busy, "two requests used one helper concurrently")
+                busy.add(id(helper))
+            used.append(helper)
+            barrier.wait(timeout=3)
+            report = self.job / f"quality-{unit['index']}.json"
+            worker._write_json(report, {"transcript": unit["text"]})
+            with lock:
+                busy.remove(id(helper))
+            return True, report
+
+        self._run(quality=quality, checker=helpers, quality_workers=2,
+                  quality_runner=worker._QualityCheck, batch_size=4)
+        self.assertCountEqual(used, helpers * 2)
+        self.assertEqual(self.valid, {40000, 40001, 40002, 40003})
+        for helper in helpers:
+            helper.close.assert_called_once()
+
+    def test_second_checker_startup_failure_closes_first(self):
+        first = mock.Mock()
+        with self.assertRaisesRegex(RuntimeError, "second helper failed"):
+            self._run(checker=[first, RuntimeError("second helper failed")], quality_workers=2)
+        first.close.assert_called_once()
+        self.assertFalse(self.valid)
+
+    def test_conservative_mode_retains_one_checker(self):
+        helpers = [mock.Mock(), mock.Mock()]
+        self._run(checker=helpers, quality_workers=2, batch_preference="conservative")
+        helpers[0].close.assert_called_once()
+        helpers[1].close.assert_not_called()
+        self.assertEqual(self.valid, {40000, 40001})
+
+    def test_single_row_rendering_does_not_load_unused_second_checker(self):
+        helpers = [mock.Mock(), mock.Mock()]
+        self._run(checker=helpers, quality_workers=2, batch_size=1)
+        helpers[0].close.assert_called_once()
+        helpers[1].close.assert_not_called()
+        self.assertEqual(self.valid, {40000, 40001})
+
+    def test_native_batch_selection_preserves_hardware_and_explicit_bounds(self):
+        torch = mock.Mock()
+        torch.cuda.get_device_properties.return_value.total_memory = 24 * 1024 ** 3
+        for size in (1, 2, 3, 4):
+            self.assertEqual(worker._batch_size(torch, {"native_batch_size": size}), size)
+        for invalid in (True, 0, 5, 2.5, "4", None):
+            self.assertEqual(worker._batch_size(torch, {"native_batch_size": invalid}), 2)
+        self.assertEqual(worker._batch_size(torch, {"native_batch_size": 4, "batch_preference": "conservative"}), 1)
+        torch.cuda.get_device_properties.return_value.total_memory = 16 * 1024 ** 3
+        self.assertEqual(worker._batch_size(torch, {"native_batch_size": 4}), 1)
+        torch.cuda.get_device_properties.side_effect = RuntimeError("unknown GPU")
+        self.assertEqual(worker._batch_size(torch, {"native_batch_size": 4}), 1)
+
+    def test_failed_parallel_check_preserves_verified_peer_and_closes_both(self):
+        barrier = Barrier(2)
+        helpers = [mock.Mock(), mock.Mock()]
+
+        def quality(_helper, _wav, unit, _label):
+            barrier.wait(timeout=3)
+            if unit["unit_index"] == 1:
+                raise RuntimeError("second check failed")
+            report = self.job / "quality.json"
+            worker._write_json(report, {"transcript": unit["text"]})
+            return True, report
+
+        with self.assertRaisesRegex(RuntimeError, "second check failed"):
+            self._run(quality=quality, checker=helpers, quality_workers=2, quality_runner=worker._QualityCheck)
+        self.assertEqual(self.valid, {40000})
+        for helper in helpers:
+            helper.close.assert_called_once()
+
+    def test_cancel_reaps_both_inflight_checks_without_publishing(self):
+        barrier = Barrier(2)
+        helpers = [mock.Mock(), mock.Mock()]
+        closed, finished = [Event(), Event()], [Event(), Event()]
+        for index, helper in enumerate(helpers):
+            helper.close.side_effect = closed[index].set
+
+        def quality(_helper, _wav, unit, _label):
+            index = unit["unit_index"]
+            barrier.wait(timeout=3)
+            if index == 1:
+                (self.job / worker.CANCEL_FILE).write_text("cancel", encoding="utf-8")
+            self.assertTrue(closed[index].wait(3), "cancellation left a checker running")
+            finished[index].set()
+            return False, self.job / "unused.json"
+
+        with self.assertRaises(SystemExit) as raised:
+            self._run(quality=quality, checker=helpers, quality_workers=2, quality_runner=worker._QualityCheck)
+        self.assertEqual(raised.exception.code, 2)
+        self.assertTrue(all(event.is_set() for event in finished))
+        self.assertFalse(self.valid)
 
     def test_overlimit_prefetch_discards_audio_but_carries_failed_attempt(self):
         unit_dir = self.job / worker.SEGMENTS_DIR / worker.UNITS_DIR
@@ -413,7 +644,7 @@ class VibeVoiceRepairIntegrationTests(unittest.TestCase):
         report = self.job / "wrong-numbered-heading.json"
         worker._write_json(report, {"transcript": "Three Departure"})
 
-        with self.assertRaisesRegex(RuntimeError, "major ASR coverage error"):
+        with self.assertRaisesRegex(worker.narration_review.ListeningRequired, "Narration has finished"):
             self._run(quality=lambda *_args: (True, report), retries=1)
 
         self.assertEqual(parent_wav.read_bytes(), b"old parent wav")
@@ -449,7 +680,7 @@ class VibeVoiceRepairIntegrationTests(unittest.TestCase):
         worker._write_json(rejected, {"transcript": "Three Departure"})
         verdicts = iter([(True, accepted), (True, rejected)])
 
-        with self.assertRaisesRegex(RuntimeError, "parent quality failed after repairing"):
+        with self.assertRaisesRegex(worker.narration_review.ListeningRequired, "Narration has finished"):
             self._run(quality=lambda *_args: next(verdicts), aggregate=lambda *_args, **_kwargs: {"ok": False}, retries=1)
 
         self.assertEqual(self.render_attempts, [(0, 1), (0, 2)])

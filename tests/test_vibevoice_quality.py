@@ -10,6 +10,115 @@ from app.vibevoice_quality import assess, numbered_heading_assessment, words
 
 
 class VibeVoiceQualityTests(unittest.TestCase):
+    def test_unambiguous_contractions_do_not_exhaust_word_error_budget(self):
+        for contraction, expansion in quality._CONTRACTIONS.items():
+            for left, right in ((contraction, ' '.join(expansion)), (' '.join(expansion), contraction)):
+                report = assess(left, right, major_words=1)
+                self.assertTrue(report['ok'], report)
+                self.assertEqual((report['missing_words'], report['inserted_words']), (0, 0))
+        report = assess("Why do you think I am going? I am trying to help.",
+                        "Why do you think I'm going? I'm trying to help.")
+        self.assertEqual((report['missing_words'], report['inserted_words']), (0, 0))
+
+    def test_contractions_preserve_real_errors_ambiguous_forms_and_identifiers(self):
+        for source, heard in (
+            ("I am here", "I'm not here"), ("I am ready", "I'm late"),
+            ("I am here", "I here"), ("I am am here", "I'm here"),
+            ("I am", "I'm one two three four five"),
+            ("he is here", "he's here"), ("I would go", "I'd go"),
+            ("I'm_id", "I am_id"), ("I, am here", "I'm here"),
+        ):
+            self.assertFalse(assess(source, heard, major_words=1)['ok'], (source, heard))
+
+    def test_homophones_do_not_count_as_word_errors_or_review_differences(self):
+        pairs = (
+            ("Be here to see their new son.", "Bee hear two sea they're knew sun."),
+            ("You know you're right, it's plain.", "You no your write, its plane."),
+            ("Wait for one whole week.", "Weight four won hole weak."),
+        )
+        for expected, heard in pairs:
+            for source, transcript in ((expected, heard), (heard, expected)):
+                report = assess(source, transcript, major_words=1)
+                self.assertTrue(report["ok"], report)
+                self.assertEqual(report["differences"], [])
+                self.assertEqual((report["missing_words"], report["inserted_words"]), (0, 0))
+
+    def test_homophones_do_not_hide_adjacent_changes_or_extra_occurrences(self):
+        for expected, heard, missing, inserted in (
+            ("Be calm here.", "Bee loud here.", 1, 1),
+            ("Be here.", "Bee bee here.", 0, 1),
+            ("Be be here.", "Bee here.", 1, 0),
+            ("Be here.", "Bee strange extra speech here.", 0, 3),
+            ("be_id", "bee_id", 1, 1),
+            ("Be", "been", 1, 1),
+            ("read", "red", 1, 1),
+        ):
+            report = assess(expected, heard, major_words=1)
+            self.assertFalse(report["ok"], report)
+            self.assertEqual((report["missing_words"], report["inserted_words"]),
+                             (missing, inserted), report)
+
+    def test_spelling_and_possessive_spacing_do_not_exhaust_coverage_budget(self):
+        for expected, heard in (("The honourable adviser favoured the behaviour.",
+                                 "The honorable advisor favored the behavior."),
+                                ("The fisherman's neighbour laboured for ever.",
+                                 "The fisher man's neighbor labored forever."),
+                                ("Rest awhile beside the worker's coloured coat.",
+                                 "Rest a while beside the worker's colored coat.")):
+            for left, right in ((expected, heard), (heard, expected)):
+                report = assess(left, right, major_words=1)
+                self.assertTrue(report["ok"], report)
+                self.assertEqual((report["missing_words"], report["inserted_words"]), (0, 0))
+        for expected, heard in (("fisherman's", "fisher mans"), ("fisherman's", "fisher man"),
+                                ("honourable_id", "honorable_id"), ("laboured", "labor"),
+                                ("Cooke", "Cook"), ("forever", "for, ever"),
+                                ("honour one two three four five", "honor")):
+            self.assertFalse(assess(expected, heard, major_words=1)["ok"], (expected, heard))
+
+    def test_observed_degree_and_page_citation_formatting(self):
+        for source, heard in (("M.A.", "MA"), ("Ph.D.", "PhD"), ("PH.D.", "PHD"),
+                              ("(p. 84)", "(p84)"), ("p.50", "p50"),
+                              ("pp. 123", "pp123"), ("p. eighty-four", "p84")):
+            for expected, transcript in ((source, heard), (heard, source)):
+                report = assess(expected, transcript, major_words=1)
+                self.assertTrue(report["ok"], (expected, transcript, report))
+                self.assertEqual((report["missing_words"], report["inserted_words"]), (0, 0))
+                self.assertTrue(report["differences"][0]["orthographic_equivalent"])
+
+    def test_formatting_keeps_names_values_and_identifiers_distinct(self):
+        for source, heard in (("M.A.", "ma"), ("M.A.", "MB"), ("Ph.D.", "PhT"),
+                              ("M.A._id", "MA_id"), ("record.M.A.", "record.MA"),
+                              ("p. 84", "p85"), ("pp. 84", "p84"),
+                              ("p. 84", "p084"), ("p. 84", "p84.2"),
+                              ("p. 84", "p84/2"), ("p. 84", "p84-85"),
+                              ("p. 84_id", "p84_id"), ("record.p.84", "record.p84"),
+                              ("p.84.name", "p84.name"), ("p 84", "p84"),
+                              ("Okara", "Okora"), ("Hamlyn", "Hamlin")):
+            report = assess(source, heard, major_words=1)
+            self.assertFalse(report["ok"], (source, heard, report))
+
+    def test_formatting_does_not_accept_missing_citations_or_other_words(self):
+        self.assertFalse(assess("M.A. one two three four five", "MA")["ok"])
+        self.assertFalse(assess("Ph.D.", "PhD one two three four five")["ok"])
+        self.assertFalse(assess("See p. 84", "See", major_words=1)["ok"])
+        report = assess("M.A. and Ph.D. by Okara", "MA and PhD by Okora", major_words=1)
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["missing_words"], 1)
+
+    def test_favourite_and_ordinals_do_not_count_as_lost_words(self):
+        for source, heard in (("My favourite century is the twentieth.", "My favorite century is the 20th."),
+                              ("mid-twentieth century", "mid-20th century"),
+                              ("first second third eleventh twelfth thirteenth twenty first one hundredth",
+                               "1st 2nd 3rd 11th 12th 13th 21st 100th")):
+            report = assess(source, heard)
+            self.assertEqual((report["missing_words"], report["inserted_words"]), (0, 0))
+        for heard in ("21th", "020th", "20st", "x20th", "20th_x", "-20th", "1.20th"):
+            self.assertTrue(assess("twentieth", heard)["differences"], heard)
+        self.assertTrue(assess("twentieth", "twenty")["differences"])
+        self.assertTrue(assess("favourite_id", "favorite_id")["missing_words"])
+        self.assertFalse(assess("favourite one two three four five", "favorite")["ok"])
+        self.assertFalse(assess("favourite", "favorite one two three four five")["ok"])
+
     def test_single_word_difference_is_recorded_but_not_a_failure(self):
         report = assess("Synthetic words stay here", "Synthetic word stay here")
         self.assertTrue(report["ok"])

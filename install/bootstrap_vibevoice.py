@@ -24,18 +24,20 @@ def run(command, **kwargs):
     return subprocess.run([str(x) for x in command], check=True, **kwargs)
 
 
-def validate_models(model_dir, quality_model):
+def validate_models(model_dir, quality_model, backend='legacy'):
     model_dir, quality_model = Path(model_dir), Path(quality_model)
     index = model_dir / 'model.safetensors.index.json'
     if not index.is_file():
         raise ValueError(f'Model index missing: {index}')
     shards = set(json.loads(index.read_text(encoding='utf-8'))['weight_map'].values())
-    for filename in ['config.json', 'preprocessor_config.json', *shards]:
+    processor_files = ['processor_config.json', 'tokenizer.json', 'chat_template.jinja'] if backend == 'compiled' else ['preprocessor_config.json']
+    for filename in ['config.json', *processor_files, *shards]:
         path = model_dir / filename
         if path.parent != model_dir or not path.is_file() or path.stat().st_size == 0:
             raise ValueError(f'Model file missing or invalid: {path}')
     config = json.loads((model_dir / 'config.json').read_text(encoding='utf-8'))
-    if config.get('decoder_config', {}).get('hidden_size') != 1536:
+    text_config = 'text_config' if backend == 'compiled' else 'decoder_config'
+    if config.get(text_config, {}).get('hidden_size') != 1536:
         raise ValueError('Expected VibeVoice 1.5B TTS weights; check model selection.')
     for filename in ['model.bin', 'config.json', 'tokenizer.json']:
         path = quality_model / filename
@@ -43,8 +45,8 @@ def validate_models(model_dir, quality_model):
             raise ValueError(f'Quality model file missing: {path}')
 
 
-def verify(python, model_dir, cache_dir, quality_python, quality_model):
-    validate_models(model_dir, quality_model)
+def verify(python, model_dir, cache_dir, quality_python, quality_model, backend='legacy'):
+    validate_models(model_dir, quality_model, backend)
     env = dict(os.environ, HF_HOME=str(cache_dir), HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1')
     code = (
         'import sys,torch,transformers,numpy,scipy,soundfile,pyloudnorm;'
@@ -55,6 +57,17 @@ def verify(python, model_dir, cache_dir, quality_python, quality_model):
         'assert p._parse_script("Speaker 0: The test is complete.")[0][1].strip()=="The test is complete.";'
         'print("VibeVoice imports, cached tokenizer, and input parser verified.")'
     )
+    if backend == 'compiled':
+        from app.vibevoice_hf import TRANSFORMERS_VERSION
+        code = (
+            'import sys,torch,transformers,triton,numpy,scipy,soundfile,pyloudnorm;'
+            f'assert transformers.__version__=={TRANSFORMERS_VERSION!r};'
+            'assert torch.__version__=="2.10.0+cu128";'
+            'assert torch.cuda.is_available();'
+            'from transformers import AutoProcessor,AutoModelForTextToWaveform;'
+            'p=AutoProcessor.from_pretrained(sys.argv[1],local_files_only=True);'
+            'print("Compiled VibeVoice imports, CUDA, and local processor verified.")'
+        )
     run([python, '-c', code, model_dir, TOKENIZER_REVISION], env=env, timeout=120)
     run([quality_python, '-c', 'from faster_whisper import WhisperModel; print("CPU quality checker imports verified.")'], timeout=60)
 
@@ -116,12 +129,17 @@ def create_environment(conda, prefix, kind):
     return python
 
 
-def download_models(model_dir, cache_dir, quality_model):
+def download_models(model_dir, cache_dir, quality_model, backend='legacy'):
     from huggingface_hub import snapshot_download
-    snapshot_download(MODEL_ID, revision=MODEL_REVISION, local_dir=str(model_dir),
-                      cache_dir=str(Path(cache_dir) / 'hub'), allow_patterns=['*.json', '*.safetensors'])
-    snapshot_download('Qwen/Qwen2.5-1.5B', revision=TOKENIZER_REVISION,
-                      cache_dir=str(Path(cache_dir) / 'hub'), allow_patterns=['*.json', '*.txt', '*.model'])
+    if backend == 'compiled':
+        from app.vibevoice_hf import MODEL_ID as model_id, MODEL_REVISION as revision
+    else:
+        model_id, revision = MODEL_ID, MODEL_REVISION
+    snapshot_download(model_id, revision=revision, local_dir=str(model_dir),
+                      cache_dir=str(Path(cache_dir) / 'hub'), allow_patterns=['*.json', '*.safetensors', '*.jinja'])
+    if backend == 'legacy':
+        snapshot_download('Qwen/Qwen2.5-1.5B', revision=TOKENIZER_REVISION,
+                          cache_dir=str(Path(cache_dir) / 'hub'), allow_patterns=['*.json', '*.txt', '*.model'])
     snapshot_download('Systran/faster-whisper-large-v3', revision=QUALITY_REVISION,
                       local_dir=str(quality_model), cache_dir=str(Path(cache_dir) / 'hub'),
                       allow_patterns=['model.bin', '*.json', 'vocabulary.*'])
@@ -129,6 +147,7 @@ def download_models(model_dir, cache_dir, quality_model):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--backend', choices=['legacy', 'compiled'], default='legacy')
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--install', action='store_true', help='Download and install into new, dedicated runtimes.')
     mode.add_argument('--configure-existing', action='store_true', help='Verify supplied runtimes and record their paths.')
@@ -144,11 +163,11 @@ def main():
     parser.add_argument('--config', type=Path, default=REPO / 'app/config.json')
     args = parser.parse_args()
     runtime = args.runtime_root.resolve()
-    model = args.model_dir or runtime / 'models/VibeVoice-1.5B'
+    model = args.model_dir or runtime / ('models/VibeVoice-1.5B-hf' if args.backend == 'compiled' else 'models/VibeVoice-1.5B')
     cache = args.cache_dir or runtime / 'cache/huggingface'
     quality_model = args.quality_model or runtime / 'models/faster-whisper-large-v3'
     if args.download_models:
-        download_models(model, cache, quality_model)
+        download_models(model, cache, quality_model, args.backend)
         return
     python, quality_python = args.python, args.quality_python
     if args.install:
@@ -161,23 +180,30 @@ def main():
         if not conda:
             raise ValueError('Conda was not found. Supply --conda with the installed conda executable.')
         configure_managed_runtime(runtime, create_dirs=True)
-        python = create_environment(conda, runtime / 'vibevoice', 'vibevoice')
+        kind = 'vibevoice-compiled' if args.backend == 'compiled' else 'vibevoice'
+        python = create_environment(conda, runtime / kind, kind)
         quality_python = create_environment(conda, runtime / 'quality', 'quality')
-        run([python, '-m', 'pip', 'install', 'torch==2.6.0+cu124', 'torchaudio==2.6.0+cu124',
-             '--index-url', 'https://download.pytorch.org/whl/cu124'])
-        run([python, '-m', 'pip', 'install', '-r', REPO / 'install/requirements-vibevoice.txt'])
-        run([python, '-m', 'pip', 'install', '--no-deps',
-             f'https://github.com/vibevoice-community/VibeVoice/archive/{SOURCE_REVISION}.zip'])
+        version, cuda = ('2.10.0', 'cu128') if args.backend == 'compiled' else ('2.6.0', 'cu124')
+        run([python, '-m', 'pip', 'install', f'torch=={version}+{cuda}', f'torchaudio=={version}+{cuda}',
+             '--index-url', f'https://download.pytorch.org/whl/{cuda}'])
+        requirements = 'requirements-vibevoice-compiled.txt' if args.backend == 'compiled' else 'requirements-vibevoice.txt'
+        run([python, '-m', 'pip', 'install', '-r', REPO / 'install' / requirements])
+        if args.backend == 'legacy':
+            run([python, '-m', 'pip', 'install', '--no-deps',
+                 f'https://github.com/vibevoice-community/VibeVoice/archive/{SOURCE_REVISION}.zip'])
         run([quality_python, '-m', 'pip', 'install', '-r', REPO / 'install/requirements-narration-quality.txt'])
         run([python, __file__, '--download-models', '--model-dir', model,
-             '--cache-dir', cache, '--quality-model', quality_model])
+             '--cache-dir', cache, '--quality-model', quality_model, '--backend', args.backend])
     if not python or not quality_python:
         parser.error('--python and --quality-python are required for existing runtimes.')
-    verify(python, model, cache, quality_python, quality_model)
+    verify(python, model, cache, quality_python, quality_model, args.backend)
     if not args.check_only:
-        register(args.config, {'vibevoice_python': python, 'vibevoice_model_dir': model,
-                 'vibevoice_cache_dir': cache, 'vibevoice_quality_python': quality_python,
-                 'vibevoice_quality_model': quality_model})
+        prefix = 'vibevoice_compiled' if args.backend == 'compiled' else 'vibevoice'
+        values = {f'{prefix}_python': python, f'{prefix}_model_dir': model,
+                  'vibevoice_quality_python': quality_python, 'vibevoice_quality_model': quality_model}
+        if args.backend == 'legacy':
+            values['vibevoice_cache_dir'] = cache
+        register(args.config, values)
         print(f'Runtime paths recorded in {args.config}. Existing jobs and other environments are unchanged.')
 
 

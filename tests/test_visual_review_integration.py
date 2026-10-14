@@ -295,14 +295,18 @@ class VisualReviewCacheAndGateTests(unittest.TestCase):
         self.assertTrue(held)
         self.assertEqual(server.load_state(self.job_id)["status"], "review_required")
 
-    def test_resolved_visual_without_full_preview_still_blocks_direct_narration(self):
+    def test_saved_choices_allow_narration_without_preview_even_with_legacy_gate(self):
         self.decide("describe", "The value rises from one to four.")
-        with mock.patch.object(server, "extract_book_meta") as metadata:
-            with self.assertRaises(server._ReviewRequired):
-                server.run_narration(dict(self.state))
-        metadata.assert_not_called()
+        state = dict(self.state, backend="vibevoice", preview_required=True,
+                     review_previewed_hash="obsolete")
+        self.assertFalse(server._hold_for_visual_review(state))
+        with mock.patch.object(server, "_run_vibevoice_narration") as narrate:
+            server.run_narration(state)
+        narrated = narrate.call_args.args[2]
+        self.assertEqual(narrated[1]["text"], "The value rises from one to four.")
+        narrate.assert_called_once()
 
-    def test_scoped_vibevoice_without_visuals_still_requires_preview(self):
+    def test_scoped_vibevoice_uses_saved_range_without_preview(self):
         state = dict(self.state, backend="vibevoice", page_from=1, page_to=2)
         source = [
             {"type": "body", "text": "Opening prose.", "source_page": 1},
@@ -312,9 +316,8 @@ class VisualReviewCacheAndGateTests(unittest.TestCase):
                                                                        "source_available": True})
         visual_review.set_scope(self.job_dir, state, 1)
         with mock.patch.object(server, "_run_vibevoice_narration") as narrate:
-            with self.assertRaises(server._ReviewRequired):
-                server.run_narration(state)
-        narrate.assert_not_called()
+            server.run_narration(state)
+        narrate.assert_called_once_with(state, self.job_dir, [source[0]])
 
     def test_all_skipped_projection_blocks_direct_narration_before_worker_setup(self):
         visual_review._write(self.job_dir / "source_blocks.json", {
@@ -465,9 +468,12 @@ class VisualReviewHttpLifecycleTests(unittest.TestCase):
         with urllib.request.urlopen(request, timeout=5) as response:
             return json.load(response)
 
-    def test_http_decision_preview_and_start_drive_persisted_job_lifecycle(self):
+    def test_http_saved_decision_starts_without_preview(self):
         review = self.request("GET", "")
         item = review["items"][0]
+        with self.assertRaises(urllib.error.HTTPError) as blocked:
+            self.request("POST", "/start", {})
+        self.assertEqual(blocked.exception.code, 409)
         saved = self.request("POST", "/" + item["id"], {
             "fingerprint": item["fingerprint"], "decision": "describe",
             "spoken_text": "The values rise from two to nine.",
@@ -475,13 +481,6 @@ class VisualReviewHttpLifecycleTests(unittest.TestCase):
         self.assertEqual(saved["unresolved_count"], 0)
         self.assertEqual(server.load_state(self.job_id)["status"], "review_required")
 
-        with self.assertRaises(urllib.error.HTTPError) as blocked:
-            self.request("POST", "/start", {})
-        self.assertEqual(blocked.exception.code, 409)
-
-        preview = self.request("GET", "/preview")
-        self.assertEqual(preview["unresolved_count"], 0)
-        self.assertEqual(preview["text"], "Before.\n\nThe values rise from two to nine.\n\nAfter.")
         server.request_cancel(self.job_id)
         canceled = server.load_state(self.job_id)
         self.assertEqual(canceled["status"], "canceled")
@@ -496,7 +495,19 @@ class VisualReviewHttpLifecycleTests(unittest.TestCase):
         self.assertNotIn("error", persisted)
         self.assertNotIn(self.job_id, server._cancel_flags)
 
-    def test_vibevoice_scope_persists_requires_a_new_preview_and_rejects_busy_or_generic_jobs(self):
+    def test_optional_preview_is_read_only_and_uses_saved_choices(self):
+        item = self.request("GET", "")["items"][0]
+        self.request("POST", "/" + item["id"], {
+            "fingerprint": item["fingerprint"], "decision": "describe",
+            "spoken_text": "The values rise from two to nine.",
+        })
+        before = (self.job_dir / "state.json").read_bytes()
+        preview = self.request("GET", "/preview")
+        self.assertEqual(preview["unresolved_count"], 0)
+        self.assertEqual(preview["text"], "Before.\n\nThe values rise from two to nine.\n\nAfter.")
+        self.assertEqual((self.job_dir / "state.json").read_bytes(), before)
+
+    def test_vibevoice_scope_starts_without_preview_and_rejects_busy_or_generic_jobs(self):
         state = server.load_state(self.job_id)
         state.update({"backend": "vibevoice", "page_from": 1, "page_to": 3})
         server.save_state(state)
@@ -522,15 +533,11 @@ class VisualReviewHttpLifecycleTests(unittest.TestCase):
         visual_review._write(self.job_dir / "source_blocks.json", stale_source)
         self.assertNotIn("narration_range", next(job for job in server.list_jobs() if job["id"] == self.job_id))
         visual_review._write(self.job_dir / "source_blocks.json", json.loads(source_before))
-        with self.assertRaises(urllib.error.HTTPError) as blocked:
-            self.request("POST", "/start", {})
-        self.assertEqual(blocked.exception.code, 409)
-
-        preview = self.request("GET", "/preview")
-        self.assertEqual(preview["text"], "First.\n\nSecond.")
         with mock.patch.object(server, "enqueue") as enqueue:
             self.request("POST", "/start", {})
         enqueue.assert_called_once_with(self.job_id)
+        self.assertEqual([b["text"] for b in _blocks(self.job_dir / "blocks.json")],
+                         ["First.", "Second."])
 
         state = server.load_state(self.job_id)
         state["status"] = "queued"
@@ -746,6 +753,14 @@ class QueueRecoveryTests(unittest.TestCase):
             server.mark_interrupted_jobs()
             self.assertEqual(server._queue, [second["id"], first["id"]])
             self.assertEqual(server.load_state(active["id"])["status"], "interrupted")
+
+    def test_job_detail_reports_fifo_position(self):
+        self.state("first")
+        self.state("second")
+        server._queue[:] = ["first", "second"]
+        with mock.patch.object(server, "JOBS_DIR", self.jobs):
+            self.assertEqual(server.job_detail("first")["queue_position"], 1)
+            self.assertEqual(server.job_detail("second")["queue_position"], 2)
 
     def test_restart_uses_legacy_created_time_and_enqueue_deduplicates(self):
         old = self.state("a", created_at=3)

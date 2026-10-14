@@ -125,7 +125,7 @@ class FinishedOutputApiTests(unittest.TestCase):
             regenerated = server.regenerate_job(self.job_id, "vibevoice")
         new_job = self.jobs / regenerated["id"]
         self.assertEqual(regenerated["status"], "queued")
-        self.assertTrue(regenerated["preview_required"])
+        self.assertNotIn("preview_required", regenerated)
         self.assertEqual(checkpoint.read_bytes(), b"accepted checkpoint")
         self.assertFalse((new_job / "segments").exists())
         self.assertEqual((new_job / "narration_scope.json").read_text(encoding="utf-8"), '{"end_page": 9}')

@@ -189,7 +189,8 @@ def _open_native_window(webview_module, url):
     _enable_webview_downloads(webview_module)
     _set_windows_app_id()
     window = webview_module.create_window(title=WINDOW_TITLE, url=url,
-                                          width=1280, height=860, min_size=(900, 600))
+                                          width=1280, height=860, min_size=(900, 600),
+                                          text_select=True)
     # pywebview 5.4 ignores icon= on Windows, but accepts it on GTK/QT.
     # The callback updates its WinForms form once that native window is shown.
     start_kwargs = {"icon": str(ICON_PATH)} if ICON_PATH.exists() else {}

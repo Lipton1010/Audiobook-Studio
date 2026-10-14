@@ -8,7 +8,7 @@ try:
     from .vibevoice_quality import assess, numbered_heading_assessment
 except ImportError:  # Worker execution adds app/ directly to sys.path.
     from vibevoice_plan import _split_oversize, normalize_text
-    from vibevoice_quality import assess, numbered_heading_assessment
+from vibevoice_quality import assess_narration as assess, numbered_heading_assessment
 
 
 UNIT_TARGET_WORDS = 120
@@ -130,7 +130,8 @@ def parent_quality(passage, unit_reports, units=None):
     """Apply the original parent coverage threshold to ordered unit transcripts."""
     units = _validate_units(passage, repair_units(passage) if units is None else units)
     reports = _reports_by_unit(units, unit_reports)
-    transcript = " ".join(str(reports[index].get("transcript", "")).strip() for index in range(len(units))).strip()
+    transcript = " ".join(str(reports[index].get("comparison_transcript", reports[index].get("transcript", ""))).strip()
+                          for index in range(len(units))).strip()
     expected = normalize_text(passage["text"])
     return numbered_heading_assessment(expected, transcript) if passage.get("heading") else assess(expected, transcript)
 

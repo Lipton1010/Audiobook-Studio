@@ -10,6 +10,16 @@ STALE_PROGRESS_SECONDS = 120
 STALLED_BATCH_SECONDS = 300
 
 
+def estimate_word_remaining_seconds(elapsed, completed_words, remaining_words, prose_samples):
+    """Estimate this run's remaining speech and checking work, excluding cached text."""
+    if remaining_words <= 0:
+        return 0.0
+    # Opening headings are not representative of prose generation or ASR cost.
+    if prose_samples < 3 or completed_words < 600 or elapsed <= 0:
+        return None
+    return elapsed * remaining_words / completed_words
+
+
 def estimate_remaining_seconds(observations, remaining_tmax):
     """Fit bucket duration to input-token length and forecast the remainder."""
     if not remaining_tmax:

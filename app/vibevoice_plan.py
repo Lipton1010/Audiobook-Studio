@@ -39,6 +39,21 @@ SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[\"'“‘A-Z])")
 SPACED_ELLIPSIS_RE = re.compile(r"\.\s*\.\s*\.")
 
 
+def runtime_profile(config):
+    backend = config.get("inference_backend", "legacy")
+    if backend == "legacy":
+        return dict(RUNTIME)
+    if backend != "compiled":
+        raise ValueError(f"Unknown VibeVoice inference backend: {backend}")
+    try:
+        from . import vibevoice_hf as hf
+    except ImportError:
+        import vibevoice_hf as hf
+    return {**RUNTIME, "inference_backend": backend, "model_id": hf.MODEL_ID,
+            "model_revision": hf.MODEL_REVISION, "tokenizer_revision": hf.MODEL_REVISION,
+            "transformers_version": hf.TRANSFORMERS_VERSION, "compile_profile": "static-default-v1"}
+
+
 def normalize_text(text):
     """Preserve words exactly while making VibeVoice's one-line input stable."""
     text = " ".join(str(text).split())
@@ -179,8 +194,8 @@ def write_plan(job_dir, blocks, config):
     if not config.get("model_dir"):
         raise ValueError("VibeVoice model_dir is required")
     voice_sha256 = sha256_file(voice)
-    runtime = dict(RUNTIME)
-    for key in RUNTIME:
+    runtime = runtime_profile(config)
+    for key in runtime:
         if key in ("cfg_scale", "ddpm_steps"):
             continue
         if key in config and config[key] != runtime[key]:
@@ -215,7 +230,8 @@ def load_plan(job_dir):
     plan = json.loads((job_dir / PLAN_FILENAME).read_text(encoding="utf-8"))
     config = json.loads((job_dir / CONFIG_FILENAME).read_text(encoding="utf-8"))
     settings = normalize_settings("vibevoice", config.get("path", "A"), config.get("generation_settings"))
-    for key, value in RUNTIME.items():
+    runtime = runtime_profile(config)
+    for key, value in runtime.items():
         if key in ("cfg_scale", "ddpm_steps"):
             value = settings[key]
         if config.get(key) != value:
@@ -223,7 +239,7 @@ def load_plan(job_dir):
     for key in ("cfg_scale", "ddpm_steps", "passage_gap_ms", "heading_lead_ms"):
         if config.get(key) != settings[key]:
             raise ValueError(f"VibeVoice config {key} does not match generation settings")
-    expected_runtime = {**RUNTIME, "cfg_scale": settings["cfg_scale"], "ddpm_steps": settings["ddpm_steps"], "model_fingerprint": model_fingerprint(config["model_dir"])}
+    expected_runtime = {**runtime, "cfg_scale": settings["cfg_scale"], "ddpm_steps": settings["ddpm_steps"], "model_fingerprint": model_fingerprint(config["model_dir"])}
     if plan.get("schema") != PLAN_SCHEMA or plan.get("runtime") != expected_runtime:
         raise ValueError("VibeVoice plan runtime does not match its config; rebuild the plan")
     if sha256_file(config["reference_wav"]) != plan.get("voice_sha256"):

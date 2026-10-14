@@ -28,9 +28,13 @@ material; Storybird does not invent an automatic summary, infer missing graphic 
 decide that nearby dialogue is sufficient. Preserve story-critical numbers, changes,
 warnings and discovery order. Iteration headings and quotations remain source text.
 
-Save every treatment, open **Inspect final narration text**, then select **Start narration**.
-An edit makes a prior preview obsolete. The server also enforces these gates on direct
-narration and resume paths. Saved choices are available after closing or restarting the app.
+Save every treatment, then select **Start narration**. The full narration preview is
+optional; opening it is never required to generate, resume, or regenerate an audiobook.
+Once choices are saved, the book card says **Ready to narrate** and offers **Start
+narration** directly, without reopening review.
+The preview and start buttons stay visible below the scrollable passage content, with
+a status explaining any remaining unsaved choices. The server still rejects unresolved
+visuals and empty narration. Saved choices are available after closing or restarting the app.
 
 ## Source, decisions and existing work
 

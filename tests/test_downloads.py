@@ -48,6 +48,7 @@ class NativeWindowTests(unittest.TestCase):
         set_app_id.assert_called_once_with()
         self.assertEqual(calls["window"]["title"], "Storybird")
         self.assertEqual(calls["window"]["url"], "http://127.0.0.1:8765")
+        self.assertTrue(calls["window"]["text_select"])
         self.assertEqual(calls["start"][0], (launcher._set_windows_window_icon,))
         self.assertEqual(calls["start"][1]["args"], (window,))
 

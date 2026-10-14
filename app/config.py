@@ -45,12 +45,22 @@ _ENV = {
     "base_dir": "AUDIOBOOK_BASE_DIR",
     "chatterbox_python": "AUDIOBOOK_CHATTERBOX_PY",
     "vibevoice_python": "AUDIOBOOK_VIBEVOICE_PY",
+    "vibevoice_inference_backend": "AUDIOBOOK_VIBEVOICE_INFERENCE_BACKEND",
+    "vibevoice_compiled_python": "AUDIOBOOK_VIBEVOICE_COMPILED_PY",
+    "vibevoice_compiled_model_dir": "AUDIOBOOK_VIBEVOICE_COMPILED_MODEL_DIR",
     "vibevoice_model_dir": "AUDIOBOOK_VIBEVOICE_MODEL_DIR",
     "vibevoice_cache_dir": "AUDIOBOOK_VIBEVOICE_CACHE_DIR",
     "vibevoice_model_revision": "AUDIOBOOK_VIBEVOICE_MODEL_REVISION",
     "vibevoice_tokenizer_revision": "AUDIOBOOK_VIBEVOICE_TOKENIZER_REVISION",
     "vibevoice_quality_python": "AUDIOBOOK_VIBEVOICE_QUALITY_PY",
     "vibevoice_quality_model": "AUDIOBOOK_VIBEVOICE_QUALITY_MODEL",
+    "vibevoice_workflow": "AUDIOBOOK_VIBEVOICE_WORKFLOW",
+    "vibevoice_render_workers": "AUDIOBOOK_VIBEVOICE_RENDER_WORKERS",
+    "parakeet_python": "AUDIOBOOK_PARAKEET_PY",
+    "parakeet_model": "AUDIOBOOK_PARAKEET_MODEL",
+    "vibevoice_transcript_review": "AUDIOBOOK_VIBEVOICE_TRANSCRIPT_REVIEW",
+    "vibevoice_quality_workers": "AUDIOBOOK_VIBEVOICE_QUALITY_WORKERS",
+    "vibevoice_batch_size": "AUDIOBOOK_VIBEVOICE_BATCH_SIZE",
     "reference_wav": "AUDIOBOOK_REFERENCE_WAV",
     "audiobooks_dir": "AUDIOBOOK_AUDIOBOOKS_DIR",
     "library_roots": "AUDIOBOOK_LIBRARY_ROOTS",  # os.pathsep-separated in env
@@ -168,6 +178,9 @@ class Config:
             str(self.base_dir / "models" / "vibevoice-1.5b"),
         )
         self.vibevoice_cache_dir = _pick("vibevoice_cache_dir", file_cfg, "")
+        self.vibevoice_inference_backend = _pick("vibevoice_inference_backend", file_cfg, "legacy")
+        self.vibevoice_compiled_python = _pick("vibevoice_compiled_python", file_cfg, "")
+        self.vibevoice_compiled_model_dir = _pick("vibevoice_compiled_model_dir", file_cfg, "")
         self.vibevoice_model_revision = _pick(
             "vibevoice_model_revision", file_cfg, "c00898d257e6b46004e3e2866a47534085fb685a"
         )
@@ -179,6 +192,15 @@ class Config:
         )
         self.vibevoice_quality_model = _pick(
             "vibevoice_quality_model", file_cfg, ""
+        )
+        self.vibevoice_workflow = _pick("vibevoice_workflow", file_cfg, "overlap_cpu")
+        self.vibevoice_render_workers = 2 if str(_pick("vibevoice_render_workers", file_cfg, 1)) == "2" else 1
+        self.parakeet_python = _pick("parakeet_python", file_cfg, "")
+        self.parakeet_model = _pick("parakeet_model", file_cfg, "")
+        self.vibevoice_transcript_review = str(_pick("vibevoice_transcript_review", file_cfg, False)).lower() in ("true", "1")
+        self.vibevoice_quality_workers = 2 if str(_pick("vibevoice_quality_workers", file_cfg, 1)) == "2" else 1
+        self.vibevoice_batch_size = {"1": 1, "2": 2, "3": 3, "4": 4}.get(
+            str(_pick("vibevoice_batch_size", file_cfg, 2)), 2
         )
 
         self.reference_wav = _pick(

@@ -61,12 +61,15 @@ class VisualReviewTests(unittest.TestCase):
         with urllib.request.urlopen(req, timeout=5) as response:
             return response.status, json.load(response)
 
-    def test_review_is_durable_and_requires_preview_before_queueing(self):
+    def test_saved_review_is_durable_and_queues_without_preview(self):
         job_id, job_dir = self.make_job()
         _, review = self.request("GET", f"/api/jobs/{job_id}/visual-review")
         item = review["items"][0]
         self.assertEqual(item["nearby_prose"], {"before": ["Before prose."], "after": ["After prose."]})
         self.assertEqual(review["unresolved_count"], 1)
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            self.request("POST", f"/api/jobs/{job_id}/visual-review/start", {})
+        self.assertEqual(raised.exception.code, 409)
         _, saved = self.request("POST", f"/api/jobs/{job_id}/visual-review/{item['id']}", {
             "fingerprint": item["fingerprint"], "decision": "describe", "spoken_text": "A red circle is shown.",
         })
@@ -74,11 +77,6 @@ class VisualReviewTests(unittest.TestCase):
         self.assertEqual(json.loads((job_dir / "source_blocks.json").read_text())["blocks"][1]["text"], "Figure 1: red circle.")
         projected = json.loads((job_dir / "blocks.json").read_text())["blocks"]
         self.assertEqual(projected[1]["text"], "A red circle is shown.")
-        with self.assertRaises(urllib.error.HTTPError) as raised:
-            self.request("POST", f"/api/jobs/{job_id}/visual-review/start", {})
-        self.assertEqual(raised.exception.code, 409)
-        _, preview = self.request("GET", f"/api/jobs/{job_id}/visual-review/preview")
-        self.assertIn("A red circle is shown.", preview["text"])
         self.request("POST", f"/api/jobs/{job_id}/visual-review/start", {})
         self.assertEqual(server.load_state(job_id)["status"], "queued")
 
