@@ -12,6 +12,28 @@ import pipeline_text as pt
 
 
 class VisualExtractionTests(unittest.TestCase):
+    def test_illegible_page_response_is_reviewed_with_raw_text_preserved(self):
+        response = ('The provided image is too blurry and illegible to accurately transcribe any text. '
+                    'It appears to be a page from a document with no visible text.')
+        for raw in (response, response.replace(' It appears', '\n\nIt appears')):
+            with self.subTest(raw=raw):
+                blocks = pt.tag_blocks(raw)
+                self.assertEqual(len(blocks), 1)
+                self.assertEqual(blocks[0]['type'], 'visual')
+                self.assertEqual(blocks[0]['visual_kind'], 'Uncertain OCR response')
+                self.assertEqual(blocks[0]['text'], raw)
+        quoted = 'She read: "' + response + '"'
+        self.assertEqual(pt.tag_blocks(quoted), [{'type': 'body', 'text': quoted}])
+
+    def test_ocr_instruction_echo_is_reviewed_instead_of_narrated(self):
+        prompt = 'Transcribe this document page as clean Markdown, preserving reading order and tables.'
+        blocks = pt.tag_blocks('The keeper waited.\n' + prompt + '\nThe gate opened.')
+        self.assertEqual([b['type'] for b in blocks], ['body', 'visual', 'body'])
+        self.assertEqual(blocks[1]['visual_kind'], 'OCR instruction echo')
+        self.assertEqual(blocks[1]['text'], prompt)
+        quoted = 'She read: "' + prompt + '"'
+        self.assertEqual(pt.tag_blocks(quoted), [{'type': 'body', 'text': quoted}])
+
     def test_fragmented_log_is_one_preserved_visual(self):
         source = """Before the console woke.
 | Time | State |

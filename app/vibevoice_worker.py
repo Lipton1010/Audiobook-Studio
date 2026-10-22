@@ -22,10 +22,10 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from vibevoice_audio import mono_24k
+from vibevoice_audio import mono_24k, normalize_audio
 from vibevoice_plan import load_plan, normalize_text, sha256_file
 from vibevoice_assembly import _ffmpeg, assemble
-from vibevoice_units import repair_units, parent_quality, choose_repair_unit
+from vibevoice_units import repair_units, repair_limits, parent_quality, choose_repair_unit
 from vibevoice_quality import assess_narration as assess, integer_words, numbered_heading_assessment, unit_assessment
 import vibevoice_delivery as delivery
 from gpu_oom import bisect_cuda_oom
@@ -139,7 +139,7 @@ def _prefetch_next_parent(job_dir, parent, config, unit_dir, torch, processor, m
 def _render_text(text, profile=None, render_heading=None):
     if profile is None:
         return text
-    if profile == delivery.PROFILE:
+    if profile in (delivery.PROFILE, delivery.INTACT_PROFILE):
         return _INTRA_WORD_CURLY_APOSTROPHE.sub("'", delivery.spoken_text(text))
     if profile == NUMBERED_OUTLINE_HEADING_PROFILE:
         source = _NUMBERED_OUTLINE_RE.fullmatch(text)
@@ -168,6 +168,9 @@ def _profiled_unit(unit, profile=None):
                    else ASCII_APOSTROPHE_PROFILE)
     render_heading = unit.get("render_heading")
     render_text = _render_text(unit.get("spoken_text", unit["text"]), profile, render_heading)
+    if unit.get("scene_direction_compiled"):
+        from scene_direction import render_unit
+        render_text = render_unit(unit, render_text)
     return {**unit, "render_profile": profile, "render_text": render_text,
             "speaker_text": "Speaker 0: " + render_text}
 
@@ -196,7 +199,11 @@ def _render_with_numbered_heading_seed(torch, passage, attempt, render):
 
 
 def _render_text_sha256(unit, profile):
-    return hashlib.sha256(_render_text(unit.get("spoken_text", unit["text"]), profile, unit.get("render_heading")).encode("utf-8")).hexdigest()
+    text = _render_text(unit.get("spoken_text", unit["text"]), profile, unit.get("render_heading"))
+    if unit.get("scene_direction_compiled"):
+        from scene_direction import render_unit
+        text = render_unit(unit, text)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _outline_render_heading(parent, config):
@@ -221,9 +228,21 @@ def _outline_render_heading(parent, config):
 
 
 def _units_for_parent(parent, config):
-    units = delivery.spoken_units(repair_units(parent))
+    boundary = config.get('unit_boundary_policies', {}).get(parent.get('identity'), config.get('unit_boundary_policy', 'legacy_v1'))
+    limits = repair_limits(parent, config)
+    units = delivery.project_units(repair_units(parent, boundary_policy=boundary, **limits), parent, config)
     if _is_numbered_heading(parent):
         units[0] = {**units[0], "numbered_heading": True}
+    if config.get("backend") == "drama3":
+        if boundary == 'sentences_v4':
+            for unit in units:
+                if len(unit.get('spoken_text', unit['text'])) > limits['max_chars']:
+                    raise ValueError(f"Passage {parent['index'] + 1} has a sentence exceeding Drama 3's "
+                                     f"{limits['max_chars']}-character input limit. The text was kept intact; "
+                                     "review this sentence before narration.")
+        from scene_direction import attach_units
+        units = [{**unit, "sample_rate": 44100, "render_profile": delivery.INTACT_PROFILE} for unit in units]
+        return attach_units(units, parent, config)
     numbered = _numbered_outline_heading(parent, config)
     if numbered:
         units[0] = {**units[0], "render_profile": NUMBERED_OUTLINE_HEADING_PROFILE,
@@ -379,6 +398,19 @@ def _valid_numbered_heading_seed(metadata):
 
 
 def _valid_segment(seg_dir, passage):
+    config = None
+    units = None
+    if 'unit_index' not in passage and 'text' in passage:
+        config_path = seg_dir.parent / 'vibevoice_config.json'
+        if config_path.exists():
+            try:
+                config = json.loads(config_path.read_text(encoding='utf-8'))
+                units = _units_for_parent(passage, config)
+            except (ValueError, KeyError, OSError, TypeError):
+                return False
+            if units and all(not u.get('spoken_text', u['text']) for u in units):
+                return True  # Source-bound omissions have no audio checkpoint.
+    sample_rate = passage.get("sample_rate", 24000)
     wav, receipt = _wav_path(seg_dir, passage["index"]), _receipt_path(seg_dir, passage["index"])
     if not wav.is_file() or not receipt.is_file():
         return False
@@ -388,6 +420,33 @@ def _valid_segment(seg_dir, passage):
         audio, sr = sf.read(str(wav), dtype="float32")
     except Exception:
         return False
+    if units is not None:
+        try:
+            manifest = saved.get('unit_manifest')
+            if manifest is not None:
+                if [(u['index'], u['identity']) for u in units] != [(u['index'], u['identity']) for u in manifest]:
+                    return False
+                for unit, entry in zip(units, manifest):
+                    if not unit.get('spoken_text', unit['text']):
+                        if entry != {'index': unit['index'], 'identity': unit['identity'], 'omitted': True}:
+                            return False
+                        continue
+                    unit_receipt = json.loads(_receipt_path(seg_dir / UNITS_DIR, unit['index']).read_text(encoding='utf-8'))
+                    if (not delivery.receipt_matches_projection(unit_receipt, unit)
+                            or unit_receipt.get('force_regenerate')
+                            or unit_receipt.get('wav_sha256') != entry['wav_sha256']
+                            or sha256_file(_wav_path(seg_dir / UNITS_DIR, unit['index'])) != entry['wav_sha256']):
+                        return False
+                    if config.get("backend") == "drama3":
+                        if not _valid_unit(seg_dir / UNITS_DIR, unit):
+                            return False
+            else:
+                legacy = _units_for_parent(passage, {**config, 'unit_boundary_policy': 'legacy_v1'})
+                if ([u['identity'] for u in legacy] != [u['identity'] for u in units]
+                        or any(u.get('spoken_text', u['text']) != u['text'] or u.get('render_profile') == delivery.INTACT_PROFILE for u in units)):
+                    return False
+        except (ValueError, KeyError, OSError, TypeError):
+            return False
     if _is_numbered_heading(passage):
         reports = saved.get("unit_reports")
         if not isinstance(reports, list):
@@ -430,10 +489,10 @@ def _valid_segment(seg_dir, passage):
         saved.get("identity") == passage["identity"]
         and not saved.get("force_regenerate")
         and saved.get("wav_sha256") == sha256_file(wav)
-        and info.samplerate == 24000
+        and info.samplerate == sample_rate
         and info.channels == 1
-        and info.frames > 2400
-        and sr == 24000 and audio.ndim == 1
+        and info.frames > sample_rate / 10
+        and sr == sample_rate and audio.ndim == 1
         and np.isfinite(audio).all() and np.max(np.abs(audio)) > 0.001
     )
 
@@ -649,6 +708,7 @@ class _QualityCheck:
 
 
 def _render_one(torch, processor, model, voice, passage, config, tmp_path):
+    started = time.perf_counter()
     _assert_no_ocr()
     if config.get("inference_backend") == "compiled":
         import vibevoice_hf
@@ -668,16 +728,11 @@ def _render_one(torch, processor, model, voice, passage, config, tmp_path):
     torch.cuda.synchronize()
     if bool(capped.any()):
         raise RuntimeError("generation reached the 4000-token cap")
-    wav = outputs[0].detach().float().cpu().numpy().squeeze()
-    if wav.ndim != 1 or len(wav) <= 2400 or not np.isfinite(wav).all() or np.max(np.abs(wav)) <= 0.001:
-        raise RuntimeError("generated audio was empty, nonfinite, or silent")
-    import pyloudnorm as pyln
-    loudness = pyln.Meter(24000).integrated_loudness(wav)
-    target = min(float(config.get("target_lufs", -21.0)), loudness + 20 * np.log10(0.95 / np.max(np.abs(wav))))
-    wav = pyln.normalize.loudness(wav, loudness, target)
-    if not np.isfinite(wav).all() or np.max(np.abs(wav)) > 1.0:
-        raise RuntimeError("loudness normalization produced invalid audio")
-    sf.write(str(tmp_path), wav, 24000, subtype="PCM_16")
+    sf.write(str(tmp_path), _normalize_wav(outputs[0], config), 24000, subtype="PCM_16")
+    return {"text": passage.get("render_text", passage["text"]), "frames": sf.info(str(tmp_path)).frames,
+            "sample_rate": 24000, "seconds": sf.info(str(tmp_path)).duration,
+            "elapsed_seconds": time.perf_counter() - started, "cap_hit": False,
+            "stop_reason": "non_cap_completion", "max_new_tokens": int(config["max_new_tokens"])}
 
 
 def _prepare_voice(job_dir, config, plan):
@@ -720,20 +775,13 @@ def _normalize_wav(wav_tensor, config):
     if wav_tensor is None:
         raise RuntimeError("generated audio was empty, nonfinite, or silent")
     wav = wav_tensor.detach().float().cpu().numpy().squeeze()
-    if wav.ndim != 1 or len(wav) <= 2400 or not np.isfinite(wav).all() or np.max(np.abs(wav)) <= 0.001:
-        raise RuntimeError("generated audio was empty, nonfinite, or silent")
-    import pyloudnorm as pyln
-    loudness = pyln.Meter(24000).integrated_loudness(wav)
-    target = min(float(config.get("target_lufs", -21.0)), loudness + 20 * np.log10(0.95 / np.max(np.abs(wav))))
-    wav = pyln.normalize.loudness(wav, loudness, target)
-    if not np.isfinite(wav).all() or np.max(np.abs(wav)) > 1.0:
-        raise RuntimeError("loudness normalization produced invalid audio")
-    return wav
+    return normalize_audio(wav, 24000, config.get("target_lufs", -21.0))
 
 
 def _render_batch(torch, processor, model, voice, items, config, unit_dir):
     """Render a bounded native batch and retain each row's own outcome."""
     _assert_no_ocr()
+    started = time.perf_counter()
     items = list(items)
     passages = [item[0] for item in items]
     if len(items) != 1 and any(passage.get("render_profile") == NUMBERED_OUTLINE_HEADING_PROFILE for passage in passages):
@@ -781,6 +829,15 @@ def _render_batch(torch, processor, model, voice, items, config, unit_dir):
             tmp.unlink(missing_ok=True)
             error = exc
         rendered_passage = dict(passage)
+        if config.get("record_fragments"):
+            rendered_passage["generation"] = [{"text": passage.get("render_text", passage["text"]),
+                "frames": sf.info(str(tmp)).frames if error is None else None,
+                "seconds": sf.info(str(tmp)).duration if error is None else None,
+                "sample_rate": 24000, "cap_hit": bool(cap_hit),
+                "stop_reason": "cap" if cap_hit else "non_cap_completion",
+                "max_new_tokens": int(config["max_new_tokens"]),
+                "elapsed_seconds": time.perf_counter() - started,
+                "timing_scope": "batch", "error": str(error) if error else None}]
         seed = _numbered_heading_seed(passage, attempt)
         if seed is not None:
             rendered_passage["render_seed"] = seed
@@ -788,14 +845,21 @@ def _render_batch(torch, processor, model, voice, items, config, unit_dir):
     return rendered
 
 
-def _valid_unit(unit_dir, unit, allow_needs_repair=False):
+def _valid_unit(unit_dir, unit, allow_needs_repair=False, allow_review=False):
+    if not unit.get('spoken_text', unit['text']):
+        return True
     if not _valid_segment(unit_dir, unit):
         return False
     try:
         receipt = json.loads(_receipt_path(unit_dir, unit["index"]).read_text(encoding="utf-8"))
+        if unit.get("sample_rate") == 44100:
+            from drama3 import validate_generation
+            validate_generation(receipt.get("generation"), unit)
         report = Path(receipt["quality_report"])
         payload = report.read_bytes()
         parsed = json.loads(payload)
+        if unit.get("sample_rate") == 44100 and parsed.get("generation") != receipt.get("generation"):
+            return False
         assessment = unit_assessment(unit, parsed)
         profile = receipt.get("render_profile")
         if (unit.get("render_profile") == NUMBERED_OUTLINE_HEADING_PROFILE
@@ -804,13 +868,15 @@ def _valid_unit(unit_dir, unit, allow_needs_repair=False):
         if (unit.get("render_profile") != NUMBERED_OUTLINE_HEADING_PROFILE
                 and unit.get("render_profile") and profile is not None and profile != unit["render_profile"]):
             return False
-        if profile not in (None, ASCII_APOSTROPHE_PROFILE, OUTLINE_PREFIX_CASE_PROFILE, NUMBERED_OUTLINE_HEADING_PROFILE, delivery.PROFILE):
+        if profile not in (None, ASCII_APOSTROPHE_PROFILE, OUTLINE_PREFIX_CASE_PROFILE, NUMBERED_OUTLINE_HEADING_PROFILE, delivery.PROFILE, delivery.INTACT_PROFILE):
             return False
         if profile in (OUTLINE_PREFIX_CASE_PROFILE, NUMBERED_OUTLINE_HEADING_PROFILE) and receipt.get("render_heading") != unit.get("render_heading"):
             return False
         if not isinstance(receipt.get("profile_attempts", {}), dict):
             return False
-        valid_profile = (profile is None or receipt.get("render_text_sha256") == _render_text_sha256(unit, profile))
+        valid_profile = delivery.receipt_matches_projection(receipt, unit)
+        if profile is not None:
+            valid_profile = valid_profile and receipt.get("render_text_sha256") == _render_text_sha256(unit, profile)
         valid_seed = True
         if profile == NUMBERED_OUTLINE_HEADING_PROFILE:
             valid_seed = _valid_numbered_heading_seed(receipt)
@@ -832,7 +898,8 @@ def _valid_unit(unit_dir, unit, allow_needs_repair=False):
                 and parsed.get("unit_text_sha256") == unit["text_sha256"]
                 and parsed.get("audio_sha256") == receipt.get("wav_sha256")
                 and isinstance(parsed.get("transcript"), str)
-                and (assessment.get("ok") or narration_review.approved(receipt, unit)))
+                and (assessment.get("ok") or (allow_review and assessment.get('review_required'))
+                     or narration_review.approved(receipt, unit)))
 
 
 def _recover_parent_from_units(job_dir, parent, units, unit_dir, seg_dir):
@@ -851,6 +918,8 @@ def _recover_parent_from_units(job_dir, parent, units, unit_dir, seg_dir):
     for unit in units:
         if _cancelled(job_dir):
             raise SystemExit(2)
+        if not unit.get('spoken_text', unit['text']):
+            continue
         receipt_path = _receipt_path(unit_dir, unit["index"])
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
         if receipt.get("needs_repair"):
@@ -868,6 +937,8 @@ def _apply_listening_decisions(job_dir, parent, units, unit_dir):
         return False
     pending = unit_dir.parent / narration_review.CANDIDATES_DIR
     for unit in units:
+        if not unit.get('spoken_text', unit['text']):
+            continue
         if unit["index"] not in data.get("candidates", []):
             continue
         receipt = json.loads(_receipt_path(pending, unit["index"]).read_text(encoding="utf-8"))
@@ -896,6 +967,8 @@ def _apply_listening_decisions(job_dir, parent, units, unit_dir):
 
 
 def _unit_report(unit_dir, unit):
+    if not unit.get('spoken_text', unit['text']):
+        return {**assess('', ''), 'unit_index': unit['unit_index'], 'transcript': '', 'omitted': True}
     receipt = json.loads(_receipt_path(unit_dir, unit["index"]).read_text(encoding="utf-8"))
     saved = json.loads(Path(receipt["quality_report"]).read_text(encoding="utf-8"))
     report = unit_assessment(unit, saved)
@@ -903,6 +976,7 @@ def _unit_report(unit_dir, unit):
     report["unit_index"] = unit["unit_index"]
     if narration_review.approved(receipt, unit):
         report["raw_assessment"] = dict(report)
+        report.pop("comparison_transcript", None)
         report["transcript"] = unit.get("spoken_text", unit["text"])
         report["listening_approval"] = receipt["listening_approval"]
         report["ok"] = True
@@ -922,19 +996,24 @@ def _publish_unit(unit_dir, passage, tmp, report, attempt):
     final = _wav_path(unit_dir, passage["index"])
     wav_sha256 = sha256_file(tmp)
     report_payload = json.loads(Path(report).read_text(encoding="utf-8"))
+    report_payload['comparison_policy'] = unit_assessment(passage, report_payload).get('comparison_policy', 'numbered_heading_v1')
     report_payload.update({"unit_identity": passage["identity"],
                            "unit_text_sha256": passage["text_sha256"],
+                           "expected_spoken_sha256": delivery.text_hash(passage.get("spoken_text", passage["text"])),
                            "audio_sha256": wav_sha256})
+    if passage.get('render_model'):
+        report_payload['render_model'] = passage['render_model']
     _write_json(Path(report), report_payload)
     if _cancelled(unit_dir.parent.parent):
         raise SystemExit(2)
     prior_receipt = _receipt_path(unit_dir, passage["index"])
     if final.exists() and prior_receipt.exists():
         previous = json.loads(prior_receipt.read_text(encoding="utf-8"))
-        if previous.get("force_regenerate") or previous.get("listening_approval"):
+        if previous.get('wav_sha256') != wav_sha256 or previous.get('force_regenerate') or previous.get('listening_approval'):
             archive = unit_dir.parent.parent / REJECTED_DIR
             archive.mkdir(exist_ok=True)
-            stem = f"{final.stem}_before_listening_retry_{time.time_ns()}"
+            reason = 'listening_retry' if previous.get('force_regenerate') or previous.get('listening_approval') else 'replacement'
+            stem = f"{final.stem}_before_{reason}_{time.time_ns()}"
             shutil.copy2(final, archive / f"{stem}.wav")
             shutil.copy2(prior_receipt, archive / f"{stem}.json")
     if passage.get("numbered_heading"):
@@ -948,7 +1027,13 @@ def _publish_unit(unit_dir, passage, tmp, report, attempt):
         "report_sha256": sha256_file(report), "parent_index": passage["parent_index"],
         "unit_index": passage["unit_index"], "attempt": attempt,
         "report_identity": passage["identity"], "report_wav_sha256": wav_sha256,
+        "spoken_text_sha256": delivery.text_hash(passage.get("spoken_text", passage["text"])),
+        "render_policy_sha256": delivery.policy_hash(passage.get("render_profile")),
     }
+    if report_payload.get("generation"):
+        receipt["generation"] = report_payload["generation"]
+    if passage.get('render_model'):
+        receipt['render_model'] = passage['render_model']
     if passage.get("render_profile"):
         previous = _receipt_path(unit_dir, passage["index"])
         if previous.exists():
@@ -973,18 +1058,21 @@ def _assemble_parent_from_units(parent, units, unit_dir, seg_dir, aggregate):
     temp = _wav_path(seg_dir, parent["index"]).with_suffix(f".tmp{os.getpid()}.wav")
     final = _wav_path(seg_dir, parent["index"])
     audio = []
+    sample_rate = parent.get("sample_rate", 24000)
     try:
-        for position, unit in enumerate(units):
+        audible = [u for u in units if u.get('spoken_text', u['text'])]
+        for position, unit in enumerate(audible):
             wav, sr = sf.read(str(_wav_path(unit_dir, unit["index"])), dtype="float32")
-            if sr != 24000 or wav.ndim != 1:
-                raise RuntimeError("accepted VibeVoice unit is not mono 24 kHz")
-            ramp = np.linspace(0.0, 1.0, 120, dtype=np.float32)
+            if sr != sample_rate or wav.ndim != 1:
+                raise RuntimeError(f"accepted narration unit is not mono {sample_rate} Hz")
+            fade = round(sample_rate * 0.005)
+            ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
             if position:
-                wav[:120] *= ramp
-            if position + 1 < len(units):
-                wav[-120:] *= ramp[::-1]
+                wav[:fade] *= ramp
+            if position + 1 < len(audible):
+                wav[-fade:] *= ramp[::-1]
             audio.append(wav)
-        sf.write(str(temp), np.concatenate(audio), 24000, subtype="PCM_16")
+        sf.write(str(temp), np.concatenate(audio), sample_rate, subtype="PCM_16")
         if not aggregate.get("ok"):
             raise RuntimeError("cannot publish a parent that failed quality")
         if _cancelled(seg_dir.parent):
@@ -1007,6 +1095,9 @@ def _assemble_parent_from_units(parent, units, unit_dir, seg_dir, aggregate):
         temp.unlink(missing_ok=True)
     manifest = []
     for unit in units:
+        if not unit.get('spoken_text', unit['text']):
+            manifest.append({'index': unit['index'], 'identity': unit['identity'], 'omitted': True})
+            continue
         entry = {"index": unit["index"], "identity": unit["identity"],
                  "wav_sha256": sha256_file(_wav_path(unit_dir, unit["index"]))}
         if _is_numbered_heading(parent):
@@ -1033,6 +1124,7 @@ def _render_items(torch, processor, model, voice, items, config, unit_dir):
             tmp = _wav_path(unit_dir, unit["index"]).with_suffix(f".tmp{os.getpid()}.wav")
             parts = delivery.delivery_parts(unit["render_text"])
             clips = []
+            diagnostics = []
             error = None
             try:
                 for index, part in enumerate(parts):
@@ -1044,7 +1136,11 @@ def _render_items(torch, processor, model, voice, items, config, unit_dir):
                         pass
                     fragment = {**unit, "text": part["text"], "render_text": part["text"],
                                 "speaker_text": "Speaker 0: " + part["text"]}
-                    _render_one(torch, processor, model, voice, fragment, config, tmp)
+                    started = time.perf_counter()
+                    diagnostic = _render_one(torch, processor, model, voice, fragment, config, tmp)
+                    if config.get("record_fragments"):
+                        diagnostics.append({**(diagnostic or {}), "fragment": index,
+                                            "aside": part["aside"], "start_frame": sum(len(clip) for clip in clips) + (4800 if index else 0)})
                     audio, sr = sf.read(str(tmp), dtype="float32")
                     ramp = np.linspace(0.0, 1.0, 120, dtype=np.float32)
                     if index:
@@ -1062,6 +1158,15 @@ def _render_items(torch, processor, model, voice, items, config, unit_dir):
             except Exception as exc:
                 tmp.unlink(missing_ok=True)
                 error = exc
+                if config.get('record_fragments') and parts and len(diagnostics) == index:
+                    diagnostics.append({'text': part['text'], 'fragment': index, 'aside': part['aside'],
+                                        'seconds': None, 'frames': None, 'error': str(exc),
+                                        'cap_hit': str(exc).startswith('generation reached'),
+                                        'stop_reason': 'cap' if str(exc).startswith('generation reached') else 'error',
+                                        'max_new_tokens': config.get('max_new_tokens'),
+                                        'elapsed_seconds': time.perf_counter() - started})
+            if config.get("record_fragments"):
+                unit = {**unit, "generation": diagnostics}
             rendered.append((unit, attempt, tmp, error))
         return rendered
     return bisect_cuda_oom(
@@ -1145,6 +1250,10 @@ def run_generate(job_dir, shard=0, num_shards=1):
             _progress(job_dir, done, len(passages), shard, "cancelled")
             raise SystemExit(2)
         units = _units_for_parent(parent, config)
+        if any(_valid_unit(unit_dir, unit, allow_needs_repair=True, allow_review=True)
+               and not _valid_unit(unit_dir, unit, allow_needs_repair=True) for unit in units):
+            review = narration_review.entry(job_dir, parent) or {}
+            narration_review.record(job_dir, parent, units, review.get('candidates', []))
         if _recover_parent_from_units(job_dir, parent, units, unit_dir, seg_dir):
             done += 1
             _progress(job_dir, done, len(passages), shard, "generating")
@@ -1343,7 +1452,7 @@ def run_generate(job_dir, shard=0, num_shards=1):
                             attempts[unit["index"]] = attempt
                         else:
                             attempts[unit["index"]] = attempt
-                            if attempt < _attempt_limit(unit, retries):
+                            if attempt < _attempt_limit(unit, retries) and not (candidate_report or {}).get('review_required'):
                                 tmp.replace(rejected / f"unit_{unit['index']:010d}_{label}.wav")
                                 queued.append(unit)
                             else:
@@ -1362,6 +1471,8 @@ def run_generate(job_dir, shard=0, num_shards=1):
                     narration_review.hold(job_dir, parent, units, review_candidates)
                 reports = [_unit_report(unit_dir, unit) for unit in units]
                 aggregate = parent_quality(parent, reports, units=units)
+                if not aggregate['ok'] and all(report.get('ok') for report in reports):
+                    narration_review.hold(job_dir, parent, units)
                 while not aggregate["ok"]:
                     exhausted = {unit["unit_index"] for unit in units
                                  if attempts[unit["index"]] >= _attempt_limit(unit, retries)}
@@ -1458,10 +1569,12 @@ def run_assemble(job_dir):
         raise narration_review.ListeningRequired("Review the flagged clips before assembling the audiobook.")
     plan, config = load_plan(job_dir)
     seg_dir = job_dir / SEGMENTS_DIR
-    missing = [p["index"] for p in plan["passages"] if not _valid_segment(seg_dir, p)]
+    passages = [p for p in plan['passages']
+                if any(u.get('spoken_text', u['text']) for u in _units_for_parent(p, config))]
+    missing = [p["index"] for p in passages if not _valid_segment(seg_dir, p)]
     if missing:
         raise RuntimeError(f"cannot assemble: {len(missing)} VibeVoice passages missing (first {missing[0]})")
-    output = assemble(job_dir, plan["passages"], config, lambda index: _wav_path(seg_dir, index), lambda: _cancelled(job_dir))
+    output = assemble(job_dir, passages, config, lambda index: _wav_path(seg_dir, index), lambda: _cancelled(job_dir))
     print(f"wrote {output}", flush=True)
 
 

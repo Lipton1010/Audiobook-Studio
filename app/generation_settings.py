@@ -3,7 +3,7 @@
 import math
 
 
-BACKENDS = ("chatterbox", "vibevoice")
+BACKENDS = ("chatterbox", "vibevoice", "drama3")
 PERFORMANCE_MODES = ("auto", "conservative")
 
 _DEFAULTS = {
@@ -44,12 +44,20 @@ _DEFAULTS = {
 _PAUSE_KEYS = {
     "chatterbox": ("gap_ms", "block_gap_ms", "heading_before_ms", "heading_after_ms"),
     "vibevoice": ("passage_gap_ms", "heading_lead_ms"),
+    "drama3": ("passage_gap_ms", "heading_lead_ms"),
 }
+
+_DEFAULTS["drama3"] = {path: {
+    "passage_gap_ms": 150, "heading_lead_ms": 200,
+    "temperature": 1.0, "top_p": 0.9, "top_k": 30,
+    "max_frames": 1536, "context_length": 4096, "seed": 1729,
+    "performance_mode": "auto",
+} for path in ("A", "B")}
 
 
 def _backend_path(backend, path):
     if backend not in BACKENDS:
-        raise ValueError("backend must be 'chatterbox' or 'vibevoice'")
+        raise ValueError("backend must be 'chatterbox', 'vibevoice' or 'drama3'")
     if path not in ("A", "B"):
         raise ValueError("path must be 'A' or 'B'")
     return backend, path
@@ -102,6 +110,18 @@ def normalize_settings(backend, path, values=None):
             result["cfg_scale"] = float(value)
         if "ddpm_steps" in values:
             result["ddpm_steps"] = _integer(values["ddpm_steps"], "ddpm_steps", 10, 100)
+    if backend == "drama3":
+        for key, low, high in (("temperature", 0.1, 1.5), ("top_p", 0.1, 1.0)):
+            value = values.get(key, defaults[key])
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not low <= value <= high:
+                raise ValueError(f"{key} must be a finite number between {low} and {high}")
+            result[key] = float(value)
+        for key, low, high in (("top_k", 1, 100), ("max_frames", 64, 1536),
+                               ("context_length", 2048, 4096), ("seed", 0, 2**32 - 1)):
+            value = values.get(key, defaults[key])
+            if type(value) is not int or not low <= value <= high:
+                raise ValueError(f"{key} must be an integer between {low} and {high}")
+            result[key] = value
     if "performance_mode" in values:
         value = values["performance_mode"]
         if value not in PERFORMANCE_MODES:
@@ -130,6 +150,8 @@ def runtime_settings(backend, path, values=None):
             "heading_lead_ms": settings["heading_lead_ms"],
             "cross_parent_render_ahead": settings["performance_mode"] == "auto",
         })
+    elif backend == "drama3":
+        mapped.update({key: value for key, value in settings.items() if key != "performance_mode"})
     else:
         mapped.update({key: settings[key] for key in _PAUSE_KEYS[backend]})
     return mapped

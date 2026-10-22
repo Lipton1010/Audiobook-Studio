@@ -36,6 +36,42 @@ def unit(parent, number):
 
 @unittest.skipUnless(np is not None, "requires the isolated VibeVoice runtime")
 class VibeVoiceRuntimeAudioTests(unittest.TestCase):
+    def test_failed_fragment_keeps_cap_diagnostics(self):
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temp:
+            folder = Path(temp)
+            passage = worker._profiled_unit(unit(0, 0), worker.delivery.PROFILE)
+            with mock.patch.object(worker, '_render_one', side_effect=RuntimeError('generation reached the 4000-token cap')):
+                rendered = worker._render_items(None, None, None, None, [(passage,1)],
+                                               {'record_fragments':True,'max_new_tokens':4000},folder)
+            actual, attempt, path, error = rendered[0]
+            self.assertIsInstance(error, RuntimeError)
+            self.assertEqual(actual['generation'][0]['stop_reason'], 'cap')
+            self.assertTrue(actual['generation'][0]['cap_hit'])
+            self.assertFalse(path.exists())
+
+    def test_normalization_short_windows_and_ordinary_equivalence(self):
+        import torch
+        import pyloudnorm as pyln
+        for frames in (3600, 9576, 9600, 24000):
+            original = (np.sin(np.arange(frames) * 0.07) * 0.2).astype(np.float32)
+            result = worker._normalize_wav(torch.from_numpy(original), {})
+            self.assertEqual(len(result), frames)
+            self.assertTrue(np.isfinite(result).all())
+            self.assertLessEqual(float(np.max(np.abs(result))), 0.950001)
+            if frames < 9600:
+                np.testing.assert_array_equal(result, original)
+            else:
+                loudness = pyln.Meter(24000).integrated_loudness(original)
+                target = min(-21.0, loudness + 20 * np.log10(0.95 / np.max(np.abs(original))))
+                np.testing.assert_allclose(result, pyln.normalize.loudness(original, loudness, target), atol=1e-7)
+        high = torch.from_numpy(np.sin(np.arange(3600) * 0.07).astype(np.float32) * 2)
+        self.assertLessEqual(float(np.max(np.abs(worker._normalize_wav(high, {})))), 0.950001)
+        for bad in (None, torch.zeros(3600), torch.full((3600,), float('nan')),
+                    torch.full((9600,), float('inf')), torch.ones(2400)):
+            with self.assertRaises(RuntimeError) as error:
+                worker._normalize_wav(bad, {})
+            self.assertTrue(worker._recoverable_render_error(error.exception))
+
     def test_quality_helper_timeout_cancel_and_bounded_stderr(self):
         class Process:
             def __init__(self, output='{"ready": true}\n'):

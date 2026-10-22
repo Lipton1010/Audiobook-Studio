@@ -1,3 +1,880 @@
+## CPU source-context hardening, 2026-10-21 (current scene-director status)
+
+The existing optional director now carries bounded exact source paragraph frames,
+not its own unreviewed facts or prior delivery notes, into subsequent windows.
+Frames are deduplicated, limited to 6,000 context characters, and explicitly flag
+incomplete/omitted context. The prompt separates source IDs from verbatim context
+extracts; the former instruction conflict about copying facts is removed.
+
+Source-based review signals cover written-medium introductions preceding a quote,
+lowercase quoted fragments, reported cries and oversized paragraph context. They
+remain review heuristics, not definitive role assignments. Later email text cannot
+reclassify earlier spoken dialogue. The compiler checks these signals itself,
+even if a model supplied an empty ambiguity field. An explicit reviewed override
+is still distinct from model confidence. No emotions/deliveries were invented.
+
+Context facts must be exact extracts of selected source evidence, with intact word
+and sentence-ending boundaries. This verifies provenance, not truth, entailment,
+attribution or completeness of surrounding caveats. Model proposals are never
+propagated as memory even if they pass the extract checks. Direction policy is now
+scene_direction_v2_source_context; stale compiled directions and old plans require
+explicit revalidation. This does not affect existing jobs without direction opt-in.
+
+CPU-only migration: scene_direction_cli.py revalidate OLD_FOLDER NEW_FOLDER.
+It preserves the original and writes a new blocked review copy, a verbatim
+quarantine report and source warnings. It never runs a model, approves semantics,
+starts TTS or changes existing audio. Revalidate is not a production migration.
+
+The real 2,091-word trial confirms all five missed written continuations and
+three embedded fragments are guarded, while two earlier spoken turns avoid the
+old later-email false positive. Twelve of fourteen context proposals are
+quarantined (eleven non-extracts, one fragment); two remain unapproved extracts.
+All 24 model speaker/emotion/delivery notes and all 23 original trial files remain
+unchanged. Twenty-eight compiler units preserve canonical/runtime text exactly;
+zero cues were added. No inference or GPU lease occurred in this hardening pass.
+
+Full suite: 512 tests, 511 passed, one existing skip; 13 new context regressions.
+Production configuration and four existing Drama jobs match the prior audit.
+The Graft wiring graph was refreshed; no semantic/deep indexing was requested.
+Evidence: Output/Scene_Direction_2026_10_21/context_hardening_v1/.
+
+Unresolved: lexical checks cannot settle subtle medium changes across paragraphs,
+scene-label drift, inferred motives/emotions or conflicting story accounts.
+No model rerun establishes improved interpretation yet. The completed synthetic
+Q3 whisper audition remains listening-pending and is not production approval.
+Q3 remains the baseline; no defaults, model files, voice references or audio changed.
+
+## Q3/Q4 controlled samples complete, private delivery verified, 2026-10-21
+
+Parent granted the exclusive 25-minute TTS slot after restoration released its
+canonical lease. Both models used the same two reviewed canonical excerpts,
+voice reference, temperature/top-p/top-k, three seeds, no added cues and 16 CPU
+expert layers. Six requests per model completed, plus one successful smoke each.
+No local director ran. Existing production remains Q3 with its existing settings.
+
+The first untrimmed Q3 smoke stopped safely during loading: process working set
+peaked at 22,127,669,248 bytes and free host RAM fell to 420,872,192 bytes. No audio
+was produced. The pinned port maps GGUF files but BinaryBlob::discard_range is
+a no-op on Windows (binary.cpp:90-117). One guarded retry retained the 3 GiB stop
+floor and used the SAME process-local policy for both arms: EmptyWorkingSet on
+the owned child below 6 GiB free, at most four times in its first 90 seconds.
+Sampling increased to 0.25 seconds. No unrelated process was killed, model changed,
+system setting changed or backend recompiled. Failed logs remain preserved.
+
+Full-arm measurements (native-process timing includes model load, excludes prior
+SHA hashing): Q3 74.925 sec for 127.478 sec audio; Q4 77.859 sec for 127.245 sec.
+Generation-only totals were 56.750 and 58.786 sec (Q4 about 3.6% slower). Peak
+whole-board VRAM was 18,920 and 21,212 MiB. Peak process working set was 15.213 and
+15.354 GiB; minimum free host RAM 5.962 and 5.730 GiB. Q3 needed one working-set
+trim, Q4 two. These RAM/speed results include that matched memory policy and do
+not predict unchanged production behavior. Both first-seed smoke/full WAVs were
+byte-identical. All native frame/rate/text-identity checks passed.
+
+After both TTS processes exited, local offline Parakeet checked all 12 samples
+without expected-text hints. All pass the existing checker. The shared difference
+is Peglow transcribed as Peglo in each passage-1 take; no substantive omissions
+or additions were detected. No full-scale clipped PCM samples or frame-limit hits
+were found. Audible artifacts, naturalness and flatness remain listening questions.
+No quality winner or production-default switch is justified yet.
+
+Two blinded first-seed reels and their labelled counterparts contain both excerpts
+with a one-second gap. They use static gain to the same -23 dBFS RMS, with no
+compression/denoising/speed change. All 12 original unmodified native WAVs are in
+the raw-samples ZIP. The reveal key is separate in the labelled folder.
+Nine Drive uploads were read back: every file is shared=false with exactly one
+permission, Paul Miscavage as owner. Remote sizes match local files; ZIP CRC and
+12-WAV count pass; blind RMS differs by less than 0.001 dB and peaks stay below
+-1 dBFS. Delivery used the Google Drive skill; no sharing permissions changed.
+
+Listen first: https://drive.google.com/drive/folders/1TFzO6pS5LUpELCRTjLtsGCMvwiIxEPY7
+All results: https://drive.google.com/drive/folders/1siqtkqfzH5weoJGhZoh4mByvodZ8s_d5
+
+The canonical lease was independently reacquired/released at
+2026-10-21T20:26:42.578204Z. GPU was 1,590 MiB, 1% utilization, Ollama empty,
+22,657,581,056 bytes free host RAM. Slot start was 20:14:39.644239Z, so completed
+inference and independent release verification were within 25 minutes.
+CPU source audit confirms production config and four legacy Drama jobs unchanged,
+with exact original chapter/source copies. Latest application CPU suite remains
+499 tests (498 passed, one existing skip); no application code changed in this slot.
+
+Primary evidence: quantization_results.json, quantization_fidelity.json,
+quantization_slot_guarded_trim.json, GPU_RELEASE_VERIFIED.json,
+delivery_validation.json, drive_quantization_handoff.json, and
+chapter/runs/quantization/guarded_trim_v1/*/{run,telemetry,artifact_checks}.json.
+The exact runners and logs are copied into this private output directory.
+Automatic direction is still incomplete; its separate 4B/27B comparison is
+prepared but requires a newly coordinated analysis slot. Do not reuse this slot.
+
+Windows API documentation checked for the process-local trim:
+https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-emptyworkingset
+
+## Independent quantization audition ready; analysis comparison prepared, 2026-10-21
+
+Parent clarified that Q3/Q4 testing must not depend on successful automatic
+direction. The quantization-only path is now independently prepared and tested.
+chapter/quantization_manifest.json freezes two manually inspected, complete
+canonical excerpts (63 and 59 words), no added cues, identical reference and
+decoding, and seeds 1729/2718/31415. There are six requests per model, twelve total.
+Both arms use 16 CPU expert layers; an optional Q3 12-layer production-placement
+control is labelled separately. Text, source, reference, settings and placement
+tampering fail validation. This path never reads the direction plan. No GPU ran
+during this CPU follow-up, and the Nosferatu restoration task owns the GPU slot.
+
+Use the private run_audition.py with --experiment quantization only AFTER a new
+coordinated slot. First do one Q3 and one Q4 smoke (300-second ceiling each),
+refresh headroom, then the matched six-request arms. The initial first-seed blind
+listening pair assesses clarity, naturalness, artifacts and expressivity under
+unchanged text/cues. Repeats distinguish sampling variance. ASR checks omissions,
+insertions and substitutions; it does not establish acting quality. Decode-time
+and peak RAM/VRAM are measured. No production switch follows automatically.
+Emotion-tag effectiveness remains a separate later experiment at fixed quantization.
+No tag contrast is required for this quantization-only experiment.
+
+The installed local inventory also contains qwen3.8:27b (27.3B, Q4_K_M), digest
+22130167c4c20e20c7b71454612966ca8e8171e9b3cc8ab6ce8aa6cbfec79643.
+Its two local weight blobs total 17,741,860,480 bytes (language weights plus vision
+projector); the tag inventory total is 17,741,872,154 bytes. No download is needed.
+The qwen35 architecture is consistent with the official Qwen3.8 model card; it
+does not imply that the local tag is secretly Qwen3.5. Customized coder/maps aliases
+and the cloud alias were not chosen. This is a stronger candidate, not evidence
+of better audiobook direction. Installed metadata and original raw failures are saved.
+
+The 4B model has not demonstrated adequate reliability for unattended direction:
+both prior attempts failed on the first window. This does not prove a general
+4B capability limit; quote copying, schema consistency, attribution and unsupported
+context claims were separate failures. The source-ID format fixes copying but
+does not establish semantic truth. No context proposal is approved by schema alone.
+
+director_trial_v2/trial_spec.json prepares exactly two cases per model, no retries:
+one real-book attribution/uncertainty excerpt, one synthetic calm-concealed-fear,
+explicit-whisper and quoted-sign example. Review criteria are kept out of prompts.
+run_director_trial.py takes 4b or 27b and requires --gpu-slot-confirmed. Each model
+has a 240-second active-trial budget, 90-second request timeouts, at most two calls
+of 1,536 tokens, and up to 90 seconds of cleanup/release checks. Each model loads
+and unloads separately; any non-GPU residency fails. No automatic chapter expansion.
+Expected comparison duration is roughly 3-6 minutes, but the failure ceilings are
+longer and must fit the coordinated slot. 4B previously used 5.6 GiB whole-board;
+27B estimates are 18-22 GiB whole-board, unmeasured. Require at least 20 GiB free
+host RAM for the 27B preflight; abort if it cannot fit fully on GPU. No CPU offload
+for analysis is planned. The sampler now follows Ollama's process descendants.
+27B thinking is explicitly disabled for this bounded structured-output comparison;
+its reported thinking default is medium. The 4B Instruct runtime has no thinking
+metadata and keeps its existing behavior. Generation options are explicitly matched.
+
+CPU result: 499 tests run, 498 passed, one existing dependency skip. This includes
+40 new direction/quantization tests. Both runner GPU gates were checked without
+network or GPU calls; both quantization arms reached a mocked preflight without
+reading direction plans or spawning processes. These are dry checks, not audio
+or model-quality results. Production configuration/jobs/source copies stay unchanged.
+
+Official documentation verified for this candidate and request controls:
+https://huggingface.co/Qwen/Qwen3.8-27B
+https://docs.ollama.com/capabilities/thinking
+https://docs.ollama.com/api/chat
+
+## Bounded analysis attempted; GPU released; chapter incomplete, 2026-10-21
+
+Parent granted the chapter-analysis-only RTX 4090 slot. Preflight found no
+competing inference and roughly 21 GiB free host RAM. No TTS or ASR started.
+Two bounded local Qwen attempts were rejected: the first changed source quotes
+and evidence punctuation; the one corrected attempt used exact source IDs but
+returned inconsistent narrator/speaker roles and unsupported context wording.
+Both failed closed and unloaded. Total wall time was 44.29 seconds (35.23 + 9.06).
+Peak sampled whole-board VRAM was 5,701 MiB; baseline/final were 1,597 MiB.
+Minimum available host RAM was 20.05 GiB (peak whole-host use 11.67 GiB).
+The RAM figures are whole-system, not a measured model-process peak: the process
+sampler did not identify the runner child, so its per-process totals are incomplete.
+Ollama reported zero resident models after both attempts.
+
+CPU follow-up now uses source-ID constrained selection, requires dialogue roles
+for quoted-turn proposals, skips windows with no complete quoted turns, and
+strengthens attribution/uncertainty instructions. This final prompt/schema has
+CPU tests but has NOT had another GPU trial; there were no unbounded retries.
+Context proposals now appear in the review page. HTML embedding preserves source
+characters safely. Incomplete diagnostics cannot bind to a job or become auditions.
+
+Output/Scene_Direction_2026_10_21/partial_review_NOT_FOR_RENDER/review.html is an
+editable diagnostic: three flagged, conservatively corrected first-window notes,
+all plain. Raw responses and exact changes are retained beside it. Eight model
+context proposals were excluded from the corrected diagnostic; one introduced
+unsupported credibility/publicity assertions. The reported Help cry was wrongly
+attributed to Peglow, and has been marked unknown with explicit ambiguity.
+The original chapter directions remain empty; the other windows are unanalyzed.
+This is NOT a successful chapter analysis or a tagged audition. Quotation density
+also includes written messages, aliases and legal text, requiring contextual review.
+
+Final CPU suite: 495 tests run, 494 passed and one existing dependency skip;
+36 direction tests included. Graft rebuild/check and review JavaScript syntax pass.
+Production settings/jobs/source hashes remain unchanged. Q3 remains default.
+Next inference requires a new parent-coordinated analysis slot. TTS/ASR remain
+separately gated, and a valid supported cue contrast is still required first.
+
+## Optional scene direction prepared, GPU gated, 2026-10-21
+
+The owner approved local scene-aware direction and a controlled Q3/Q4 comparison.
+The optional source-bound pipeline is implemented in the existing app, disabled
+for all current jobs/defaults. Read SCENE_DIRECTION.md for the exact scope,
+compiler fallbacks, local model lifecycle, fresh-job opt-in and remaining limits.
+Original extraction remains separate from editable annotations and rendered cues.
+Runtime/receipt identity prevents edited directions from reusing old audio.
+
+The private 2,091-word Clint's Demise chapter is prepared under
+Output/Scene_Direction_2026_10_21/chapter. Local analysis has NOT run, and no new
+speech or listening verdict exists. Parent must coordinate an exclusive GPU slot
+with the Nosferatu restoration task before model inference. Reuse the installed
+Qwen3-4B-Instruct-2507 Q4_K_M; no analysis-model install is needed.
+
+The exact previously auditioned Q4 expert/Q8 backbone GGUF has been restored and
+SHA-256 verified, while Q3 remains selected. Headers prove 120 true Q4_K versus
+120 Q3_K expert banks; all 1,266 non-expert tensors, tokenizer assets and model
+config are identical. Match CPU expert placement and sampling in the comparison.
+Production's pinned Q3 adapter was not loosened to accept arbitrary model files.
+
+CPU tests, source copies and production-configuration checks are recorded in the
+private handoff. No existing audio/book edits, app restart, production opt-in,
+installer, release, commit or upload occurred. Current CPU full-suite result is
+recorded in Output/Scene_Direction_2026_10_21/full_tests_final.log.
+
+## Annihilation completed — 2026-10-19 (current authority)
+
+The owner requested autonomous completion, then explicitly authorized deleting
+the previous Annihilation generations and starting fresh with Drama 3 using the
+same narrator. New job `b79b1fb6-d6ff-4b80-9c3f-2ce7ed3e6f11` uses Ray Porter PHM,
+Q3, the current sentence-preserving defaults and the saved scope of pages 6–98.
+The ordinary regeneration API copied the source and narration choices; the old
+job's generated-output deletion freed 469,989,597 bytes. Source PDF, original
+voice, extraction and scope hashes remain unchanged. The new plan contains
+55,513 spoken words, 154 parents, 733 clips and all five chapter headings.
+Its lexical tokens exactly cover the selected PDF text layer in source order.
+
+An early audit found a bad opening heading; both Parakeet and unprompted Whisper
+heard the same wrong words. All 31 sampled prose clips pass Parakeet. A long
+internal pause in one prose clip retained every expected word in both recognizers;
+that delivery concern was addressed in the final replacement audit below.
+Drama 3's early return in `_units_for_parent` bypassed the existing numbered-
+heading checker, routing a clear heading failure straight to manual review.
+The strict heading marker now applies before backend dispatch. Older pending
+records receive that checker metadata without changing their audio or render
+identity. A regression failed before the fix; the initial 104 affected tests passed.
+
+The normal scheduler retried the heading at attempt two, seed 1730. Its raw WAV
+matches the independently verified probe byte for byte. The failed take remains
+archived and all 65 pre-pause WAVs are accounted for. The 32 early primary reports
+were installed with exact audio/generation hashes; no listening approval was
+created. The owner later paused work to use the PC and explicitly resumed it.
+
+The full run exposed a second early-review path: Drama's critical short wording
+flags also stopped before the existing retry budget. `_resolve` now lets Drama
+use its bounded retries before that listening hold; uncertain transcript-review
+results still stop. The new regression failed before the fix. All 26 Drama,
+29 phase and 50 repair integration tests pass, and Graft was rebuilt and checked.
+
+The finished M4B is `audiobooks/Annihilation (2)/Annihilation.m4b`, also retained
+in the job output directory. Storybird reports `done`, all 55,513 words verified
+and zero review passages. The book is 5:24:26, 162,330,216 bytes, with all five
+chapter markers verified. Full decoding passes; the library and job copies share
+SHA-256 `46e077f804b734da3b0a79420e6b105f63376d0daa5c2f6ef2a23a726a2de17e`.
+The final audit and raw evidence are under
+`Output/Annihilation_Drama3_2026_10_19/completion_audit/`.
+
+All 733 original clip identities and hashes were checked; 223 original recordings
+received an independent transcript check. Thirty-seven targeted replacements
+were installed after bounded retries. Thirty-six pass both comparison checks;
+one exact primary transcript has a documented independent formatting difference:
+Whisper writes the source's three quantities as `12 or 50 or 100`. The scoped
+audit confirms the same values without modifying raw reports or general policy.
+Focused tail checks corroborate that five repeated Whisper `Thank you` segments
+were recognition artifacts at its 30-second window boundary. The retained
+6.07-second pause in clip 1490002 aligns exactly with a printed scene break;
+its original take is complete, while its unsuccessful replacements are retained.
+
+Native recovery rebuilt 28 parents without creating any listening approvals.
+All selected frames survive 579 internal joins. Of 733 original clips, 696 remain
+unchanged and 37 have exact backups; all 799 backup files verify. Source PDF,
+canonical text, narration plan and configuration remain unchanged. This is an
+automated completion audit, not a claim of a full human listen or proof that all
+future books can finish unattended. No Git write, upload, installer, release or
+recurring automation was created.
+
+## The Voice completed — 2026-10-19 (current authority)
+
+The owner directed completion of the book and autonomous progress. The finished
+M4B is `audiobooks/The Voice (3)/The Voice.m4b`, also retained in the current
+job's output directory. Job `56dd0db8-a583-4623-99a3-2be7976de1e8` reports `done`
+in the live Storybird API, with no stale-narration warning or review queue.
+The file is 3:39:24, 111,445,990 bytes, with title/credits, introduction and all
+12 chapters navigable. Full decoding passes; all three export copies have SHA-256
+`aebf41a0775394db28db9e1ce55e10debee8059d9767a17cb3fd70fc754541da`.
+
+The completion audit verified all 477 original clips and independently checked
+216 original recordings. Thirteen targeted replacements pass both Parakeet and
+Whisper. Punctuation-only repairs restored omitted dialogue labels and stage
+directions; bounded retries handled a frame cap and two content disagreements.
+The former 7.62-second trailing silence is 0.18 seconds in the replacement.
+All 465 selected clips retain every frame across 365 checked internal joins.
+
+PDF inspection confirmed a blank-page OCR response at page 25, library inventory
+stamps at page 133, back-cover material at page 135, and a line-broken word on
+page 100. Exact spoken-projection edits remove the OCR response and non-story
+material and restore the broken word. The identical publisher logo on pages 3
+and 135 is omitted at both occurrences. Canonical source, PDF and frozen plan
+are unchanged. Chapter marks use the 12 visually verified source openings and
+word timings where a chapter begins inside a clip.
+
+Completion records owner-delegated automated acceptance, not personal listening
+or a claim of error-free delivery. Seventeen primary recognition flags remain
+explicitly documented in the private audit. No general accept-if-either-ASR rule
+or fuzzy name normalization was introduced. All original clips are accounted for:
+475 remain unchanged and two have exact backups; all 553 backup files verify.
+Evidence, reproducible scripts and acceptance basis are under
+`Output/The_Voice_Drama3_2026_10_19/completion_audit/finished_book/`.
+
+The source parser now holds the exact observed whole-page illegibility response
+for visual review instead of treating it as prose. It preserves raw text and
+does not match an ordinary quotation. The regression failed before the fix;
+all 77 affected extraction/review tests pass. The earlier 103 narration recovery
+tests remain green. Graft was rebuilt and checked. The running server was not
+restarted; the extraction guard loads on its next launch. No Git write, release,
+installer, upload or recurring monitor was created. Fully unattended completion
+of arbitrary future books is not established by this supervised completion audit.
+
+## The Voice Drama 3 rerun and empty-take recovery — 2026-10-19 (earlier checkpoint)
+
+The owner requested deletion of the old Voice output and a fresh Drama 3 run
+using the same narrator. The old job's generated caches and both library M4Bs
+were removed; source PDF, extraction and voice reference remain unchanged.
+New job `56dd0db8-a583-4623-99a3-2be7976de1e8` uses Chukwudi Iwuji, pages 3–135,
+the current sentence-preserving Q3 defaults and M4B output.
+
+Two native runs stopped because their original input/seed selected EOS before
+the first audio frame. Both reproduce in isolation; changing only to the next
+retry seed produces audio. The adapter incorrectly raised a job-wide failure
+after recording a local retry. It now recognizes this exact native failure,
+retains completed clips, continues unstarted requests without consuming their
+attempts, and lets the existing bounded scheduler retry the empty take.
+Other runtime errors and incomplete artifacts still stop the job.
+
+All 103 affected regression tests pass. A real four-request replay continues
+past the failure, retries only the empty take, preserves its peers and passes
+all four GPU content checks. The unstarted production request's attempt was
+restored with its old receipt retained. All 818 saved WAVs and four source/plan/
+configuration files were hash-identical after resume at 12:49 Eastern. Live
+readback at 12:51 confirms both affected requests saved and progress beyond
+the failure point (30,553/34,729 words). Completion was pending at that checkpoint;
+the final audit above supersedes its status. See `DRAMA3_MIGRATION.md` and private evidence under
+`Output/The_Voice_Drama3_2026_10_19/debug_empty_audio/` before further repair.
+
+## Genesee final audiobook — 2026-10-17 (current authority)
+
+The owner said, "Im sure its fine. Assemble the book," authorizing the current
+recordings without further listening. This supersedes the earlier final-export
+hold; it does not claim the owner listened to every flagged clip. Exact take
+fingerprints and the instruction are recorded under
+`Output/Sentence_Boundaries_2026_10_17/final_book/`.
+
+The finished M4B is in `audiobooks/The Devil at Genesee Junction/` and the current
+Drama job's `output` directory. It is 12:35:37, 380,791,238 bytes, with 24 section
+markers. Full decoding passes. The library copy matches the job export; its
+SHA-256 is `65518c4a8122205e308716cd8137696bd3d26881347838da1aae1d5a357405b8`.
+Its encoded audio matches the verified navigable draft. All 2,945 current takes
+are accepted, all audible parent WAVs match that draft, and the two reference-only
+units remain omitted. Storybird records this job as `done` with no review queue.
+All 3,530 backed-up originals verify; source, projection config and frozen plan
+are unchanged. Raw speech-recognition evidence is retained.
+
+Finalization exposed an approval-path bug: `_unit_report` replaced the accepted
+transcript but retained a stale normalized `comparison_transcript`, which the
+parent gate preferred. It now preserves that value in `raw_assessment` and removes
+it from the accepted comparison. A synthetic regression failed before the fix
+and passes afterward; the native full suite passes 451 tests, one dependency skip.
+Graft was rebuilt and checked. No new TTS, installer, release or Git write occurred.
+
+The owner then explicitly requested a Drive upload and email to Mike Bullions.
+The connector rejected the single 381 MB file before upload because its limit is
+100 MiB. All four complete playable parts are uploaded to the private folder
+recorded in `final_book/drive_handoff.json`: 382,375,969 bytes total, full decode
+checks clean, all 1,999,378,566 source frames covered without gaps. Readback verifies
+the expected names, sizes, parent folder and owner-only access for every part.
+The owner subsequently reported deleting the multipart Drive upload and said
+they will upload the full single-file master when home. Treat the multipart
+handoff as withdrawn; do not restore it or send its old links. The local full
+M4B remains ready. Mike's contact has no email address and no email was sent.
+Any later email handoff needs the owner's new full-file link and Mike's address.
+The earlier whole-draft upload hold no longer blocks this explicitly requested
+finished-book handoff. Existing review material remains private and separate.
+
+## Whole-book listening draft — 2026-10-17 (earlier evidence)
+
+The owner requested continued progress toward the repair goal. The current
+whole-book draft is under `Output/Sentence_Boundaries_2026_10_17/whole_book_draft/`.
+Its source audit verifies all 371 parents and 2,945 current recordings, including
+335 review candidates. Two reference-only units are intentionally omitted. No
+source is missing or stale. All 2,575 internal joins retain every frame with
+five-millisecond fades. Two original joins have long quiet intervals (10.96 and
+4.45 seconds); retain them for listening rather than applying blanket shortening.
+
+The navigable M4B is 12:35:37 with 24 section markers. Its complete decode passes;
+all 13 smaller parts also fully decode and cover the source without gaps.
+The navigation remux preserves the encoded audio packet hash. The private
+`Listening_review.html` provides five focused items and 293 other primary-check
+flags; these are not counts of confirmed narration defects. Independent Whisper
+heard all three sentence spans missed in the primary check's eight largest
+differences, so no additional takes were regenerated. App state and original
+recordings remain unchanged; this is an unapproved listening draft, not a final
+master or a bypass of the app's review gate.
+
+The short prose reel and guide are already uploaded owner-only. Automatic
+approval review separately blocked the full-book parts upload as outside that
+earlier payload authorization. Obtain explicit approval for the complete draft
+before retrying that upload. The concrete pending request covers all 13 parts
+(380,632,992 bytes total) and the short guide in the existing owner-only folder.
+No whole-book part has uploaded. The owner has not yet listened to the new prose
+reel. Consult `assembly_result.json`, `parts_manifest.json`, `browser_qa.json`
+and the current upload verification/status artifacts before continuing.
+
+## Prose delivery application — 2026-10-17 (earlier application)
+
+The owner selected comma-punctuation B for long prose and original A for names,
+then authorized execution. Parent indexes 164, 192 and 204 now use the scoped
+sentence policy and 26 exact punctuation edits, retaining all 117 earlier edits.
+The over-limit forensic sentence splits only at complete semicolon entries;
+those two terminal boundaries use periods. Names lists are unchanged.
+
+All 15 new recordings completed below the output cap; 13 pass both recognizers.
+Two retain name/spelling and time-format differences for listening. The long
+sentence is byte-identical to the preferred B take. Three passage previews
+preserve every frame across 12 joins; maximum join quiet is one second.
+All candidates are installed unapproved. The live app has 272 review passages
+and 943 unresolved items, which are not counts of confirmed defects. Of 3,351
+protected files, 3,347 remain unchanged and four have exact backups; no current
+unit WAV was replaced. The frozen plan is unchanged and GPU work has exited.
+Evidence is under `Output/Sentence_Boundaries_2026_10_17/prose_pass/`, including
+`final_handoff_checks.json`, `candidate_audit.json` and `drive_verified.json`.
+The owner explicitly authorized the Drive upload after an automatic review hold;
+the 3:09 reel and guide were uploaded and verified owner-only. No final master
+approval or whole-book listening approval was created. Prior 450-test native
+regression remains the latest suite; this pass changed private job artifacts,
+not production application code.
+
+## Sentence-preserving narration — 2026-10-17 (earlier application)
+
+The owner requested larger chunks that retain whole sentences after listening
+revealed abrupt endings. New Drama 3 plans use `sentences_v4`, 75/100-word packing
+targets, 1536 output frames, 4096 context rows and 12 CPU expert layers. A long
+sentence stays intact within the native character bound; an oversized semicolon
+list can split at semicolons. An indivisible oversized sentence is held for
+correction. Saved jobs retain their policies unless explicitly migrated.
+
+For the current Genesee job, the new boundaries are applied only to parent indexes
+8, 28, 102, 144, 208 and 368. The frozen plan, source corrections and all other
+passage identities are preserved. The explicit resource migration binds the
+old runtime hash and old/new capacity limits; voice, model and sampling remain
+unchanged. Keep `state.json` generation settings consistent with the migrated
+config because the server uses them on resume. Consult `DRAMA3_MIGRATION.md`
+and `Output/Sentence_Boundaries_2026_10_17/six_passages/installed.json` for the
+application status and preservation evidence before further work on this job.
+
+The native full suite passes: 450 tests, one existing dependency skip. The
+graph was rebuilt and checked. The 4:51 probe reel and guide were uploaded to
+the owner's private Google Drive with owner-only permissions verified. ASR
+checks and generated alternatives retain the listening gate; the final master
+is not approved. The six passages now have 29 unapproved alternatives, five reused
+from the probe. Two incomplete takes with long quiet tails were preserved and
+replaced in one bounded retry; both replacements pass both content checks.
+Fourteen final alternatives pass both checkers; the other 15 retain differences
+for listening. All 23 preview joins preserve frames, with a maximum measured
+quiet interval of 1.1 seconds. Earlier October 16 status/counts below are historical.
+
+The owner subsequently reported slower, uneven delivery around 2:20–2:30 of
+the probe reel and in its later names list. This was listening-only feedback,
+not a source-text comparison or content approval. Isolated pacing comparisons
+are under `Output/Sentence_Boundaries_2026_10_17/pacing_comparison/`. They test
+list punctuation, fresh takes, complete-entry groups and a quiet-gap-only edit;
+none changes the production book or its acceptance decisions.
+The owner prefers B (comma punctuation) for the long-sentence excerpt and A
+(original pauses) for the names excerpt. Preserve that distinction: the names
+pause-shortening experiment is not selected. Exact excerpt hashes and scope are
+recorded in `pacing_comparison/owner_delivery_preferences.json`; these choices
+are delivery preferences, not source verification or whole-book approval.
+
+## Genesee second repair pass; listening gate retained — 2026-10-16
+
+The owner authorized the five-step checker, source, listening-pack, verifier and
+selective-repair goal. Drama 3 remains the narrator. Work and private evidence are
+under `Output/Repair_2026_10_16_v2/`; consult its final status and
+`DRAMA3_MIGRATION.md` before continuing this job.
+
+The narration comparator now separates safe notation from short meaningful
+differences. Negation, numbers, pronouns/directions and short phrase/boundary
+differences require listening; they do not trigger repeated automatic generation.
+The phased and legacy workers hold aggregate-only failures, retain passing saved
+takes, and archive replaced recordings. Cached receipts are checked against the
+current policy. Per-passage `drama3_passage_unit_limits`, keyed by parent identity,
+allow an explicit selective migration; stale review boundaries are rejected.
+The opt-in `captions_v3` boundary policy recognizes parenthesized caption contexts
+without changing saved default boundaries. The full isolated-runtime suite is
+green: 442 tests run, one dependency skip.
+
+The verifier experiment used 187 recordings, including 30 owner-labelled controls,
+40 unlabelled holdouts and 12 synthetic waveform edits. Keep production Parakeet
+TDT and optional independent Whisper. CTC and CrisperWhisper did not improve false
+flags over the updated primary on these controls; forced alignment does not prove
+that expected words were spoken. New verifier assets and runtime are isolated.
+
+All 2,971 original current recordings were waveform-scanned. The corrected
+listening page has eight short speech questions and three examples for each of
+ten names, plus whole-corpus pause excerpts. Source evidence verifies 72 additional
+footnote markers. Preserve canonical source, prior takes and existing review
+entries. Final listening decisions and final export are pending; ASR passes are
+not delivery approval. No release, installer, upload or recurring work was requested.
+
+The production review handoff is installed: 147 unapproved alternatives, including
+two reused saved takes; 119 pass both content checkers and 28 retain differences.
+All 207 earlier review passages remain. The live API confirms 271 review passages
+and 941 unresolved units. No current unit WAV was replaced and no approval was
+created. Exact hashes account for all 29,663 original files: 29,550 unchanged and
+113 preserved in `before_install`. Sixty-two unapproved passage previews preserve
+all frames across 499 checked joins; no join has a quiet interval over five seconds
+at the recorded scan threshold. One alternative has a 6.15-second internal pause
+and is included in the listening pack. See `FINAL_STATUS.txt` for the remaining
+human listening gate; do not infer final-book approval from these checks.
+
+## Earlier October 16 repair pass (superseded status)
+
+The owner authorized source cleanup, checker/accounting fixes, verified reuse,
+then bounded repairs for job `7554bee0-d4ec-4e79-8228-70ed8a00851b`. Ten exact OCR
+instruction echoes were removed from the spoken projection after checking the
+blank PDF pages. Additional footnote, word-join and fraction corrections were
+checked against the PDF. Raw source, approved visual decisions, the frozen plan,
+voice and runtime settings are preserved. Future exact standalone prompt echoes
+are sent to visual review instead of narration.
+
+The checker now handles calendar dates, contextual years, decades and safe modal
+contractions while retaining differences in quantities, dates, negation and
+repetition. Saved-take accounting validates earlier audio before declaring it
+missing; a failed retry cannot conceal an intact earlier take. Fourteen verified
+recordings were reused without changing their audio. Twenty targeted passages,
+including the genuinely missing unit 860002, were repaired and now pass both
+Parakeet and independent Whisper content comparison. The bounded marker-only
+probe completed that unit below the frame cap; this supports removing its source
+footnote marker, not a general explanation for all model stalls.
+
+No audio is missing. There are 164 valid assembled passages and 207 passages held
+for review, containing 966 unresolved clip items. These are review entries, not
+966 confirmed defects. No listening approvals were created and no final M4B was
+exported. The app is returned to `audio_review_required`; do not automatically
+resume the full scheduler or treat ASR passes as approval of delivery. All 10,638
+protected files are unchanged (10,587) or preserved in byte-identical backups
+(51), with no missing originals. The full suite passed in both base and audio
+runtimes: 433 tests, with 118 and one dependency skips respectively; 55 affected
+tests passed after the final progress-accounting adjustment. Detailed evidence
+and remaining limits are in `DRAMA3_MIGRATION.md` and the private directory
+`Output/Repair_2026_10_16/`.
+
+The native Windows Q3 adapter is integrated with the existing queue, unit review,
+44.1 kHz export and Windows process ownership. Raw WAVs and ten-codebook artifacts
+are retained with provenance. Real cancel, app-exit, native-failure/resume,
+frame-cap rejection, reference preparation and whole-unit replacement probes pass.
+Prior-take conditioning works but has no demonstrated delivery advantage; true
+inpainting is not implemented or exposed.
+
+Drama 3 is now the default for new jobs and regeneration copies; VibeVoice is a
+legacy choice. Saved jobs keep their recorded backend. The owner accepted the
+chapter excerpts, with a minor reservation about one rushed compound phrase.
+The 1,662-word chapter generated 10m57s of first-pass
+audio in a 10m16s preparation/render/check/retry run, with 20 review items across
+five passages. Year/name normalization contributes; do not call it an approved
+chapter master or infer artifact-free delivery from ASR. New Drama plans use the
+existing date/clock spoken projection; the October 16 checker update also handles
+contextual year comparison.
+
+Content flags remain subject to the unchanged review workflow; activation does
+not approve the sample as a final chapter master. The idle local app was restarted
+with the new defaults. The Desktop Storybird shortcut points to this checkout.
+The owner has now authorized a fresh full Genesee generation with Drama 3, using
+approved source/visual decisions in a new job and preserving the old job/audio.
+The owner confirmed pages 5–355. Fresh Drama job
+`1f1c79c1-d332-4327-a010-07721161e73f` started on 2026-10-15 with 2,212 approved
+spoken blocks (about 121,250 words), the existing Grover reference and M4B output.
+Copied source/visual/cover hashes match the legacy job. This attempt stopped at
+a 240-second native-batch timeout after about 1,094 usable generated words; all
+output remains intact. A replay showed shared-GPU-memory spill, not overheating.
+Moving four expert layers to CPU reduced the same request from 179s to 33s.
+New plans now bind that setting, 40/55-word ordinary units, and a 35-word maximum
+for passages containing at least three semicolons. Existing plans retain their
+original settings and identities. The affected 249-word real validation generated
+all nine first-pass units below the frame cap; two capped retries were rejected,
+and name/content flags remain for review. No acceptance gate was relaxed.
+
+The owner confirmed the Foundry work was finished and authorized closing it and
+resuming on 2026-10-15. Native inspection found Foundry already closed, no competing
+AI workload, and 868 MiB whole-board VRAM at idle. The guarded one-shot
+`Output/Drama3_Migration_2026_10_15/restart_genesee_headroom.py` created and started
+fresh Drama job `7554bee0-d4ec-4e79-8228-70ed8a00851b` at 13:17 Eastern. It uses the
+approved pages 5–355 and all 2,212 approved blocks; copied hashes and the unchanged
+legacy state/source/cancellation flag were verified. Both prior jobs/audio remain
+preserved. Startup verification confirmed the saved four-CPU-expert-layer profile,
+40/55 ordinary limits and 35-word list cap. Three batches (12 requests, 428 words)
+completed without frame caps; sampled whole-board VRAM was 19,196 MiB at 44 C.
+This is startup evidence only. Full-book completion and content review are pending.
+Its manifest is `Output/Drama3_Migration_2026_10_15/genesee_drama_headroom_job.json`.
+At the owner's authorized 15:55 Eastern checkpoint, the one-time controller paused
+this exact job through the normal API. The app records the pause as `canceled`
+with its cancellation flag; completed audio is retained. The controller and both
+checker processes have exited. There are 39,713 generated/provisional words of
+121,204 (32.8%), 984 completed clips and 4h13m of audio. The 248 completed native
+batches have no failed exit records or frame-capped saved takes. About 5h20m of
+first-pass rendering remains at the observed pace, excluding checks/repairs/review.
+
+The isolated audit checked all 984 clips plus 30 frozen owner-labelled controls
+with Parakeet, then used Whisper on all 102 primary flags, 30 seeded random passes,
+and the controls. Sixty primary flags clear the narrow year/date diagnostic;
+80/102 clear that diagnostic or the independent diagnostic comparison. All 30
+random passes also pass Whisper. Twenty-two clips still flag with both recognizers
+after number normalization: twelve have substantial missing continuation and
+near-silent tails already present in raw model WAVs, not introduced by loudness
+normalization. The other ten include names, formatting and content discrepancies,
+including an apparent added ending. These findings do not establish a cause in
+the shorter unit policy or certify natural delivery. Aggregate passage gates still
+produce many flags; no acceptance rule or approval was changed.
+
+All 3,997 protected checkpoint/audio/control files were hash-identical after the
+audit. Evidence, the detailed report and three unchanged example clips are under
+`Output/Drama3_Migration_2026_10_15/pulse_1555/`. The owner authorized resuming after
+the D&D session on 2026-10-15. The existing job resumed through the normal API at
+22:32 Eastern after all 3,997 protected files matched their checkpoint hashes.
+The local service had exited and was restarted as PID 27400 on port 8765. Foundry
+remained open; sampled rendering used about 20 GiB of 24 GiB whole-board VRAM.
+Saved work was reused and the first resumed batch advanced the count from 39,713
+to 39,887 provisional words. The audit findings remain unresolved review evidence;
+resuming does not approve those clips. Evidence is in `post_dnd_resume.json` and
+`post_dnd_preservation.json` in the same private migration directory. The owner explicitly
+deferred additional models and pipeline changes; existing Parakeet/Whisper only
+were used. No regeneration, model/environment installation, upload or recurring
+automation occurred.
+Storybird was reloaded with this fix before the first run (then PID 18428);
+the Desktop shortcut continues to launch the current checkout. Validation passed
+424 base-suite tests (112 dependency skips), 172 shared audio-runtime tests,
+15 Drama tests and 13 listening-review tests.
+
+For Drama implementation, validation, review limits and runtime paths, read
+`DRAMA3_MIGRATION.md`. Private evidence is under
+`Output/Drama3_Migration_2026_10_15/`. The owner requested the three listening clips
+on Drive; that folder and all three files were verified owner-only. All 12,756
+baseline job/audio/audit files remain hash-identical at the preservation check.
+The legacy VibeVoice Genesee job is still canceled with its cancellation flag.
+This authorization is for a new Drama job, not a
+legacy resume, model cleanup, installer build or release.
+
+## 7B retired; Drama 3 comparison — 2026-10-15 (current authority)
+
+The owner removed VibeVoice 7B because its cost and artifacts were unsatisfactory.
+Its weights and the Drama 3 Q4 file are deleted. Genesee's `repair_model` and
+`repair_unit_ids` settings are removed; 418 saved 7B render requests were archived
+byte-for-byte. All generated audio and candidate provenance are retained. The
+primary model remains VibeVoice 1.5B, and Genesee remains paused. Configuration
+cleanup does not authorize resume, new repairs, or replacing the narrator.
+
+The owner found both Drama 3 Q3/Q4 listening samples satisfactory, strongly
+preferring Q3 for Help. The subsequent authorized Q2/Q3 comparison completed six
+Q2 takes: 3.19x real-time generation versus the original Q3's 3.11x. This small
+difference is not a demonstrated repeatable speed gain. In the blind comparison,
+the owner strongly preferred Q3 for Help (Q2 sounded robotic), preferred Q3 for
+the initial-name passage, and slightly preferred Q2 for attribution. The owner
+selected Q3 and requested Q2 removal; its 17.05 GB weight file is now deleted.
+The comparison recordings and results are preserved.
+For evidence, model hashes, cleanup verification and blind keys, use
+`Output/Drama3_4090_2026_10_15/q2_comparison/REPORT.txt` and its linked records.
+Q3 remains an isolated experiment; VibeVoice 1.5B remains installed.
+
+## Genesee paused for checker audit — 2026-10-15
+
+The owner explicitly paused generation and requested a rejection audit. Keep
+Genesee paused until further instruction. The app stores this as `canceled` with
+`cancel_flag.txt`; no narration workers remain. Before checker changes or resume,
+read `Output/Repair_2026_10_14/checker_audit/DIAGNOSIS.txt` and its linked evidence.
+All 331 first-round 7B candidates were replayed: 234 unit rejections, 21 additional
+parent-triggered retries, 76 valid units. A diagnostic year/date comparison clears
+131 unit rejections and four parent rejections. Five of sixteen owner-approved
+controls were falsely rejected by the unchanged gate. These are gate outcomes,
+not proof of artifact-free speech. Independent GPU ASR and same-WAV Parakeet tail
+probes demonstrate two false missing-sentence reports; batching alone is ruled
+out in those cases. Real repetition, garbled initial/name wording and a changed
+year also remain. Production checking and queue decisions are unchanged; only
+diagnostic artifacts were added. No speech was regenerated during the audit.
+
+## Authorized Genesee resume with selective 7B repair — 2026-10-14 (historical)
+
+The owner explicitly instructed: "Continue 1.5B; use 7B for problem passages."
+This supersedes the production-stop and unapplied-migration status below.
+The primary plan remains pinned to the original 1.5B model. The job now has an
+explicit local 7B Q8 repair-model fingerprint, run in its own GPU process at
+batch one after primary workers exit. Parakeet runs after TTS exits; Qwen stays
+disabled. Failed primary candidates switch to 7B, with at most three repair
+attempts before review. Model identity and intact-context policy are recorded in
+the repaired unit receipts and reports; old listening approvals do not transfer.
+This is an authorized production attempt, not a claim that musical/ringing
+artifacts have been perceptually eliminated. ASR cannot certify those artifacts.
+
+Private applied manifest and backups: `Output/Repair_2026_10_14/resume/`.
+Fourteen owner-rejected examples map to fifteen repair units across fourteen
+parents, including the adjacent unit affected by the John I. Miller boundary.
+Ten source-bound spoken corrections apply only to those rejected clips.
+The other 1,066 unit descriptions retain their prior text and delivery policy.
+All sixteen owner-approved WAV hashes are preserved and their exact existing
+takes have listening approvals. Five of those takes were previously rejected by
+ASR and are restored from retained candidates without modifying their originals.
+Canonical book text and primary plan identities remain intact. Existing-job
+resume now preserves projection, scoped boundaries, delivery and repair settings.
+The local server was started and normal resume accepted this job. Verification
+confirmed active generation, an unchanged primary plan and all sixteen approved
+WAVs intact. The old saved retry queue also routes to 7B: after a brief controlled
+restart, 331 repair units are queued/in progress, with 166 existing 1.5B candidates
+awaiting the separate Parakeet phase. At this snapshot 70 parents are assembled;
+the book is still in progress. `resume/verified_status.json` records the check.
+Validation: the 171-case VibeVoice suite, the final 21-case phase suite and 13
+narration-review tests pass; the latter's
+localhost checks require native execution outside the socket-restricted sandbox.
+No commit, installer, release, upload or recurring monitor was requested or made.
+
+## Diagnosis of rejected audio — 2026-10-14 follow-up (superseded stop status)
+
+Before further narration repair or an engine change, read the private report
+`Output/Repair_2026_10_14/diagnose/DIAGNOSIS_AND_FIX.txt` and its `results.json`.
+Five rejected WAVs reproduced byte-identically; ten raw fragments showed only
+scalar gain during normalization. The intact failures originate in synthesis.
+Both model weight sets match their pinned hashes. Shortening the reference did
+not resolve the Help failure. Matched 7B and original Chatterbox probes recovered
+the short dialogue words; full 7B verification removed the observed nonsense
+syllables but retained minor transcript differences. A source-bound phonetic
+initial override is prepared for eleven occurrences, with canonical text intact.
+All proposals remain private and unapplied. The owner clarified that artifacts
+include BOTH garbled speech and musical/ringing sounds. Perceptual repair is
+unverified; keep production blocked and present no further listening batch until
+there is a concrete validated fix. An engine change requires a new model identity
+and fresh approvals; the source-only migration manifest does not authorize it.
+
+## Owner rejected the five repair auditions — current acceptance status
+
+All five recordings in `Output/Repair_2026_10_14/listening/` were rejected by
+the owner: artifacts in both Help takes, unintelligible/artifacted tiny dialogue
+under both policies, and the middle initial still spoken as "the first".
+All five passed the raw Parakeet gate; transcript passes did not certify audio.
+This supersedes the earlier migration recommendation below. Source/recovery/cache
+regressions remain supported; audible delivery and initial pronunciation remain
+unfixed. Keep production migration blocked and Genesee stopped. The intact-context
+alternative is not approved. The five-recording budget for this round is exhausted.
+Before further repair work, read `Output/Repair_2026_10_14/owner_feedback_five.json`
+for exact feedback and verified hashes, then the updated migration report. Diagnose
+existing rejected audio first; preserve the prior 30 labels and all original WAVs.
+
+## Repair implementation and isolated comparison, 2026-10-14
+
+The authorized handoff in `Output/Transcript_Review_2026_10_14/IMPLEMENTATION_HANDOFF.txt`
+has been implemented and evaluated in the working tree. Production migration is
+NOT applied. Genesee remains stopped, Qwen remains disabled, and no installer,
+commit, upload, app restart or production resume occurred. The owner's existing
+CLAUDE changes below are preserved verbatim.
+
+Start with `Output/Repair_2026_10_14/REPAIR_AND_MIGRATION_PLAN.txt`. Its private
+JSON manifests contain every old/new unit identity, canonical/spoken text, policy
+and audio hash, source evidence, affected frozen label and reassembly requirement.
+The base proposal changes 255 index rows across 170 parents: 253 existing indexes,
+two additions and one retirement among those existing indexes. Of these, 132
+indexes have existing audio and ten parents have assembled WAVs. 828 unchanged
+unit identities remain untouched; the proposed unit count is 1,082. The optional
+four-unit intact-context alternative is separate (258 rows / 172 parents).
+Neither proposal authorizes automatic replacement or production resume.
+
+Waveform normalization is shared; >100 ms and <400 ms valid signals retain timing
+and gain with a 0.95 peak limit, without padding/tiling. Ordinary normalization
+matches the prior algorithm within 1e-7 in regression tests. Recoverable render
+exhaustion is local to its unit; saved candidates/failure history survive later
+failure or interruption, while no-WAV failures remain explicit and block assembly.
+Systemic errors still surface, cancellation terminates owned phases, and an
+explicit listening retry starts a fresh bounded budget without losing evidence.
+
+Existing jobs default to legacy sentence boundaries; new plans select initials_v2.
+No global split revision was bumped. The explicit migration adds name/initial
+integrity and one source-bound projection used for rendering, checking and review.
+The private correction inventory contains 15 proven page-boundary word repairs,
+19 visually confirmed superscript removals, one PDF-absent OCR instruction removal,
+and 300 conservative calendar/clock edits. Suspended hyphens and genuine compounds
+remain protected; there is no blanket dehyphenation or global name respelling.
+Frozen render policies plus spoken/render hashes protect unit receipts, parent
+reuse and approval fingerprints. Old review boundaries are rejected after an
+explicit migration; approval never transfers to new audio.
+
+28 fresh matched GPU renders compared current splitting and intact context across
+seven cases and seeds 1729/2718, with identical source corrections. All completed
+without generation failure or automatic retry. Including the separate name
+example, TTS took 887.1 seconds. Five synthetic timing controls followed; GPU
+Parakeet ran only after TTS exited (34 checks, 29.0 seconds including load).
+Raw transcript-gate passes were 7/14 split and 9/14 intact; this is not delivery
+certification. One empty C07 transcript persisted on a separate unprompted check.
+C12 has a long nonsource ASR span in one split seed, while both intact takes avoid
+that span; spelling/year/acronym differences still produce flags. Do not infer
+a book-wide rate or claim pronunciation from ASR spelling.
+
+Duration and semantic candidates remain SHADOW ONLY. A duration fit on 14 approved
+fragments flagged two of 12 held-out approved fragments and missed seven of eleven
+owner delivery errors. Numeric/negation diagnostics flagged eight of sixteen
+wholly acceptable owner clips and benign held-out controls. No new universal
+insertion, short-span, ratio, duration or semantic retry gate was adopted. Strict
+heading checks remain intact. Whisper is not an accept-if-either authority.
+
+Exactly five listening recordings are prepared at
+`Output/Repair_2026_10_14/listening/index.html`: two blind pairs and the repaired
+initial-name example, 113.8 seconds total. Selection was fixed before new ASR
+results. Pleasantness, rushing and actual initial pronunciation remain listening
+questions; no additional audition batch or narrower split arm was run.
+
+Verification: 192 relevant tests passed (168 VibeVoice, 13 narration review,
+11 transcript review). A private real-job copy invalidated only its affected
+parent while preserving all copied audio/receipts. SHA-256 checks found zero
+changes among 11,980 protected production/evidence files. Source fixes, synthetic
+fixtures and isolated inference evidence are separate. Graft was fully rebuilt
+with native Windows Git access and checked; Python-only coverage limitations in
+GRAFT_INDEX.md still apply. No purchased source or generated audio was staged.
+
+## Owner listening labels and boundary traces, 2026-10-14 evening
+
+The owner completed C01-C30 and exported the blind labels. Preserve the original
+at `Output/Transcript_Review_2026_10_14/owner_labels_30.json`; all 30 label/audio
+hashes verified. Start with `OWNER_FINDINGS.txt` for the follow-up. Sixteen clips
+passed all three axes; fourteen have at least one owner-reported issue, including
+minor delivery concerns. There are 6 content errors, 9 pronunciation errors and
+11 delivery errors, with overlap. A definite error remains a failure when another
+axis is uncertain; the private scoring script now handles that correctly.
+
+This partial sample contains 8 random previously accepted clips (all acceptable),
+9 random flagged clips (3 acceptable / 6 with issues), and 13 targeted clips
+(5 acceptable / 8 with issues). Do not call 14/30 a whole-book defect rate.
+On the rated subset, the current gate clears 3 reported problems and flags 5 good
+clips; current-plus-Qwen clears 1 problem and flags 8 good clips; the strict narrow
+prototype clears 1 and flags 12; Whisper/current gate clears 7 and flags 3.
+C04 is missed by every candidate; Qwen is not invoked for its transcript because
+ASR reproduces the initial, hiding the owner's reported pronunciation error.
+
+Specific traces: C12 retains a split word across PDF pages 345/346 in both extracted
+blocks and narration input; `stitch_pages` joins with a space without dehyphenation.
+C04 ends a chunk at a middle initial, separating the surname despite complete
+parent text. C03's stray digit is a visually confirmed superscript endnote marker
+on PDF page 204 that survived into spoken text. These are source/chunking problems.
+C07's two 200 ms joins at 39.07/39.80 s align with the reported parenthetical
+delivery defect. C27's attribution split at 26.47 s aligns with its abrupt ending.
+C24's first synthesis fragment ends after the quoted exclamation; its first PCM
+join starts at 18.53 s, so the reported artifact around 12 s is within generated
+audio before the join. Do not claim a crossfade alone fixes it or that exclamation
+punctuation alone is proven causal. C12 also has short, punctuation-led fragments.
+
+Next recommendation: fix source projection and name boundaries, then compare intact
+context against automatic quote/aside splitting on a small matched set. No production
+fixes, new renders, approvals or resume were performed in this labeling follow-up.
+Genesee remains stopped and Qwen remains disabled. The owner has ADHD and found the
+60-clip task too burdensome: this round is finished at 30. Future listening requests
+should normally be 3-5 clips with a specific decision, not another large review queue.
+
 ## Evidence review after the broad audit, 2026-10-14
 
 The owner explicitly authorized interrupting Genesee to produce the audit's
@@ -16,8 +893,9 @@ The frozen sample is 20 randomly accepted, 20 randomly flagged, and 20 targeted
 clips, seed 20261014, from 1,081 first-check records (580 not scheduled, 501
 scheduled). Targeted clips must never enter prevalence estimates. The blind
 listening page has separate content, pronunciation, and delivery labels, exact
-audio identities, browser saving and JSON export. Human labels are still pending;
-no audio-grounded false-accept/reject rates or end-to-end savings are established.
+audio identities, browser saving and JSON export. Human labels were pending at this
+stage; the later 30-clip follow-up above supplies limited audio-grounded results.
+Whole-book error rates and end-to-end savings remain unestablished.
 
 GPU-only, sequential replay on the same 60 WAVs: Parakeet 18.80 s including load,
 Whisper 140.01 s. Fresh Parakeet transcripts exactly matched 59/60 saved reports;

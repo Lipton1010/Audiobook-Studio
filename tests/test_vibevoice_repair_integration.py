@@ -21,6 +21,13 @@ except ModuleNotFoundError:
 
 @unittest.skipUnless(np is not None, "requires the isolated VibeVoice runtime")
 class VibeVoiceRepairIntegrationTests(unittest.TestCase):
+    def test_legacy_parent_only_failure_does_not_replace_passing_units(self):
+        for report in self.reports.values():
+            report['ok'] = True
+        with self.assertRaises(worker.narration_review.ListeningRequired):
+            self._run(aggregate=lambda *_args, **_kwargs: {'ok': False})
+        self.assertEqual(self.render_attempts, [(0, 1), (1, 1)])
+
     def setUp(self):
         test_root = Path(os.environ.get("AUDIOBOOK_TEST_TEMP", Path(__file__).resolve().parents[1] / ".test-tmp"))
         test_root.mkdir(exist_ok=True)
@@ -81,7 +88,7 @@ class VibeVoiceRepairIntegrationTests(unittest.TestCase):
 
     def _run(self, *, quality=None, aggregate=None, assemble=None, retries=2, checker=None,
              quality_workers=1, quality_runner=None, batch_size=2, batch_preference="auto"):
-        quality = quality or (lambda *_args: (True, self.job / "quality.json"))
+        quality = quality or (lambda _checker, _wav, unit, _label: (True, self.job / f"quality-{unit['index']}.json"))
         aggregate = aggregate or (lambda *_args, **_kwargs: {"ok": True})
         assemble = assemble or mock.Mock()
 
@@ -166,7 +173,7 @@ class VibeVoiceRepairIntegrationTests(unittest.TestCase):
             quality_calls[unit["unit_index"]] = quality_calls.get(unit["unit_index"], 0) + 1
             if unit["unit_index"] == 0 and quality_calls[0] == 2:
                 return False, self.job / "rejected.json"
-            return True, self.job / "accepted.json"
+            return True, self.job / f"accepted-{unit['index']}.json"
 
         self._run(quality=quality, aggregate=lambda *_args, **_kwargs: next(aggregate_results))
 
@@ -292,7 +299,7 @@ class VibeVoiceRepairIntegrationTests(unittest.TestCase):
              mock.patch.object(worker, "_QualityChecker"), \
              mock.patch.object(worker, "_QualityCheck", BarrierQuality), \
              mock.patch.object(worker, "_batch_size", return_value=2), \
-             mock.patch.object(worker, "repair_units", side_effect=lambda parent: units_by_parent[parent["index"]]), \
+            mock.patch.object(worker, "repair_units", side_effect=lambda parent, **kwargs: units_by_parent[parent["index"]]), \
              mock.patch.object(worker, "_valid_unit", side_effect=lambda _directory, unit, **_kwargs: unit["index"] in self.valid), \
              mock.patch.object(worker, "_render_items", side_effect=render), \
              mock.patch.object(worker, "_prefetch_within_limits", return_value=(True, {"seconds": 1.0, "bytes": 9})), \
@@ -551,7 +558,7 @@ class VibeVoiceRepairIntegrationTests(unittest.TestCase):
              mock.patch.object(worker, "_valid_segment", return_value=False), mock.patch.object(worker, "_assert_no_ocr"), \
              mock.patch.object(worker, "_prepare_voice", return_value=object()), mock.patch.object(worker, "_load_model", return_value=(object(), object(), object())), \
              mock.patch.object(worker, "_QualityChecker"), mock.patch.object(worker, "_QualityCheck", Quality), mock.patch.object(worker, "_batch_size", return_value=1), \
-             mock.patch.object(worker, "repair_units", side_effect=lambda parent: [first] if parent["index"] == 4 else [second]), \
+            mock.patch.object(worker, "repair_units", side_effect=lambda parent, **kwargs: [first] if parent["index"] == 4 else [second]), \
              mock.patch.object(worker, "_valid_unit", side_effect=lambda _dir, unit, **_kw: unit["index"] in valid), \
              mock.patch.object(worker, "_render_items", side_effect=render), \
              mock.patch.object(worker, "_publish_unit", side_effect=publish), mock.patch.object(worker, "_unit_report", side_effect=lambda _dir, unit: {"unit_index": unit["unit_index"], "transcript": unit["text"], "missing_words": 0, "inserted_words": 0, "differences": []}), \
@@ -587,7 +594,7 @@ class VibeVoiceRepairIntegrationTests(unittest.TestCase):
         with mock.patch.object(worker, "load_plan", return_value=({"passages": [self.parent, next_parent]}, {"quality_max_retries": 1, "cross_parent_render_ahead": True})), \
              mock.patch.object(worker, "_valid_segment", return_value=False), mock.patch.object(worker, "_assert_no_ocr"), mock.patch.object(worker, "_prepare_voice", return_value=object()), \
              mock.patch.object(worker, "_load_model", return_value=(object(), object(), object())), mock.patch.object(worker, "_QualityChecker"), mock.patch.object(worker, "_QualityCheck", CancelQuality), \
-             mock.patch.object(worker, "_batch_size", return_value=1), mock.patch.object(worker, "repair_units", side_effect=lambda parent: [first] if parent["index"] == 4 else [second]), \
+            mock.patch.object(worker, "_batch_size", return_value=1), mock.patch.object(worker, "repair_units", side_effect=lambda parent, **kwargs: [first] if parent["index"] == 4 else [second]), \
              mock.patch.object(worker, "_valid_unit", side_effect=lambda _dir, unit, **_kw: unit["index"] in valid), mock.patch.object(worker, "_render_items", side_effect=render), \
              mock.patch.object(worker, "_prefetch_within_limits", return_value=(True, {"seconds": 1, "bytes": 9})):
             with self.assertRaises(SystemExit): worker.run_generate(self.job)
@@ -1017,6 +1024,9 @@ class VibeVoiceRepairIntegrationTests(unittest.TestCase):
         wav = worker._wav_path(unit_dir, unit["index"])
         report = unit_dir / f"report_{unit['index']}.json"
         receipt_path = worker._receipt_path(unit_dir, unit["index"])
+        payload = json.loads(report.read_text(encoding='utf-8'))
+        payload['transcript'] = unit['text']
+        worker._write_json(report, payload)
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
         receipt.update(render_profile=worker.OUTLINE_PREFIX_CASE_PROFILE, render_heading="Acknowledgments",
                        render_text_sha256=worker._render_text_sha256(unit, worker.OUTLINE_PREFIX_CASE_PROFILE))

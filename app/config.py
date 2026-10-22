@@ -42,6 +42,10 @@ CONFIG_PATH = APP_DIR / "config.json"
 # env var name -> config.json key. Env always wins so a launcher or an
 # A/B test harness can override without touching the file.
 _ENV = {
+    "drama3_executable": "AUDIOBOOK_DRAMA3_EXE",
+    "drama3_model": "AUDIOBOOK_DRAMA3_MODEL",
+    "drama3_cuda_bin": "AUDIOBOOK_DRAMA3_CUDA_BIN",
+    "drama3_reference_profiles": "AUDIOBOOK_DRAMA3_REFERENCE_PROFILES",
     "base_dir": "AUDIOBOOK_BASE_DIR",
     "chatterbox_python": "AUDIOBOOK_CHATTERBOX_PY",
     "vibevoice_python": "AUDIOBOOK_VIBEVOICE_PY",
@@ -197,6 +201,10 @@ class Config:
         self.vibevoice_render_workers = 2 if str(_pick("vibevoice_render_workers", file_cfg, 1)) == "2" else 1
         self.parakeet_python = _pick("parakeet_python", file_cfg, "")
         self.parakeet_model = _pick("parakeet_model", file_cfg, "")
+        self.drama3_executable = _pick("drama3_executable", file_cfg, "")
+        self.drama3_model = _pick("drama3_model", file_cfg, "")
+        self.drama3_cuda_bin = _pick("drama3_cuda_bin", file_cfg, "")
+        self.drama3_reference_profiles = _pick("drama3_reference_profiles", file_cfg, "")
         self.vibevoice_transcript_review = str(_pick("vibevoice_transcript_review", file_cfg, False)).lower() in ("true", "1")
         self.vibevoice_quality_workers = 2 if str(_pick("vibevoice_quality_workers", file_cfg, 1)) == "2" else 1
         self.vibevoice_batch_size = {"1": 1, "2": 2, "3": 3, "4": 4}.get(

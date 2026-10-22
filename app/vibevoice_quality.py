@@ -1,6 +1,7 @@
 """Shared transcript coverage gate and the legacy isolated CPU checker."""
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -10,6 +11,7 @@ from pathlib import Path
 PARAKEET_WORKFLOW = "generate_first_parakeet_v1"
 PARAKEET_MODEL_ID = "nvidia/parakeet-tdt-0.6b-v3"
 PARAKEET_REVISION = "541d1f99c6b0c3cd0b11a95167540bb8edefd82b"
+COMPARISON_POLICY = "narration_v2_critical_review"
 
 
 def parakeet_setup_error(python, model):
@@ -76,6 +78,9 @@ _CONTRACTIONS = {
     "we're": ("we", "are"), "they're": ("they", "are"),
     "i've": ("i", "have"), "you've": ("you", "have"),
     "we've": ("we", "have"), "they've": ("they", "have"),
+    "might've": ("might", "have"), "must've": ("must", "have"),
+    "should've": ("should", "have"), "would've": ("would", "have"),
+    "could've": ("could", "have"),
 }
 _ORDINALS = dict(zip(
     ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
@@ -267,7 +272,8 @@ def assess(expected, heard, major_words=5):
     for op, a, b, c, d in SequenceMatcher(None, expected_keys, heard_keys, autojunk=False).get_opcodes():
         if op == "equal":
             continue
-        item = {"kind": op, "expected": expected_words[a:b], "heard": heard_words[c:d]}
+        item = {"kind": op, "expected": expected_words[a:b], "heard": heard_words[c:d],
+                "expected_span": [a, b], "heard_span": [c, d]}
         if op == "replace" and _orthographic_equivalent(expected_entries[a:b], heard_entries[c:d], expected, heard):
             item["orthographic_equivalent"] = True
         differences.append(item)
@@ -308,12 +314,147 @@ def numbered_heading_assessment(expected, heard):
     return raw
 
 
+def _year_words(value):
+    century, remainder = divmod(value, 100)
+    if 2000 <= value < 2010:
+        return ' '.join(_integer_words(str(value)))
+    tail = ['hundred'] if remainder == 0 else (['oh'] if remainder < 10 else []) + _integer_words(str(remainder))
+    return ' '.join(_integer_words(str(century)) + tail)
+
+
+def _calendar_comparison(text):
+    """Normalize explicit dates, clocks and years, retaining quantity wording."""
+    try:
+        from .vibevoice_delivery import calendar_clock_edits
+    except ImportError:
+        from vibevoice_delivery import calendar_clock_edits
+    for edit in reversed(sorted(calendar_clock_edits(text), key=lambda edit: edit['start'])):
+        text = text[:edit['start']] + edit['after'] + text[edit['end']:]
+    months = r'January|February|March|April|May|June|July|August|September|October|November|December'
+    context = re.compile(
+        r'\b(?:in|during|since|until|by|from|between|after|before|year|of|around|born|died|circa|spring|summer|autumn|fall|winter|early|late)\s+(?:the\s+|at least\s+)?$'
+        r'|\b(?:' + months + r')(?:\s+[a-z-]+(?:\s+[a-z-]+)?|\s+\d{1,2}(?:st|nd|rd|th)?)?,?\s+$', re.I)
+
+    def replace(match):
+        value, plural = int(match[1]), match[2]
+        prefix, suffix = text[:match.start()], text[match.end():]
+        timeline = (not prefix.strip() or re.search(r'[.!?]\s+$', prefix)) and re.match(r'\s*(?:[.,;:]|was\b)', suffix)
+        if not plural and not timeline and not context.search(prefix):
+            return match[0]
+        century, remainder = divmod(value, 100)
+        if plural:
+            if remainder % 10 or not remainder:
+                return match[0]
+            decade = _TENS[remainder // 10][:-1] + 'ies'
+            return ' '.join(_integer_words(str(century)) + [decade])
+        return _year_words(value)
+
+    text = re.sub(r'(?<![\w.,/+-])((?:18|19|20)\d{2})(s?)(?![\w.,]\d|[\w/])', replace, text)
+    # Both twenty twelve and two thousand twelve are ordinary 21st-century years.
+    # Convert only in the same explicit year contexts, never bare quantities.
+    for value in (range(2010, 2100) if re.search(r'\btwo[\s-]+thousand\b', text, re.I) else ()):
+        literal = ' '.join(_integer_words(str(value)))
+        pattern = re.compile(r'\b' + literal.replace(' ', r'[\s-]+') + r'\b', re.I)
+        for match in reversed(list(pattern.finditer(text))):
+            if context.search(text[:match.start()]):
+                text = text[:match.start()] + 'twenty ' + ' '.join(_integer_words(str(value % 100))) + text[match.end():]
+    return text
+
+
+def _notation_comparison(text):
+    """Exact audible notation only; do not erase source markers or fuzzy names."""
+    text = text.replace('’', "'")
+    text = re.sub(r'(?<!\w)&(?!\w)', ' and ', text)
+    text = re.sub(r'(?<=\d)%', ' percent', text)
+    fractions = {'½': 'a half', '¼': 'a quarter', '¾': 'three quarters'}
+    text = re.sub(r'(?<![\w./])([0-9]+)([½¼¾])(?!\w)',
+                  lambda m: m[1] + ' and ' + fractions[m[2]], text)
+    text = re.sub(r'(?<=\d)\s+([ap])\.m\.(?!\w)', lambda m: ' ' + m[1] + 'm', text, flags=re.I)
+    text = re.sub(r'(?<![\w.])([ab])\.([dc])\.\s+(?=\d)',
+                  lambda m: m[1] + m[2] + ' ', text, flags=re.I)
+    text = re.sub(r"\b([a-z]+)'s\b", r'\1s', text, flags=re.I)
+    return re.sub(r'\b(?:re-(?:enter(?:ed|ing)?|entry)|co-star(?:red|ring)?|e-mails?)\b',
+                  lambda m: m[0].replace('-', ''), text, flags=re.I)
+
+
 def assess_narration(expected, heard, major_words=5):
     try:
         from .vibevoice_delivery import spoken_text
     except ImportError:
         from vibevoice_delivery import spoken_text
-    return assess(spoken_text(expected), heard, major_words)
+    expected_hash = hashlib.sha256(expected.encode('utf-8')).hexdigest()
+    expected = _calendar_comparison(_notation_comparison(spoken_text(expected)))
+    comparison = _calendar_comparison(_notation_comparison(heard))
+    # Digit-only ASR cannot reveal year pronunciation. When the source already
+    # specifies that year's spoken form, align it without guessing at quantities.
+    expected_tokens = ' ' + ' '.join(words(expected)) + ' '
+    def source_year(match):
+        year = _year_words(int(match[0]))
+        cardinal = ' '.join(_integer_words(match[0]))
+        return year if f' {year} ' in expected_tokens and f' {cardinal} ' not in expected_tokens else match[0]
+    comparison = re.sub(r'(?<![\w.,/+-])(?:18|19|20)\d{2}(?![\w/]|[.,]\d)', source_year, comparison)
+    report = assess(expected, comparison, major_words)
+    # A cardinal reading of a historical year violates the narration contract,
+    # even when its short difference fits the normal ASR word-error budget.
+    wrong_style = []
+    literal = ' '.join(m[0] for m in WORD_RE.finditer(heard.lower()))
+    for difference in report['differences']:
+        for century, cardinal in (('eighteen', 'one thousand eight hundred'),
+                                  ('nineteen', 'one thousand nine hundred')):
+            if (century in difference['expected'] and cardinal in ' '.join(difference['heard'])
+                    and cardinal in literal):
+                wrong_style.append({'expected':century, 'heard':cardinal})
+    if wrong_style:
+        report['year_style_mismatches'] = wrong_style
+        report['ok'] = False
+    if comparison != heard:
+        report['comparison_transcript'] = comparison
+    report['content_diagnostics'] = content_diagnostics(report)
+    report['comparison_policy'] = COMPARISON_POLICY
+    report['expected_spoken_sha256'] = expected_hash
+    reasons = []
+    critical = {'he', 'she', 'him', 'her', 'his', 'hers', 'they', 'them', 'their',
+                'for', 'from', 'to', 'before', 'after', 'above', 'below', 'inside', 'outside'}
+    for diagnostic in report['content_diagnostics']:
+        reasons.extend(reason for reason in diagnostic['reasons']
+                       if reason in {'negation differs', 'numeric wording differs'})
+    for item in report['differences']:
+        if item.get('orthographic_equivalent'):
+            continue
+        if (set(item['expected']) | set(item['heard'])) & critical:
+            reasons.append('pronoun or direction differs')
+        if item['kind'] in {'insert', 'delete'}:
+            start, end = item['expected_span']
+            if max(len(item['expected']), len(item['heard'])) >= 2 or start == 0 or end == report['expected_words']:
+                reasons.append('phrase or boundary differs')
+    report['review_required'] = bool(report['ok'] and reasons)
+    report['review_reasons'] = sorted(set(reasons)) if report['review_required'] else []
+    return report
+
+
+def content_diagnostics(report):
+    """Shadow-only semantic leads; ASR differences do not prove speech defects."""
+    numeric = set(_ONES + _TEENS + _TENS + _SCALES) | set(_ORDINALS.values()) | {'hundred'}
+    negation = {'no', 'not', 'never', 'neither', 'nor', 'nothing', 'nobody', 'without'}
+    result = []
+    for item in report['differences']:
+        if item.get('orthographic_equivalent'):
+            continue
+        expected, heard = item['expected'], item['heard']
+        reasons = []
+        negative = lambda words: [word for word in words if word in negation or word.endswith("n't")]
+        values = lambda words: [word for word in words if word in numeric or re.search(r'\d', word)]
+        if negative(expected) != negative(heard):
+            reasons.append('negation differs')
+        if values(expected) != values(heard):
+            reasons.append('numeric wording differs')
+        if item['kind'] == 'delete':
+            reasons.append('omission candidate')
+        elif item['kind'] == 'insert':
+            reasons.append('addition candidate')
+        if reasons:
+            result.append({'reasons': reasons, 'difference': item, 'authority': 'shadow_only'})
+    return result
 
 
 def unit_assessment(unit, saved):
@@ -326,7 +467,10 @@ def unit_assessment(unit, saved):
     raw = (numbered_heading_assessment(unit["text"], saved.get("transcript", ""))
            if unit.get("numbered_heading") else assess_narration(expected, saved.get("transcript", "")))
     # Heading numbers and exact titles retain their separate strict contract.
-    return raw if unit.get("numbered_heading") else apply_review(expected, saved, raw)
+    if raw.get('review_required'):
+        raw['ok'] = False
+        return raw
+    return raw if unit.get("numbered_heading") or raw.get('year_style_mismatches') else apply_review(expected, saved, raw)
 
 
 def load_model(model_name):

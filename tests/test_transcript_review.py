@@ -48,8 +48,8 @@ def startup():
 
 class TranscriptReviewTests(unittest.TestCase):
     def test_raw_evidence_survives_equivalence_and_comparison_is_separate(self):
-        source = "In 1999 and 1987 she visited."
-        heard = "In nineteen ninety nine and nineteen eighty seven she visited."
+        source = "Mrs. Brown met Mrs. Green and Mrs. White with Mrs. Black and Mrs. Grey."
+        heard = "Misses Brown met Misses Green and Misses White with Misses Black and Misses Grey."
         saved = {"transcript": heard, "transcript_review": receipt(source, heard)}
         before = copy.deepcopy(saved)
         result = unit_assessment({"text": source}, saved)

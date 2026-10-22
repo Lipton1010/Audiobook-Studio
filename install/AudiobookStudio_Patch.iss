@@ -62,6 +62,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 Source: "..\app\server.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\drama3.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\scene_direction.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\scene_analysis.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\scene_direction_cli.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\process_ownership.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\audiobook_exports.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\audiobook_files.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\audiobook_library.py"; DestDir: "{app}\app"; Flags: ignoreversion

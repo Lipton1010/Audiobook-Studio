@@ -26,6 +26,14 @@ from vibevoice_units import repair_units
 
 
 class NarrationReviewTests(unittest.TestCase):
+    def test_changed_passage_budget_requires_migration_before_review(self):
+        review.write(self.job/'vibevoice_config.json', {
+            'backend':'drama3',
+            'drama3_passage_unit_limits':{self.parent['identity']:{'target_words':2,'max_words':3}},
+        })
+        with self.assertRaisesRegex(ValueError, 'unit boundaries changed'):
+            review.detail(self.job)
+
     def test_requested_parent_reassembly_archives_the_prior_audio(self):
         try:
             import vibevoice_worker as worker
@@ -139,7 +147,7 @@ class NarrationReviewTests(unittest.TestCase):
         review.write(path, receipt)
 
     def test_review_excludes_passing_peer_but_retains_cumulative_failures(self):
-        self.set_transcript(1, self.units[1]["text"].replace("Second", "Another"))
+        self.set_transcript(1, self.units[1]["text"].replace("synthetic", "invented"))
         self.assertEqual([x["index"] for x in review.detail(self.job)["items"]], [0])
         # Individually sub-threshold losses still require review when their
         # combined passage exceeds the unchanged five-word gate.
@@ -147,6 +155,8 @@ class NarrationReviewTests(unittest.TestCase):
             self.set_transcript(index, " ".join(self.units[index]["text"].split()[3:]))
         self.assertEqual([x["index"] for x in review.detail(self.job)["items"]], [0, 1])
         self.decide(0)
+        self.assertEqual(review.detail(self.job)["unresolved_count"], 1)
+        self.decide(1)
         self.assertEqual(review.detail(self.job)["unresolved_count"], 0)
 
     def test_homophone_only_peer_is_hidden_but_owner_listen_again_is_preserved(self):
@@ -246,6 +256,31 @@ class NarrationReviewTests(unittest.TestCase):
                 http.shutdown()
                 thread.join()
                 http.server_close()
+
+    def test_accepted_normalized_transcript_does_not_block_parent_recovery(self):
+        try:
+            import vibevoice_worker as worker
+        except ModuleNotFoundError:
+            self.skipTest('requires isolated narration runtime')
+        self.set_transcript(0, 'Unrelated invented words differ in 1966.')
+        report_path = self.job / 'report_0.json'
+        original = report_path.read_bytes()
+        before = worker._unit_report(self.units_dir, self.units[0])
+        self.assertIn('comparison_transcript', before)
+        self.assertFalse(worker._recover_parent_from_units(
+            self.job, self.parent, self.units, self.units_dir, self.units_dir.parent))
+        self.decide(0, 'accept')
+        self.decide(1, 'accept')
+        self.assertTrue(worker._recover_parent_from_units(
+            self.job, self.parent, self.units, self.units_dir, self.units_dir.parent))
+        saved = json.loads((self.units_dir.parent / 'seg_000000.json').read_text())
+        self.assertTrue(saved['parent_quality']['ok'])
+        report = saved['unit_reports'][0]
+        self.assertEqual(report['transcript'], self.units[0]['text'])
+        self.assertEqual(report['raw_assessment']['comparison_transcript'], before['comparison_transcript'])
+        self.assertFalse(report['raw_assessment']['ok'])
+        self.assertEqual(report_path.read_bytes(), original)
+        self.assertTrue(worker._valid_segment(self.units_dir.parent, self.parent))
 
     def test_worker_recovery_requires_approval_and_preserves_peers(self):
         try:

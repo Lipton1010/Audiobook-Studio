@@ -125,8 +125,10 @@
   <select id="f-voice" required></select>
   <fieldset><legend>Narration engine</legend>
   <div class="radio-row" id="backend-row">
-    <label><input type="radio" name="backend" value="vibevoice" checked>
-      <span>VibeVoice 1.5B<br><span class="hint">Natural pacing, the default for new audiobooks</span></span></label>
+    <label><input type="radio" name="backend" value="drama3" checked>
+      <span>Drama 3 Q3<br><span class="hint">Default narrator for new audiobooks</span></span></label>
+    <label><input type="radio" name="backend" value="vibevoice">
+      <span>VibeVoice 1.5B (legacy)<br><span class="hint">Previous narrator option</span></span></label>
     <label><input type="radio" name="backend" value="chatterbox">
       <span>Chatterbox<br><span class="hint">Existing narrator option</span></span></label>
   </div></fieldset>
@@ -268,7 +270,9 @@ async function loadGenerationSettings(backend, path, host = document.getElementB
 
 function renderGenerationSettings(host, backend, values) {
   host.replaceChildren();
-  const labels = backend === 'vibevoice'
+  const labels = backend === 'drama3'
+    ? [['passage_gap_ms','Passage gap (ms)',0,5000],['heading_lead_ms','Heading lead-in (ms)',0,5000],['temperature','Temperature',.1,1.5,.1],['top_p','Top P',.1,1,.05],['top_k','Top K',1,100],['max_frames','Maximum audio frames',64,768],['context_length','Context rows',2048,2048],['seed','Seed',0,4294967295]]
+    : backend === 'vibevoice'
     ? [['passage_gap_ms','Passage gap (ms)',0,5000],['heading_lead_ms','Heading lead-in (ms)',0,5000],['cfg_scale','Guidance scale',1,5,.1],['ddpm_steps','DDPM steps',10,100]]
     : [['gap_ms','Sentence gap (ms)',0,5000],['block_gap_ms','Paragraph gap (ms)',0,5000],['heading_before_ms','Heading lead-in (ms)',0,5000],['heading_after_ms','Heading gap (ms)',0,5000]];
   for (const [key, label, min, max, step] of labels) {
@@ -1675,8 +1679,8 @@ async function regenerateJob(j) {
   label.htmlFor = 'regenerate-backend'; label.textContent = 'Narration model';
   const backend = document.createElement('select');
   backend.id = 'regenerate-backend';
-  backend.append(new Option('VibeVoice', 'vibevoice'), new Option('Chatterbox', 'chatterbox'));
-  backend.value = j.backend || 'vibevoice';
+  backend.append(new Option('Drama 3 Q3', 'drama3'), new Option('VibeVoice (legacy)', 'vibevoice'), new Option('Chatterbox', 'chatterbox'));
+  backend.value = 'drama3';
   const advanced = document.createElement('details'); advanced.open = false;
   const summary = document.createElement('summary'); summary.textContent = 'Advanced options ';
   const state = document.createElement('span'); state.className = 'hint'; state.textContent = 'Recommended defaults'; summary.appendChild(state);

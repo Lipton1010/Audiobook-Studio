@@ -241,6 +241,10 @@ def retag_legacy_visual_blocks(blocks):
 # ---------- Path B tagging (per OCR page) ----------
 
 def tag_blocks(raw_text):
+    if ' '.join(raw_text.split()) == (
+            'The provided image is too blurry and illegible to accurately transcribe any text. '
+            'It appears to be a page from a document with no visible text.'):
+        return [_visual_block(raw_text, 'Uncertain OCR response')]
     lines = [ln.rstrip() for ln in raw_text.splitlines()]
     blocks = []
     i = 0
@@ -251,6 +255,10 @@ def tag_blocks(raw_text):
             i += 1
             continue
         stripped = ln.strip()
+        if strip_markdown(stripped) == "Transcribe this document page as clean Markdown, preserving reading order and tables.":
+            blocks.append(_visual_block(ln, "OCR instruction echo"))
+            i += 1
+            continue
         if stripped.isdigit() and len(stripped) <= 4:
             i += 1
             continue

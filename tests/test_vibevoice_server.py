@@ -104,7 +104,10 @@ class VibeVoiceServerTests(unittest.TestCase):
         def write_plan(job_dir, blocks, config):
             captured.update(config)
             return {"passages": []}
-        (self.job_dir / "vibevoice_config.json").write_text('{"inference_backend":"legacy"}', encoding="utf-8")
+        retained = {'repair_model': {'model_id': 'synthetic-7b'}, 'repair_unit_ids': ['broken'],
+                    'unit_boundary_policies': {'parent': 'initials_v2'},
+                    'spoken_projection': {'corrections': []}, 'delivery_profiles': {}}
+        (self.job_dir / "vibevoice_config.json").write_text(json.dumps({'inference_backend': 'legacy', **retained}), encoding="utf-8")
         fake_plan = types.SimpleNamespace(write_plan=write_plan)
         process = mock.Mock()
         process.wait.return_value = 0
@@ -118,6 +121,9 @@ class VibeVoiceServerTests(unittest.TestCase):
             server._run_vibevoice_narration(self.state, self.job_dir, [{"text": "Synthetic."}])
         self.assertEqual(captured["workflow"], "overlap_cpu")
         self.assertFalse(captured["transcript_review"])
+        self.assertEqual(captured['unit_boundary_policy'], 'legacy_v1')
+        for key, value in retained.items():
+            self.assertEqual(captured[key], value)
 
     def test_vibevoice_watchdog_still_stops_a_stale_phase(self):
         progress = self.job_dir / "vibevoice_progress.json"

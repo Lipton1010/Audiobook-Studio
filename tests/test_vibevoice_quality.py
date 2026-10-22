@@ -10,6 +10,79 @@ from app.vibevoice_quality import assess, numbered_heading_assessment, words
 
 
 class VibeVoiceQualityTests(unittest.TestCase):
+    def test_notation_equivalence_preserves_adjacent_meaning_at_production_threshold(self):
+        for expected, heard in (
+            ('Tea & coffee cost 98% of the budget.', 'Tea and coffee cost 98 percent of the budget.'),
+            ('It was 8½ inches at 3 p.m.', 'It was eight and a half inches at three pm.'),
+            ('They re-entered the lovers\' room.', "They reentered the lover's room."),
+            ('He co-starred in A.D. 90.', 'He costarred in AD ninety.'),
+        ):
+            report = quality.assess_narration(expected, heard)
+            self.assertEqual((report['missing_words'], report['inserted_words']), (0, 0), report)
+            self.assertFalse(report.get('review_required'), report)
+        for expected, heard in (
+            ('Tea & coffee arrived.', 'Tea or coffee arrived.'),
+            ('The share was 98%.', 'The share was 89 percent.'),
+            ('The rod was 8½ inches.', 'The rod was eight and a quarter inches.'),
+            ('The lovers arrived.', 'The lover arrived.'),
+            ('a m', 'am'), ('record.p.m.', 'record.pm'),
+        ):
+            report = quality.assess_narration(expected, heard, major_words=1)
+            self.assertFalse(report['ok'], (expected, heard, report))
+
+    def test_short_critical_differences_require_listening_without_automatic_repair(self):
+        for expected, heard in (
+            ('She did not leave.', 'She did leave.'),
+            ('On June 21 she left.', 'On June 24 she left.'),
+            ('The witness stopped. Experts agreed.', 'The witness stopped.'),
+            ('He walked in front', 'He walked in front of the body'),
+            ('He left for Mexico.', 'He left from Mexico.'),
+            ('She was ready.', 'He was ready.'),
+        ):
+            report = quality.unit_assessment({'text': expected}, {'transcript': heard})
+            self.assertFalse(report['ok'], (expected, heard, report))
+            self.assertTrue(report['review_required'], report)
+            self.assertTrue(report['review_reasons'], report)
+        report = quality.unit_assessment({'text': 'They visited Ballantyne yesterday.'},
+                                         {'transcript': 'They visited Ballantine yesterday.'})
+        self.assertTrue(report['ok'], report)
+        self.assertFalse(report.get('review_required'), report)
+
+    def test_narration_recognizes_calendar_years_without_changing_quantities(self):
+        for expected, heard in (
+            ('On September 15, 1966, she arrived.', 'On September fifteenth nineteen sixty six she arrived.'),
+            ('On July 2, 1963, she arrived.', 'On July 2nd, 1963, she arrived.'),
+            ('She visited. 1959, she married.', 'She visited. 1959. She married.'),
+            ('In 1906 she arrived.', 'In nineteen oh six she arrived.'),
+            ('During 2006 she arrived.', 'During two thousand six she arrived.'),
+            ('By 2012 she arrived.', 'By twenty twelve she arrived.'),
+            ('By 2012 she arrived.', 'By two thousand twelve she arrived.'),
+            ('She drove a nineteen fifty-seven Chevrolet.', 'She drove a 1957 Chevrolet.'),
+            ('In the 1960s she travelled.', 'In the nineteen sixties she travelled.'),
+            ('They counted 1,966 tickets.', 'They counted one thousand nine hundred sixty six tickets.'),
+            ('They counted 1966 tickets.', 'They counted one thousand nine hundred sixty six tickets.'),
+        ):
+            report = quality.assess_narration(expected, heard, major_words=1)
+            self.assertTrue(report['ok'], (expected, heard, report))
+
+    def test_narration_preserves_changed_dates_values_negation_and_year_style(self):
+        for expected, heard in (
+            ('On September 15, 1966, she arrived.', 'On September sixteenth nineteen sixty six she arrived.'),
+            ('In 1966 she arrived.', 'In nineteen sixty seven she arrived.'),
+            ('In 1966 she did not arrive.', 'In nineteen sixty six she did arrive.'),
+            ('In 1966 she arrived.', 'In nineteen sixty six nineteen sixty six she arrived.'),
+            ('In the 1960s she travelled.', 'In the nineteen seventies she travelled.'),
+            ('They counted 1966 tickets.', 'They counted nineteen sixty six tickets.'),
+            ('She drove a nineteen fifty-seven Chevrolet.', 'She drove a 1958 Chevrolet.'),
+        ):
+            self.assertFalse(quality.assess_narration(expected, heard, major_words=1)['ok'], (expected, heard))
+        self.assertFalse(quality.assess_narration('In 1966 she arrived.',
+                                                'In one thousand nine hundred sixty six she arrived.')['ok'])
+        self.assertFalse(quality.assess_narration('In nineteen sixty-six she arrived.',
+                                                'In one thousand nine hundred sixty six she arrived.')['ok'])
+        self.assertTrue(quality.assess_narration('In 1966 she arrived.', 'In 1966 she arrived.')['ok'])
+        self.assertNotIn('year_style_mismatches', quality.assess_narration('She visited. 1959, she married.', 'She visited. 1959 she married.'))
+
     def test_unambiguous_contractions_do_not_exhaust_word_error_budget(self):
         for contraction, expansion in quality._CONTRACTIONS.items():
             for left, right in ((contraction, ' '.join(expansion)), (' '.join(expansion), contraction)):

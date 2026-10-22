@@ -11,6 +11,85 @@ def parent(text, index=3, heading=False):
 
 
 class VibeVoiceUnitsTests(unittest.TestCase):
+    def test_sentence_policy_keeps_long_sentences_and_original_words(self):
+        text = ' '.join(['A quiet road'] * 24) + ' leads into New York. Then we went home.'
+        units = repair_units(parent(text), target_words=40, max_words=55,
+                             boundary_policy='sentences_v4', max_chars=1000)
+        self.assertEqual([u['text'] for u in units], [text.removesuffix(' Then we went home.'), 'Then we went home.'])
+        self.assertGreater(len(units[0]['text'].split()), 55)
+        self.assertEqual(' '.join(u['text'] for u in units), text)
+        legacy = repair_units(parent(text), target_words=40, max_words=55)
+        self.assertTrue(all(len(u['text'].split()) <= 55 for u in legacy))
+
+    def test_sentence_policy_packs_to_character_limit_without_splitting(self):
+        text = 'The remarkable visitor arrived. Another remarkable visitor departed.'
+        units = repair_units(parent(text), target_words=75, max_words=100,
+                             boundary_policy='sentences_v4', max_chars=40)
+        self.assertEqual([u['text'] for u in units], ['The remarkable visitor arrived.', 'Another remarkable visitor departed.'])
+        long_text = ' '.join(['unbroken'] * 200) + '.'
+        units = repair_units(parent(long_text), boundary_policy='sentences_v4', max_chars=1000)
+        self.assertEqual([u['text'] for u in units], [long_text])
+
+    def test_sentence_policy_recognizes_notes_and_splits_long_lists_at_semicolons(self):
+        from app.vibevoice_units import _sentence_parts, repair_limits
+        self.assertEqual(_sentence_parts('They left.⁷ Then we stayed.* Another day.', 'sentences_v4'),
+                         ['They left.⁷', 'Then we stayed.*', 'Another day.'])
+        text = 'Alice Example; Robert F. Smith; ' * 40 + 'Zoe Last.'
+        units = repair_units(parent(text), target_words=75, max_words=100,
+                             boundary_policy='sentences_v4', max_chars=1000)
+        self.assertEqual(' '.join(u['text'] for u in units), text)
+        self.assertTrue(all(u['text'].endswith((';', '.')) for u in units))
+        self.assertTrue(all(len(u['text']) <= 1000 for u in units))
+        limits = repair_limits(parent(text), {'backend':'drama3', 'unit_boundary_policy':'sentences_v4',
+            'drama3_unit_limits':{'target_words':75,'max_words':100}, 'drama3_list_max_words':35})
+        self.assertEqual((limits['target_words'],limits['max_words']), (75,100))
+
+    def test_sentence_preserving_passages_keep_oversize_paragraphs_and_continuations(self):
+        from app.vibevoice_plan import pack_passages
+        beginning = ' '.join(['quiet'] * 450) + ' New'
+        blocks = [{'text': beginning, 'source_page': 1},
+                  {'text': 'York was silent.', 'source_page': 2}, {'text': 'We left.', 'source_page': 2}]
+        passages = pack_passages(blocks, preserve_sentences=True)
+        self.assertEqual(passages[0]['text'], beginning + ' York was silent.')
+        self.assertEqual(passages[0]['source_pages'], [1, 2])
+        self.assertEqual(passages[1]['text'], 'We left.')
+
+    def test_caption_boundaries_are_opt_in_and_keep_credit_words(self):
+        from app.vibevoice_units import _sentence_parts
+        text = 'The story ends. (Author collection) This is the house. (They rebuilt it.) Another scene begins.'
+        self.assertEqual(_sentence_parts(text,'captions_v3'), [
+            'The story ends.', '(Author collection) This is the house.', '(They rebuilt it.)', 'Another scene begins.'])
+        self.assertEqual(_sentence_parts(text,'initials_v2'), [text])
+        source=parent(text)
+        units=repair_units(source,target_words=1,max_words=10,boundary_policy='captions_v3')
+        self.assertEqual(' '.join(u['text'] for u in units),text)
+        self.assertTrue(any('Author collection' in u['text'] for u in units))
+
+    def test_passage_repair_budget_changes_only_the_named_passage(self):
+        from app.vibevoice_units import repair_limits
+        source = parent('One short sentence. Another short sentence. Last short sentence.')
+        other = dict(source, identity='untouched-parent')
+        config = {'backend':'drama3', 'drama3_unit_limits':{'target_words':40,'max_words':55},
+                  'drama3_passage_unit_limits':{source['identity']:{'target_words':3,'max_words':4}}}
+        repaired = repair_units(source, **repair_limits(source,config))
+        untouched = repair_units(other, **repair_limits(other,config))
+        self.assertEqual(len(repaired),3)
+        self.assertEqual(len(untouched),1)
+        self.assertEqual(' '.join(u['text'] for u in repaired),source['text'])
+        self.assertEqual(repair_limits(source,dict(config,backend='vibevoice')), {})
+
+    def test_initials_titles_and_real_clock_sentence_ends(self):
+        from app.vibevoice_units import _sentence_parts
+        for name in ('Dr. Evan I. Mercer', 'O. T. Arden', 'J. R. R. Vale', 'Ms. Ada K. Reed'):
+            text = name + ' arrived. Tomorrow we leave.'
+            self.assertEqual(_sentence_parts(text), [name + ' arrived.', 'Tomorrow we leave.'])
+        self.assertEqual(_sentence_parts('We left at 9 p.m. Tomorrow is free.'),
+                         ['We left at 9 p.m.', 'Tomorrow is free.'])
+        self.assertEqual(_sentence_parts('We left at 9 a.m. and came home.'),
+                         ['We left at 9 a.m. and came home.'])
+        self.assertEqual(_sentence_parts('The door is ajar. Now leave.'), ['The door is ajar.', 'Now leave.'])
+        self.assertEqual(_sentence_parts('So did I. Tomorrow we leave.'), ['So did I.', 'Tomorrow we leave.'])
+
     def test_preserves_normalized_prose_and_compatible_fields(self):
         text = "  First sentence.\nSecond sentence!  Third sentence? "
         source = parent(text)

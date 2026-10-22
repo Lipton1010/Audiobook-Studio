@@ -73,8 +73,13 @@ def assemble(job_dir, passages, config, segment_path, cancelled=lambda: False):
     if not paths:
         raise RuntimeError("cannot assemble an empty VibeVoice plan")
     sr = sf.info(str(paths[0])).samplerate
+    if sr != config.get("sample_rate", 24000):
+        raise RuntimeError("Narration sample rate does not match its plan")
     cursor, detected_chapters, page_starts, seen_pages = 0, [], [], set()
     for passage, path in zip(passages, paths):
+        info = sf.info(str(path))
+        if info.samplerate != sr or info.channels != 1:
+            raise RuntimeError(f"invalid narration rate or channels: {path.name}")
         if passage.get("heading") and is_outline_chapter_title(passage["heading"]):
             detected_chapters.append((int(cursor / sr * 1000), passage["heading"]))
         for page in passage.get("source_pages", []):
@@ -82,7 +87,7 @@ def assemble(job_dir, passages, config, segment_path, cancelled=lambda: False):
                 page_starts.append((page, int(cursor / sr * 1000)))
                 seen_pages.add(page)
         cursor += int(sr * passage.get("before_ms", 0) / 1000)
-        cursor += sf.info(str(path)).frames
+        cursor += info.frames
         cursor += int(sr * passage.get("after_ms", 0) / 1000)
     outline_chapters = outline_chapter_marks(config.get("pdf_outline"), page_starts)
     chapters = outline_chapters if len(outline_chapters) > len(detected_chapters) else detected_chapters

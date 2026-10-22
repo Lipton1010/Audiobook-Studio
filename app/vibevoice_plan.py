@@ -36,6 +36,7 @@ RUNTIME = {
 TARGET_WORDS = 365
 MAX_WORDS = 430
 SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[\"'“‘A-Z])")
+SENTENCE_END_RE = re.compile(r'''[.!?]["'”’)\]}*†‡⁰¹²³⁴⁵⁶⁷⁸⁹]*$''')
 SPACED_ELLIPSIS_RE = re.compile(r"\.\s*\.\s*\.")
 
 
@@ -96,7 +97,7 @@ def _paragraphs(blocks):
             yield text, block.get("type", "body"), block.get("source_page")
 
 
-def pack_passages(blocks, target_words=TARGET_WORDS, max_words=MAX_WORDS):
+def pack_passages(blocks, target_words=TARGET_WORDS, max_words=MAX_WORDS, preserve_sentences=False):
     """Pack whole extracted paragraphs first, retaining dialogue with its paragraph."""
     if not 1 <= target_words <= max_words:
         raise ValueError("target_words must be between 1 and max_words")
@@ -118,15 +119,17 @@ def pack_passages(blocks, target_words=TARGET_WORDS, max_words=MAX_WORDS):
             flush()
             passages.append({"text": text, "heading": text, "source_pages": [page] if page is not None else [], "block_types": [block_type]})
             continue
-        units = _split_oversize(text, max_words) if _words(text) > max_words else [text]
+        units = _split_oversize(text, max_words) if _words(text) > max_words and not preserve_sentences else [text]
         for unit in units:
             candidate = " ".join(current + [unit])
-            if current and _words(candidate) > max_words:
+            can_end = not preserve_sentences or bool(current and SENTENCE_END_RE.search(current[-1]))
+            if current and _words(candidate) > max_words and can_end:
                 flush()
             current.append(unit)
             pages.append(page)
             types.append(block_type)
-            if _words(" ".join(current)) >= target_words:
+            can_end = not preserve_sentences or SENTENCE_END_RE.search(unit)
+            if _words(" ".join(current)) >= target_words and can_end:
                 flush()
     flush()
     return passages
@@ -175,8 +178,15 @@ def passage_identity(text, voice_sha256, runtime=None):
 
 def write_plan(job_dir, blocks, config):
     """Write the backend sidecar without modifying legacy plans or segment caches."""
+    if config.get("backend") == "drama3":
+        try:
+            from .drama3 import write_plan as write_drama_plan
+        except ImportError:
+            from drama3 import write_plan as write_drama_plan
+        return write_drama_plan(job_dir, blocks, config)
     job_dir = Path(job_dir)
     config = dict(config)
+    config.setdefault('unit_boundary_policy', 'initials_v2')
     raw_settings = dict(config.get("generation_settings") or {})
     for key in ("cfg_scale", "ddpm_steps", "passage_gap_ms", "heading_lead_ms"):
         if key in config:
@@ -229,6 +239,13 @@ def load_plan(job_dir):
     job_dir = Path(job_dir)
     plan = json.loads((job_dir / PLAN_FILENAME).read_text(encoding="utf-8"))
     config = json.loads((job_dir / CONFIG_FILENAME).read_text(encoding="utf-8"))
+    if config.get("backend") == "drama3":
+        try:
+            from .drama3 import validate_plan
+        except ImportError:
+            from drama3 import validate_plan
+        validate_plan(plan, config)
+        return plan, config
     settings = normalize_settings("vibevoice", config.get("path", "A"), config.get("generation_settings"))
     runtime = runtime_profile(config)
     for key, value in runtime.items():

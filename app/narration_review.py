@@ -6,8 +6,9 @@ from pathlib import Path
 
 from vibevoice_plan import sha256_file
 from vibevoice_quality import assess_narration as assess, numbered_heading_assessment, unit_assessment
-from vibevoice_delivery import spoken_text, spoken_units, PROFILE as DELIVERY_PROFILE
-from vibevoice_units import _validate_units, parent_quality
+from vibevoice_delivery import (spoken_text, project_units, receipt_matches_projection,
+                               PROFILE as DELIVERY_PROFILE, INTACT_PROFILE)
+from vibevoice_units import _validate_units, parent_quality, repair_units, repair_limits
 
 FILENAME = "narration_review.json"
 CANDIDATES_DIR = "review_units"
@@ -26,6 +27,10 @@ def write(path, value):
 
 def fingerprint(receipt):
     fields = [receipt.get(key) for key in ("identity", "text_sha256", "wav_sha256", "report_sha256")]
+    if 'spoken_text_sha256' in receipt or 'render_policy_sha256' in receipt:
+        fields.extend(receipt.get(key) for key in ('spoken_text_sha256', 'render_policy_sha256', 'render_text_sha256'))
+    if 'render_model' in receipt:
+        fields.append(receipt['render_model'])
     return hashlib.sha256(json.dumps(fields).encode()).hexdigest()
 
 
@@ -33,6 +38,7 @@ def approved(receipt, unit):
     return (receipt.get("identity") == unit["identity"]
             and receipt.get("text_sha256") == unit["text_sha256"]
             and receipt.get("listening_approval") == fingerprint(receipt)
+            and receipt_matches_projection(receipt, unit)
             and not receipt.get("force_regenerate"))
 
 
@@ -96,7 +102,16 @@ def _passage_items(job_dir, data, plan):
     parent = next((p for p in plan["passages"] if p["index"] == data["parent"]["index"]), None)
     if parent is None or parent != data["parent"]:
         raise ValueError("The narration plan changed. Resume to check the current text.")
-    units = spoken_units(_validate_units(parent, data["units"]))
+    config_path = job_dir / 'vibevoice_config.json'
+    config = json.loads(config_path.read_text(encoding='utf-8')) if config_path.exists() else {}
+    recorded = _validate_units(parent, data['units'])
+    boundary_policy = config.get('unit_boundary_policies', {}).get(parent['identity'], config.get('unit_boundary_policy', 'legacy_v1'))
+    if boundary_policy in ('initials_v2', 'captions_v3', 'sentences_v4') or parent['identity'] in config.get('drama3_passage_unit_limits', {}):
+        limits = repair_limits(parent, config)
+        current = repair_units(parent, boundary_policy=boundary_policy, **limits)
+        if [u['identity'] for u in recorded] != [u['identity'] for u in current]:
+            raise ValueError('The unit boundaries changed. Prepare a selective migration before review.')
+    units = project_units(recorded, parent, config)
     items = []
     # Only count individually passing, unapproved clips toward the residual
     # parent gate. Failed/missing clips have their own review/generation work.
@@ -104,6 +119,8 @@ def _passage_items(job_dir, data, plan):
                for unit in units}
     failed = set()
     for unit in units:
+        if not unit.get('spoken_text', unit['text']):
+            continue
         stem = clip_stem(job_dir, data, unit["index"])
         receipt_path, wav = stem.with_suffix(".json"), stem.with_suffix(".wav")
         if not receipt_path.exists():
@@ -111,6 +128,8 @@ def _passage_items(job_dir, data, plan):
                 raise ValueError("The saved review clip is missing.")
             continue  # Units not yet generated will be handled on resume.
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        if not receipt_matches_projection(receipt, unit):
+            raise ValueError('The intended spoken text or delivery policy changed. Prepare a selective migration before review.')
         report_path = Path(receipt["quality_report"])
         if not report_path.resolve().is_relative_to(job_dir.resolve()):
             raise ValueError("The saved speech report is outside this job.")
@@ -144,10 +163,10 @@ def _passage_items(job_dir, data, plan):
                       "passage": parent["index"] + 1,
                       "expected": unit["text"], "heard": report["transcript"],
                       "spoken_expected": unit.get("spoken_text", spoken_text(unit["text"])),
-                      "delivery_updated": receipt.get("render_profile") == DELIVERY_PROFILE,
+                      "delivery_updated": receipt.get("render_profile") in (DELIVERY_PROFILE, INTACT_PROFILE),
                       "transcript_review": assessment.get("transcript_review"),
                       "differences": differences, "fingerprint": token, "decision": action})
-    cumulative_failure = not parent_quality(parent, list(reports.values()), units=data["units"])["ok"]
+    cumulative_failure = not parent_quality(parent, list(reports.values()), units=units)["ok"]
     return [dict(item, reason="clip" if item["index"] in failed else "passage")
             for item in items if item["decision"] is not None or item["index"] in failed or cumulative_failure]
 

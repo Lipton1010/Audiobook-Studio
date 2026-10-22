@@ -37,7 +37,7 @@ import visual_review
 import narration_review
 from audiobook_exports import AudiobookExportError, export_finished_audio
 from audiobook_files import ArtworkReplacementError, replace_finished_artwork
-from generation_settings import default_settings, normalize_settings, runtime_settings
+from generation_settings import BACKENDS, default_settings, normalize_settings, runtime_settings
 from audiobook_library import owned_library_directory, visible_audio, publish_finished_output, delete_generated_files, contained
 from config import CFG
 from narration_eta import PROGRESS_FILENAME, STALE_PROGRESS_SECONDS, STALLED_BATCH_SECONDS
@@ -91,91 +91,7 @@ IMAGE_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", 
 WINDOWS_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 
 
-class _WindowsWorkerJob:
-    """Own narration subprocesses by handle, never by a reusable numeric PID.
-
-    Windows does not automatically terminate children when their parent exits.
-    A Job Object with KILL_ON_JOB_CLOSE does, including when this server crashes
-    and the kernel closes its handles. Assignment uses Popen's live process
-    handle, so it cannot target a different process after PID reuse.
-    """
-
-    def __init__(self):
-        self.handle = None
-        if os.name != "nt":
-            return
-
-        import ctypes
-        from ctypes import wintypes
-
-        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
-            _fields_ = [
-                ("PerProcessUserTimeLimit", ctypes.c_longlong),
-                ("PerJobUserTimeLimit", ctypes.c_longlong),
-                ("LimitFlags", wintypes.DWORD),
-                ("MinimumWorkingSetSize", ctypes.c_size_t),
-                ("MaximumWorkingSetSize", ctypes.c_size_t),
-                ("ActiveProcessLimit", wintypes.DWORD),
-                ("Affinity", ctypes.c_size_t),
-                ("PriorityClass", wintypes.DWORD),
-                ("SchedulingClass", wintypes.DWORD),
-            ]
-
-        class IO_COUNTERS(ctypes.Structure):
-            _fields_ = [
-                ("ReadOperationCount", ctypes.c_ulonglong),
-                ("WriteOperationCount", ctypes.c_ulonglong),
-                ("OtherOperationCount", ctypes.c_ulonglong),
-                ("ReadTransferCount", ctypes.c_ulonglong),
-                ("WriteTransferCount", ctypes.c_ulonglong),
-                ("OtherTransferCount", ctypes.c_ulonglong),
-            ]
-
-        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
-            _fields_ = [
-                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
-                ("IoInfo", IO_COUNTERS),
-                ("ProcessMemoryLimit", ctypes.c_size_t),
-                ("JobMemoryLimit", ctypes.c_size_t),
-                ("PeakProcessMemoryUsed", ctypes.c_size_t),
-                ("PeakJobMemoryUsed", ctypes.c_size_t),
-            ]
-
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
-        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
-        kernel32.SetInformationJobObject.argtypes = [
-            wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
-        ]
-        kernel32.SetInformationJobObject.restype = wintypes.BOOL
-        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
-        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
-        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-        kernel32.CloseHandle.restype = wintypes.BOOL
-
-        handle = kernel32.CreateJobObjectW(None, None)
-        if not handle:
-            raise ctypes.WinError(ctypes.get_last_error())
-        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
-        info.BasicLimitInformation.LimitFlags = 0x00002000  # KILL_ON_JOB_CLOSE
-        if not kernel32.SetInformationJobObject(handle, 9, ctypes.byref(info), ctypes.sizeof(info)):
-            error = ctypes.get_last_error()
-            kernel32.CloseHandle(handle)
-            raise ctypes.WinError(error)
-        self.handle = handle
-        self._kernel32 = kernel32
-
-    def assign(self, proc):
-        if self.handle is None:
-            return
-        import ctypes
-        if not self._kernel32.AssignProcessToJobObject(self.handle, proc._handle):
-            raise ctypes.WinError(ctypes.get_last_error())
-
-    def close(self):
-        if self.handle is not None:
-            self._kernel32.CloseHandle(self.handle)
-            self.handle = None
+from process_ownership import WindowsWorkerJob as _WindowsWorkerJob
 
 
 _worker_job_lock = threading.Lock()
@@ -228,7 +144,7 @@ PLAN_VERSION = "1"
 # per-chunk output equivalent to v1). Default stays "parallel" until the
 # batched engine is signed off by listening. Override per job or via env.
 DEFAULT_ENGINE = os.environ.get("AUDIOBOOK_ENGINE", "batched")
-DEFAULT_BACKEND = "vibevoice"
+DEFAULT_BACKEND = "drama3"
 BATCH_SIZE = int(os.environ.get("AUDIOBOOK_BATCH_SIZE", "12"))
 # Caps rows*Tmax per batch so the batched KV-cache stays within VRAM; a fixed
 # row count OOM-thrashes (hangs) once chunks get long. See narrate_worker.
@@ -273,7 +189,18 @@ def missing_voice_error(name):
 
 def narration_backend(st):
     """Choose a backend without changing any existing job's cache contract."""
-    return st.get("backend") if st.get("backend") in ("chatterbox", "vibevoice") else "chatterbox"
+    return st.get("backend") if st.get("backend") in BACKENDS else "chatterbox"
+
+
+def missing_drama3_error():
+    from vibevoice_quality import parakeet_setup_error
+    for key in ("drama3_executable", "drama3_model"):
+        value = getattr(CFG, key, "")
+        if not value or not Path(value).is_file():
+            return f"Drama 3 is not configured. Set {key} to the tested native Q3 runtime asset."
+    if not CFG.drama3_cuda_bin or not Path(CFG.drama3_cuda_bin).is_dir():
+        return "Drama 3 CUDA libraries are missing. Configure drama3_cuda_bin."
+    return parakeet_setup_error(CFG.parakeet_python, CFG.parakeet_model)
 
 
 def missing_vibevoice_error(inference=None):
@@ -1064,7 +991,7 @@ def request_cancel(job_id):
         with _queue_cv:
             if job_id in _queue:
                 _queue.remove(job_id)
-        if st and narration_backend(st) == "vibevoice":
+        if st and narration_backend(st) in ("vibevoice", "drama3"):
             (JOBS_DIR / job_id / "cancel_flag.txt").write_text("cancel", encoding="utf-8")
     with _active_procs_lock:
         procs = (list(_active_procs["procs"])
@@ -1388,7 +1315,7 @@ def cleanup_completed_job_cache(job_id):
         raise ValueError("job not found")
     if st.get("status") != "done":
         raise ValueError("cache cleanup is only available for completed jobs")
-    seg_dir = JOBS_DIR / job_id / ("vibevoice_segments" if narration_backend(st) == "vibevoice" else "segments")
+    seg_dir = JOBS_DIR / job_id / ("vibevoice_segments" if narration_backend(st) in ("vibevoice", "drama3") else "segments")
     freed = _directory_size(seg_dir)
     if seg_dir.exists():
         shutil.rmtree(seg_dir)
@@ -1402,7 +1329,7 @@ def cleanup_completed_job_cache(job_id):
 
 def _ensure_segment_cache_stat(st, job_dir):
     """Populate cache size once for completed jobs created before this field."""
-    seg_dir = Path(job_dir) / ("vibevoice_segments" if narration_backend(st) == "vibevoice" else "segments")
+    seg_dir = Path(job_dir) / ("vibevoice_segments" if narration_backend(st) in ("vibevoice", "drama3") else "segments")
     if st.get("status") == "done" and (
         "segment_cache_bytes" not in st
         or (st.get("segment_cache_bytes", 0) and not seg_dir.exists())
@@ -1424,6 +1351,9 @@ def _spawn_worker(job_dir, logf, extra_args, backend="chatterbox"):
         config = json.loads((job_dir / "vibevoice_config.json").read_text(encoding="utf-8"))
         if config.get("inference_backend") == "compiled":
             python = CFG.vibevoice_compiled_python
+    elif backend == "drama3":
+        python = CFG.parakeet_python
+        worker = "drama3.py" if "--prepare-reference" in extra_args else "vibevoice_worker.py"
     proc = subprocess.Popen(
         [python, str(APP_DIR / worker), str(job_dir), *extra_args],
         stdout=logf, stderr=subprocess.STDOUT, cwd=str(APP_DIR),
@@ -1444,7 +1374,7 @@ def _narration_failure_message(job_dir, codes, backend="chatterbox"):
     """A worker's own clean diagnosis, if it wrote one, else the generic
     exit-code message. narrate_worker writes error.json for causes it can
     identify (currently: GPU out of memory even at a single chunk)."""
-    err_file = job_dir / ("vibevoice_error.json" if backend == "vibevoice" else "error.json")
+    err_file = job_dir / ("vibevoice_error.json" if backend in ("vibevoice", "drama3") else "error.json")
     if err_file.exists():
         try:
             data = json.loads(err_file.read_text(encoding="utf-8"))
@@ -1456,7 +1386,7 @@ def _narration_failure_message(job_dir, codes, backend="chatterbox"):
 
 
 def _wait_for_generation(proc, job_dir, engine, backend="chatterbox"):
-    if backend == "vibevoice":
+    if backend in ("vibevoice", "drama3"):
         progress_file = job_dir / "vibevoice_progress.json"
     elif engine != "batched":
         return proc.wait()
@@ -1518,7 +1448,9 @@ def _run_vibevoice_narration(st, job_dir, blocks):
         config["workflow"] = prior_config.get("workflow", "overlap_cpu")
         config["render_workers"] = prior_config.get("render_workers", 1)
         config["transcript_review"] = prior_config.get("transcript_review", False)
-        for key in ("parakeet_python", "parakeet_model"):
+        config['unit_boundary_policy'] = prior_config.get('unit_boundary_policy', 'legacy_v1')
+        for key in ("parakeet_python", "parakeet_model", "spoken_projection", "delivery_profiles",
+                    "unit_boundary_policies", "repair_model", "repair_unit_ids"):
             if key in prior_config:
                 config[key] = prior_config[key]
     else:
@@ -1530,6 +1462,55 @@ def _run_vibevoice_narration(st, job_dir, blocks):
         config.update(runtime_settings("vibevoice", st["path"], st.get("generation_settings")))
         config["model_dir"] = CFG.vibevoice_compiled_model_dir
     plan = vibevoice_plan.write_plan(job_dir, blocks, config)
+    return _run_planned_narration(st, job_dir, plan, config, "vibevoice")
+
+
+def _run_drama3_narration(st, job_dir, blocks):
+    import drama3
+    error = missing_drama3_error()
+    if error:
+        raise RuntimeError(error)
+    prior = job_dir / "vibevoice_config.json"
+    config = json.loads(prior.read_text(encoding="utf-8")) if prior.exists() else {
+        "backend": "drama3", "drama3_executable": CFG.drama3_executable,
+        "drama3_model": CFG.drama3_model, "drama3_cuda_bin": CFG.drama3_cuda_bin,
+        "drama3_reference_profiles": CFG.drama3_reference_profiles,
+        "parakeet_python": CFG.parakeet_python, "parakeet_model": CFG.parakeet_model,
+    }
+    if config.get("backend") != "drama3":
+        raise ValueError("This saved job belongs to another narrator. Create a new job to use Drama 3.")
+    config.update(source_reference_wav=voice_wav_path(st.get("voice")), path=st["path"])
+    config["generation_settings"] = normalize_settings("drama3", st["path"], st.get("generation_settings"))
+    drama3.write(job_dir / "drama3_reference_request.json", config)
+    (job_dir / "cancel_flag.txt").unlink(missing_ok=True)
+    (job_dir / "vibevoice_error.json").unlink(missing_ok=True)
+    drama3.write(job_dir / "vibevoice_progress.json", {"status": "preparing_reference", "done": 0, "total": 0})
+    st.update(status="narrating", num_workers=1, narrate_started_at=time.time())
+    save_state(st)
+    owned = []
+    try:
+        with (job_dir / "log.txt").open("a", encoding="utf-8") as logf:
+            proc = _spawn_worker(job_dir, logf, ["--prepare-reference"], "drama3")
+            owned.append(proc)
+            _set_active_processes(st["id"], owned)
+            if _cancel_flags.pop(st["id"], False):
+                raise _Cancelled()
+            code = _wait_for_generation(proc, job_dir, "", "drama3")
+            if _cancel_flags.pop(st["id"], False) or code == 2:
+                raise _Cancelled()
+            if code:
+                raise RuntimeError(_narration_failure_message(job_dir, [code], "drama3"))
+    finally:
+        _terminate_processes(owned)
+        _clear_active_processes(st["id"])
+    config.update(drama3.read(job_dir / drama3.REFERENCE_FILE))
+    meta, cover, outline = extract_book_meta(st["pdf_path"], st["title"], job_dir)
+    config.update(title=st["title"], format=st.get("format", "m4b"), metadata=meta, cover_image=cover, pdf_outline=outline)
+    plan = drama3.write_plan(job_dir, blocks, config)
+    return _run_planned_narration(st, job_dir, plan, config, "drama3")
+
+
+def _run_planned_narration(st, job_dir, plan, config, backend):
     (job_dir / "cancel_flag.txt").unlink(missing_ok=True)
     progress_path = job_dir / "vibevoice_progress.json"
     # Only the worker can validate a VibeVoice WAV against its identity receipt.
@@ -1541,26 +1522,27 @@ def _run_vibevoice_narration(st, job_dir, blocks):
     st.update(status="narrating", num_workers=1, narrate_started_at=time.time(),
               narrate_baseline_done=existing, vibevoice_total=total)
     save_state(st)
-    log_line(st["id"], f"narrating with VibeVoice; {existing} passages already present")
+    label = "Drama 3 Q3" if backend == "drama3" else "VibeVoice"
+    log_line(st["id"], f"narrating with {label}; checking saved passages")
 
     owned = []
     try:
         with open(job_dir / "log.txt", "a", encoding="utf-8") as logf:
-            proc = _spawn_worker(job_dir, logf, ["--shard", "0", "--num-shards", "1"], "vibevoice")
+            proc = _spawn_worker(job_dir, logf, ["--shard", "0", "--num-shards", "1"], backend)
             owned.append(proc)
             _set_active_processes(st["id"], [proc])
             if _cancel_flags.pop(st["id"], False):
                 raise _Cancelled()
-            code = _wait_for_generation(proc, job_dir, "", "vibevoice")
+            code = _wait_for_generation(proc, job_dir, "", backend)
             _clear_active_processes(st["id"])
             if _cancel_flags.pop(st["id"], False) or code == 2:
                 raise _Cancelled()
             if code != 0:
                 if code == 3 and (job_dir / narration_review.FILENAME).is_file():
-                    raise narration_review.ListeningRequired(_narration_failure_message(job_dir, [code], "vibevoice"))
-                raise RuntimeError(_narration_failure_message(job_dir, [code], "vibevoice"))
+                    raise narration_review.ListeningRequired(_narration_failure_message(job_dir, [code], backend))
+                raise RuntimeError(_narration_failure_message(job_dir, [code], backend))
             log_line(st["id"], "generation complete, assembling")
-            assembly = _spawn_worker(job_dir, logf, ["--assemble"], "vibevoice")
+            assembly = _spawn_worker(job_dir, logf, ["--assemble"], backend)
             owned.append(assembly)
             _set_active_processes(st["id"], [assembly])
             if _cancel_flags.pop(st["id"], False):
@@ -1570,7 +1552,7 @@ def _run_vibevoice_narration(st, job_dir, blocks):
             if code == 2 or _cancel_flags.pop(st["id"], False):
                 raise _Cancelled()
             if code != 0:
-                raise RuntimeError(_narration_failure_message(job_dir, [code], "vibevoice"))
+                raise RuntimeError(_narration_failure_message(job_dir, [code], backend))
     finally:
         _terminate_processes(owned)
         _clear_active_processes(st["id"])
@@ -1613,6 +1595,8 @@ def run_narration(st):
         _release_ocr()
     if narration_backend(st) == "vibevoice":
         return _run_vibevoice_narration(st, job_dir, blocks)
+    if narration_backend(st) == "drama3":
+        return _run_drama3_narration(st, job_dir, blocks)
     engine = st.get("engine", DEFAULT_ENGINE)
     meta, cover, outline = extract_book_meta(st["pdf_path"], st["title"], job_dir)
     config = {
@@ -1919,7 +1903,7 @@ def worker_loop():
             st.pop("narration_stale", None)
             st["finished_at"] = time.time()
             st["segment_cache_bytes"] = _directory_size(
-                JOBS_DIR / job_id / ("vibevoice_segments" if narration_backend(st) == "vibevoice" else "segments")
+                JOBS_DIR / job_id / ("vibevoice_segments" if narration_backend(st) in ("vibevoice", "drama3") else "segments")
             )
             save_state(st)
             log_line(job_id, f"job complete, audiobook copied to {book_dir}")
@@ -1950,7 +1934,7 @@ def worker_loop():
 def _narration_progress(job_dir, st):
     """Aggregate progress across all parallel workers by counting finished
     segments. Works regardless of worker count and survives resumes."""
-    vibevoice = narration_backend(st) == "vibevoice"
+    vibevoice = narration_backend(st) in ("vibevoice", "drama3")
     seg_dir = job_dir / ("vibevoice_segments" if vibevoice else "segments")
     total_file = job_dir / "plan_total.txt"
     total = 0
@@ -2028,6 +2012,8 @@ def _narration_progress(job_dir, st):
                    "checking generated passage quality: comparing words on CPU")
     elif worker_status == "transcript_review":
         message = "reviewing transcript differences with the local language model on GPU"
+    elif worker_status == "preparing_reference":
+        message = "preparing the narrator reference before speech generation"
     elif worker_status == "loading_model" or (not worker_status and done == 0):
         message = f"loading model ({n} worker{'s' if n > 1 else ''})"
     else:
@@ -2136,8 +2122,8 @@ def _export_finished_output(st, fmt):
 
 
 def regenerate_job(job_id, backend, settings=None):
-    if backend not in ("vibevoice", "chatterbox"):
-        raise ValueError("Choose VibeVoice or Chatterbox for regeneration.")
+    if backend not in BACKENDS:
+        raise ValueError("Choose Drama 3, VibeVoice or Chatterbox for regeneration.")
     original = load_state(job_id)
     if not original or original.get("status") != "done" or original.get("library_hidden"):
         raise ValueError("Regeneration needs a completed audiobook.")
@@ -2148,6 +2134,8 @@ def regenerate_job(job_id, backend, settings=None):
               missing_ffmpeg_error(original.get("format", "m4b"))]
     if backend == "vibevoice":
         errors.append(missing_vibevoice_error())
+    elif backend == "drama3":
+        errors.append(missing_drama3_error())
     if any(errors):
         raise ValueError(next(error for error in errors if error))
     settings = normalize_settings(backend, original.get("path", "B"), settings)
@@ -2236,7 +2224,7 @@ def _visual_review_detail(job_id):
     payload = visual_review.review_payload(JOBS_DIR / job_id, st)
     payload["status"] = st.get("status")
     payload["editable"] = st.get("status") not in ("queued", "extracting", "tagging", "narrating")
-    payload["vibevoice_scope_available"] = narration_backend(st) == "vibevoice"
+    payload["vibevoice_scope_available"] = narration_backend(st) in ("vibevoice", "drama3")
     if payload["vibevoice_scope_available"]:
         payload["original_page_range"] = {"from": st.get("page_from"), "to": st.get("page_to")}
     history = JOBS_DIR / job_id / "output_history"
@@ -2653,7 +2641,7 @@ class Handler(BaseHTTPRequestHandler):
                 _json_response(self, {"ok": True})
             elif path == "/api/jobs":
                 body = self._read_json()
-                backend = body.get("backend") if body.get("backend") in ("chatterbox", "vibevoice") else DEFAULT_BACKEND
+                backend = body.get("backend") if body.get("backend") in BACKENDS else DEFAULT_BACKEND
                 # Preflight the voice before creating anything, so a fresh install
                 # fails here with a clear message instead of hours into the job.
                 verr = missing_voice_error(body.get("voice") or DEFAULT_VOICE)
@@ -2664,6 +2652,11 @@ class Handler(BaseHTTPRequestHandler):
                     vibevoice_error = missing_vibevoice_error()
                     if vibevoice_error:
                         _json_response(self, {"error": vibevoice_error}, 400)
+                        return
+                if backend == "drama3":
+                    drama_error = missing_drama3_error()
+                    if drama_error:
+                        _json_response(self, {"error": drama_error}, 400)
                         return
                 # Same preflight for ffmpeg: refuse an m4b/mp3 job now rather
                 # than failing the encode after the narration has finished.
@@ -2814,8 +2807,8 @@ class Handler(BaseHTTPRequestHandler):
                     if not st:
                         _json_response(self, {"error": "not found"}, 404)
                         return
-                    if narration_backend(st) != "vibevoice":
-                        _json_response(self, {"error": "Narrate through page is available for VibeVoice jobs only."}, 409)
+                    if narration_backend(st) not in ("vibevoice", "drama3"):
+                        _json_response(self, {"error": "Narrate through page is available for Drama 3 and VibeVoice jobs."}, 409)
                         return
                     if st.get("status") in ("queued", "extracting", "tagging", "narrating"):
                         _json_response(self, {"error": "Stop or wait for the job before changing its narration range."}, 409)
@@ -2894,8 +2887,8 @@ class Handler(BaseHTTPRequestHandler):
                         _json_response(self, {"error": "review is not ready to start"}, 409)
                         return
                     job_dir = JOBS_DIR / job_id
-                    if narration_backend(st) != "vibevoice" and not st.get("regenerated_from") and visual_review.review_payload(job_dir, st)["narration_scope"]:
-                        _json_response(self, {"error": "Narrate through page is available for VibeVoice jobs only."}, 409)
+                    if narration_backend(st) not in ("vibevoice", "drama3") and not st.get("regenerated_from") and visual_review.review_payload(job_dir, st)["narration_scope"]:
+                        _json_response(self, {"error": "Narrate through page is available for Drama 3 and VibeVoice jobs."}, 409)
                         return
                     blocks, unresolved, _items, _decisions = visual_review.project(job_dir, st)
                     if unresolved:
