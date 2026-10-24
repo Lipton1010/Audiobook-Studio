@@ -41,21 +41,48 @@ class CacheCleanupTests(unittest.TestCase):
     def test_cleanup_removes_only_segments_and_records_freed_bytes(self):
         job_id, job_dir = self.make_job()
 
-        with mock.patch.object(server, "log_line"):
-            freed = server.cleanup_completed_job_cache(job_id)
+        with mock.patch.object(server, "log_line"), mock.patch.object(server.CFG, "ffmpeg_path", return_value="fixture"), \
+             mock.patch.object(server.job_cleanup, "validate_audio", return_value=1.0):
+            preview = server.preview_completed_job_cleanup(job_id)
+            self.assertTrue((job_dir / "segments" / "seg_000000.wav").exists())
+            freed = server.cleanup_completed_job_cache(job_id, confirmed=True, preview_token=preview["token"])
 
         self.assertEqual(freed, len(b"segment-data"))
-        self.assertFalse((job_dir / "segments").exists())
+        self.assertFalse((job_dir / "segments" / "seg_000000.wav").exists())
         self.assertTrue((job_dir / "output" / "book.m4b").exists())
         self.assertTrue((job_dir / "blocks.json").exists())
         state = server.load_state(job_id)
         self.assertEqual(state["segment_cache_bytes"], 0)
         self.assertEqual(state["segment_cache_freed_bytes"], freed)
 
+    def test_unconfirmed_cleanup_keeps_all_files(self):
+        job_id, job_dir = self.make_job()
+        with self.assertRaisesRegex(ValueError, "explicitly confirm"):
+            server.cleanup_completed_job_cache(job_id)
+        self.assertTrue((job_dir / "segments" / "seg_000000.wav").exists())
+
+    def test_new_endpoint_preview_never_removes_working_audio(self):
+        job_id, job_dir = self.make_job()
+        handler = server.Handler.__new__(server.Handler)
+        handler.path = f"/api/jobs/{job_id}/cleanup-working-files"
+        handler._read_json = mock.Mock(return_value={"preview": True})
+        with mock.patch.object(server, "_json_response") as response, \
+             mock.patch.object(server.CFG, "ffmpeg_path", return_value="fixture"), \
+             mock.patch.object(server.job_cleanup, "validate_audio", return_value=1.0):
+            handler.do_POST()
+        self.assertTrue((job_dir / "segments/seg_000000.wav").exists())
+        self.assertEqual(response.call_args.args[1]["preview"]["files_count"], 1)
+
+    def test_new_page_never_calls_old_servers_destructive_endpoint(self):
+        html = (APP_DIR / "static/index.html").read_text(encoding="utf-8")
+        self.assertIn("fetch(`/api/jobs/${j.id}/cleanup-working-files`", html)
+        self.assertNotIn("fetch(`/api/jobs/${j.id}/cleanup-cache`", html)
+        self.assertIn("response.status === 404", html)
+
     def test_cleanup_rejects_noncompleted_job(self):
         job_id, job_dir = self.make_job(status="failed")
         with self.assertRaisesRegex(ValueError, "completed jobs"):
-            server.cleanup_completed_job_cache(job_id)
+            server.preview_completed_job_cleanup(job_id)
         self.assertTrue((job_dir / "segments" / "seg_000000.wav").exists())
 
 

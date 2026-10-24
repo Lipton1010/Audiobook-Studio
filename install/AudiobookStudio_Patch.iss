@@ -70,6 +70,7 @@ Source: "..\app\process_ownership.py"; DestDir: "{app}\app"; Flags: ignoreversio
 Source: "..\app\audiobook_exports.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\audiobook_files.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\audiobook_library.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\job_cleanup.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\generation_settings.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\narrate_worker.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\vibevoice_plan.py"; DestDir: "{app}\app"; Flags: ignoreversion

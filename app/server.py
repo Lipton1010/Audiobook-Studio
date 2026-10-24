@@ -35,6 +35,7 @@ import requests
 import pipeline_text as pt
 import visual_review
 import narration_review
+import job_cleanup
 from audiobook_exports import AudiobookExportError, export_finished_audio
 from audiobook_files import ArtworkReplacementError, replace_finished_artwork
 from generation_settings import BACKENDS, default_settings, normalize_settings, runtime_settings
@@ -1304,27 +1305,40 @@ def _directory_size(path):
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
-def cleanup_completed_job_cache(job_id):
-    """Remove only resumable PCM segments from a completed job.
+def preview_completed_job_cleanup(job_id):
+    """Validate final audio and save a reviewable plan without deleting anything."""
+    with _job_mutation_lock(job_id):
+        st = load_state(job_id)
+        if not st:
+            raise ValueError("job not found")
+        job_dir = JOBS_DIR / job_id
+        plan = job_cleanup.preview(job_dir, st, CFG.ffmpeg_path())
+        job_cleanup.write(job_dir / "cleanup_preview.json", plan)
+        st["cleanup_candidate_bytes"] = plan["reclaimable_allocated_bytes"]
+        st["cleanup_preview_at"] = plan["created_at"]
+        st.pop("cleanup_preview_error", None)
+        if not save_state(st):
+            raise OSError("Could not save cleanup preview; no files were removed.")
+        return plan
 
-    The job record, extraction blocks, log, chapter metadata, job-local final
-    output, and copied audiobook-library output are deliberately preserved.
-    """
-    st = load_state(job_id)
-    if not st:
-        raise ValueError("job not found")
-    if st.get("status") != "done":
-        raise ValueError("cache cleanup is only available for completed jobs")
-    seg_dir = JOBS_DIR / job_id / ("vibevoice_segments" if narration_backend(st) in ("vibevoice", "drama3") else "segments")
-    freed = _directory_size(seg_dir)
-    if seg_dir.exists():
-        shutil.rmtree(seg_dir)
-    st["segment_cache_bytes"] = 0
-    st["segment_cache_freed_bytes"] = st.get("segment_cache_freed_bytes", 0) + freed
-    st["segment_cache_cleared_at"] = time.time()
-    save_state(st)
-    log_line(job_id, f"freed {freed} bytes of completed narration segment cache")
-    return freed
+
+def cleanup_completed_job_cache(job_id, *, confirmed=False, preview_token=None):
+    """Remove only explicitly reviewed working files after fresh final validation."""
+    if confirmed is not True or not preview_token:
+        raise ValueError("Review a fresh cleanup preview and explicitly confirm it first.")
+    with _job_mutation_lock(job_id):
+        st = load_state(job_id)
+        if not st:
+            raise ValueError("job not found")
+        freed = job_cleanup.remove_preview(JOBS_DIR / job_id, st, preview_token,
+                                           CFG.ffmpeg_path(), confirmed=confirmed)
+        st["segment_cache_bytes"] = 0
+        st["cleanup_candidate_bytes"] = 0
+        st["segment_cache_freed_bytes"] = st.get("segment_cache_freed_bytes", 0) + freed
+        st["segment_cache_cleared_at"] = time.time()
+        save_state(st)
+        log_line(job_id, f"removed {freed} bytes of explicitly confirmed completed render working files")
+        return freed
 
 
 def _ensure_segment_cache_stat(st, job_dir):
@@ -1907,6 +1921,13 @@ def worker_loop():
             )
             save_state(st)
             log_line(job_id, f"job complete, audiobook copied to {book_dir}")
+            # Automatic preview only. Deletion always needs a fresh explicit action.
+            try:
+                preview_completed_job_cleanup(job_id)
+            except Exception as exc:
+                st["cleanup_preview_error"] = str(exc)
+                save_state(st)
+                log_line(job_id, f"cleanup preview unavailable; all working files preserved: {exc}")
         except narration_review.ListeningRequired as exc:
             st["status"] = "audio_review_required"
             st["error"] = str(exc)
@@ -2948,12 +2969,18 @@ class Handler(BaseHTTPRequestHandler):
                     if not save_state(st):
                         raise OSError("The file operation finished, but its library update could not be saved. Retry deletion to finish updating the record.")
                 _json_response(self, {"ok": True, "freed_bytes": freed})
-            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/cleanup-cache", path):
+            elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/(?:cleanup-cache|cleanup-working-files)", path):
                 job_id = path.split("/")[3]
+                body = self._read_json()
                 try:
-                    freed = cleanup_completed_job_cache(job_id)
-                    _json_response(self, {"ok": True, "freed_bytes": freed})
-                except ValueError as exc:
+                    if body.get("preview") is True:
+                        plan = preview_completed_job_cleanup(job_id)
+                        _json_response(self, {"ok": True, "preview": plan})
+                    else:
+                        freed = cleanup_completed_job_cache(job_id, confirmed=body.get("confirmed"),
+                                                            preview_token=body.get("preview_token"))
+                        _json_response(self, {"ok": True, "freed_bytes": freed})
+                except (ValueError, OSError, subprocess.SubprocessError) as exc:
                     _json_response(self, {"error": str(exc)}, 400)
             elif re.fullmatch(r"/api/jobs/[0-9a-f-]+/open-output", path):
                 job_id = path.split("/")[3]
