@@ -96,7 +96,7 @@ Double-click `Start_Audiobook_Studio.bat` (or the Start Menu / Desktop shortcut 
 
 ## Narration engines
 
-Current source defaults new jobs to **Drama 3 Q3**, with a separately configured native runtime and Parakeet checking. Legacy **VibeVoice 1.5B** and **Chatterbox** jobs keep their saved backend. The source setup commands below provision the legacy environments; they are not a complete fresh-machine installer for Drama 3. Hardware fit, runtime configuration and human listening remain separate checks.
+Current source defaults new jobs to **Drama 3 Q3**, with a separately configured native runtime and Parakeet checking. Legacy **VibeVoice 1.5B** and **Chatterbox** jobs keep their saved backend. The source setup commands in the Install section provision the legacy environments; they are not a complete fresh-machine installer for Drama 3. Hardware fit, runtime configuration and human listening remain separate checks.
 
 The following VibeVoice and Chatterbox notes describe the legacy engines. VibeVoice uses whole passages, native timing, and gain-only loudness adjustment. Its checkpoints and quality receipts are separate from Chatterbox's segment cache. The CPU speech checker rejects major missing or extra wording; it cannot certify pronunciation, naturalness, or the absence of every audible artifact.
 
