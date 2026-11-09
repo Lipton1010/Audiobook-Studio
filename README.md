@@ -20,6 +20,12 @@ Local PDF to audiobook pipeline for legally purchased books, personal use only. 
 
 In 1.0.7, selecting a voice imports it immediately, new audiobooks appear at the top of the main window, and additional books queue automatically. Right-click a finished book for artwork, export, regeneration, and deletion options. Advanced options include a restore-defaults button. The historical VibeVoice CPU-checking workflow supports bounded render-ahead. Current Drama 3 generation uses separate rendering and Parakeet GPU-checking phases.
 
+## Optional Drama runtime prerelease
+
+[Download the Windows x64 / Ada runtime-only beta](https://github.com/Lipton1010/Audiobook-Studio/releases/tag/drama-runtime-4e6018f-win64-ada-beta.1). This separate, unsigned runtime ZIP contains **no model weights and is not the Storybird app installer**. It targets NVIDIA Ada GPUs (compute capability 8.9); review the release's compatibility limits, component licenses and SHA-256 before use.
+
+The updated application installer and its one-click optional model downloads are still being prepared. Model weights will download from their original pinned repositories after hardware and license review. This runtime prerelease does not change the app's license or existing narration jobs.
+
 ## What's here
 
 - `app/` — Audiobook Studio, a local web app wrapping the whole pipeline.
