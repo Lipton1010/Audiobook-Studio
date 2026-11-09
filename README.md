@@ -1,12 +1,24 @@
-# Audiobook Pipeline
+<p align="center"><img src="app/static/storybird-mark.svg" width="110" alt="Storybird mark"></p>
 
-[![Latest release](https://img.shields.io/github/v/release/Lipton1010/Audiobook-Studio?label=download&color=blue)](https://github.com/Lipton1010/Audiobook-Studio/releases/latest)
+# Storybird · Audiobook Studio
 
-Local PDF to audiobook pipeline for legally purchased books, personal use only. Storybird runs extraction and narration locally. New jobs use VibeVoice 1.5B, with Chatterbox available for existing jobs and as a selectable fallback.
+**Turn legally owned PDFs into locally generated, chaptered audiobooks, with review steps along the way.**
 
-**Current source: 1.0.7. Current private beta installers: 1.0.6.** The 1.0.7 source is locally tested; no 1.0.7 installer has been built. See [1.0.7 changes and verification limits](RELEASE_1_0_7.md). The public Releases page may contain an older version than the private beta handoff.
+[Requirements](#requirements) · [Source setup](#install) · [Run Storybird](#run) · [Narration engines](#narration-engines)
 
-In 1.0.7, selecting a voice imports it immediately, new audiobooks appear at the top of the main window, and additional books queue automatically. Right-click a finished book for artwork, export, regeneration, and deletion options. Advanced options include a restore-defaults button. Automatic performance overlaps the next passage's GPU generation with the current passage's CPU check while preserving quality gates and checkpoints.
+![Storybird workflow: import and extract a legally owned book, review flagged passages and narrate, then export a chaptered audiobook](docs/portfolio/workflow.svg)
+
+*Workflow illustration, not an application screenshot. No book pages, voice samples or generated narration are included.*
+
+- **Keep the work local.** Extract and narrate on your own machine.
+- **Review what needs interpretation.** Keep visual passages, write a spoken description or skip them explicitly.
+- **Keep chapters navigable.** Export M4B with chapter markers, or choose MP3 or WAV.
+
+Local PDF to audiobook pipeline for legally purchased books, personal use only. Storybird runs extraction and narration locally. The current source defaults new jobs to Drama 3 Q3. VibeVoice and Chatterbox remain legacy choices; saved jobs retain their recorded backend.
+
+**Current source version: 1.0.7. Latest documented private beta installers: 1.0.7. No public GitHub installer release is published.** The source includes later narration and review changes beyond the September beta build. See [1.0.7 beta verification and limits](RELEASE_1_0_7.md); that historical beta report does not certify the current source or a new public release.
+
+In 1.0.7, selecting a voice imports it immediately, new audiobooks appear at the top of the main window, and additional books queue automatically. Right-click a finished book for artwork, export, regeneration, and deletion options. Advanced options include a restore-defaults button. The historical VibeVoice CPU-checking workflow supports bounded render-ahead. Current Drama 3 generation uses separate rendering and Parakeet GPU-checking phases.
 
 ## What's here
 
@@ -41,11 +53,11 @@ You provide these; the installer sets up everything else, including Miniconda an
 
 ## Install
 
-**[Public release downloads](https://github.com/Lipton1010/Audiobook-Studio/releases/latest)** are separate from the private beta handoff. Check the version before installing. Installers are release assets, not committed source files. Development builds use `install\build_installer.bat` and must satisfy `RELEASE_CHECKLIST.md`.
+**No public installer is currently available on [GitHub Releases](https://github.com/Lipton1010/Audiobook-Studio/releases).** Private beta handoffs are separate from this source repository. Development builds use `install\\build_installer.bat` and must satisfy `RELEASE_CHECKLIST.md` before public release.
 
-The current private beta files are `Installer_AudiobookStudio_1.0.6.exe` for a new installation and `Patch_AudiobookStudio_1.0.6.exe` for an existing installation. Future handoffs use the same versioned naming pattern, without timestamp or hash suffixes. Superseded installers belong under `Old, do not use`. Build records identify source commits, sizes, and SHA-256 values; `RELEASE_CHECKLIST.md` determines release readiness. See [the beta handoff procedure](install/BETA_HANDOFF.md).
+The latest documented private beta files are `Installer_AudiobookStudio_1.0.7.exe` for a new installation and `Patch_AudiobookStudio_1.0.7.exe` for an existing installation. Future handoffs use the same versioned naming pattern, without timestamp or hash suffixes. Superseded installers belong under `Old, do not use`. Build records identify source commits, sizes, and SHA-256 values; `RELEASE_CHECKLIST.md` determines release readiness. See [the beta handoff procedure](install/BETA_HANDOFF.md).
 
-**Why the .exe is easiest.** One installer, no terminal. It installs a private Miniconda and ffmpeg, builds the app's Python environment, and pre-downloads the ~3 GB of TTS model weights so the first narration doesn't have to. The complete setup downloads several gigabytes and uses roughly 10 GB on disk, so have at least 15 GB free before starting. All large app-owned pieces are kept below the single Audiobook Studio installation folder instead of creating Miniconda and model-cache folders across your user profile. Double-click it, click through the wizard, and it's done — a shortcut is added to your Start Menu (and Desktop, if you check that box). Those shortcuts launch the app without showing a Command Prompt window. This installer is built from source with Inno Setup (see `install/AudiobookStudio.iss`) rather than distributed as a signed release, so Windows SmartScreen will probably warn that it's from an unknown publisher the first time. That's expected for an unsigned personal-project installer, not a sign anything is wrong. If you see a blue **"Windows protected your PC"** box, click **More info**, then **Run anyway**. If you were sent a SHA-256 alongside the file, you can confirm it first by running this in PowerShell:
+**Private beta installer background.** One installer, no terminal. It installs a private Miniconda and ffmpeg, builds the app's Python environment, and pre-downloads the ~3 GB of TTS model weights so the first narration doesn't have to. The complete setup downloads several gigabytes and uses roughly 10 GB on disk, so have at least 15 GB free before starting. All large app-owned pieces are kept below the single Audiobook Studio installation folder instead of creating Miniconda and model-cache folders across your user profile. Double-click it, click through the wizard, and it's done — a shortcut is added to your Start Menu (and Desktop, if you check that box). Those shortcuts launch the app without showing a Command Prompt window. This installer is built from source with Inno Setup (see `install/AudiobookStudio.iss`) rather than distributed as a signed release, so Windows SmartScreen will probably warn that it's from an unknown publisher the first time. That's expected for an unsigned personal-project installer, not a sign anything is wrong. If you see a blue **"Windows protected your PC"** box, click **More info**, then **Run anyway**. If you were sent a SHA-256 alongside the file, you can confirm it first by running this in PowerShell:
 
 ```
 Get-FileHash .\Setup_AudiobookStudio.exe -Algorithm SHA256
@@ -84,11 +96,13 @@ Double-click `Start_Audiobook_Studio.bat` (or the Start Menu / Desktop shortcut 
 
 ## Narration engines
 
-New jobs default to **VibeVoice 1.5B**. Select **Chatterbox** in the job dialog when needed; jobs saved without a backend retain their legacy Chatterbox behavior. VibeVoice uses whole passages, native timing, and gain-only loudness adjustment. Its checkpoints and quality receipts are separate from Chatterbox's segment cache. The CPU speech checker rejects major missing or extra wording; it cannot certify pronunciation, naturalness, or the absence of every audible artifact.
+Current source defaults new jobs to **Drama 3 Q3**, with a separately configured native runtime and Parakeet checking. Legacy **VibeVoice 1.5B** and **Chatterbox** jobs keep their saved backend. The source setup commands below provision the legacy environments; they are not a complete fresh-machine installer for Drama 3. Hardware fit, runtime configuration and human listening remain separate checks.
+
+The following VibeVoice and Chatterbox notes describe the legacy engines. VibeVoice uses whole passages, native timing, and gain-only loudness adjustment. Its checkpoints and quality receipts are separate from Chatterbox's segment cache. The CPU speech checker rejects major missing or extra wording; it cannot certify pronunciation, naturalness, or the absence of every audible artifact.
 
 To reuse an existing VibeVoice environment without modifying it, run `install/bootstrap_vibevoice.py --configure-existing` with `--python`, `--model-dir`, `--cache-dir`, `--quality-python`, and `--quality-model`. `--check-only` verifies the same supplied paths without writing configuration. See `app/config.example.json` for portable configuration keys. Fresh runtime installation and installer execution are separate checks from narration in a verified existing environment.
 
-Storybird pauses after extraction when it flags visual passages. Select **Review narration text** to see each passage, nearby prose and its original PDF page when available. Choose **Keep as spoken text**, **Replace with a spoken description**, or **Skip: surrounding prose conveys it**. Save each treatment, open **Inspect final narration text**, then select **Start narration**. Saved treatments can be revisited from the job's controls.
+Storybird pauses after extraction when it flags visual passages. Select **Review narration text** to see each passage, nearby prose and its original PDF page when available. Choose **Keep as spoken text**, **Replace with a spoken description**, or **Skip: surrounding prose conveys it**. Save each treatment, optionally open **Inspect final narration text**, then select **Start narration**. The full-text preview is optional; unresolved treatments still block narration. Saved treatments can be revisited from the job's controls.
 
 Descriptions are manual adaptations, not automatic interpretations. Preserve important counts, changes, warnings and discovery order. If the graphic is missing, Storybird says so; do not reconstruct details absent from the source. Prose-only jobs continue through the ordinary workflow. See [visual review behavior and verification](VISUAL_REVIEW.md) for cached-job handling and test coverage.
 
