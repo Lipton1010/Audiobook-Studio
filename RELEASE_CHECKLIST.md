@@ -4,7 +4,7 @@ Release only when the applicable gates below pass, with the owner-approved excep
 
 ## Source and privacy
 
-- [ ] The exact 1.1.2 candidate `git status --short --branch` is clean and synchronized with the intended remote.
+- [x] Installer source commit 49c9006 was clean; source and validation notes are synchronized with the intended public repository.
 - [x] Dependency-free regression tests pass: `python -m unittest discover -s tests -v`.
 - [x] Python and embedded JavaScript syntax checks pass.
 - [x] Current source and installer designs contain no live crash-report credential; reporting is local opt-in and disabled by default.
@@ -39,7 +39,7 @@ Release only when the applicable gates below pass, with the owner-approved excep
 
 ## Publish
 
-- [ ] Tag the exact validated commit.
-- [ ] Publish the exact validated installer and its SHA-256 as a GitHub Release asset.
-- [ ] Verify the README latest-release link and badge resolve to that release.
-- [ ] Keep release notes candid about Windows, NVIDIA/CUDA, disk usage, unsigned SmartScreen warnings, and separate application, component and model licensing. Drama portability remains experimental; do not claim the app twelve-layer configuration passed.
+- [x] Tag v1.1.2-beta.1 points to exact validated commit 49c9006.
+- [x] Published both exact installers and SHA256SUMS.txt. GitHub asset digests match local receipts.
+- [x] README release link and badge target the verified v1.1.2-beta.1 prerelease (not the stable latest API).
+- [x] Keep release notes candid about Windows, NVIDIA/CUDA, disk usage, unsigned SmartScreen warnings, and separate application, component and model licensing. Drama portability remains experimental; do not claim the app twelve-layer configuration passed.

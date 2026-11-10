@@ -4,17 +4,21 @@
 
 ![Storybird native Windows application, clean candidate workspace](docs/screenshots/storybird-candidate-workspace.png)
 
-*Actual native-app screenshot from the 1.1.0 candidate, captured in an isolated empty workspace. It contains no private books, voices or jobs. This is a development preview, not evidence that the public app installer has shipped.*
+*Actual native-app screenshot from the earlier 1.1.0 candidate, captured in an isolated empty workspace. It contains no private books, voices or jobs; the image is not a new screenshot of 1.1.2.*
 
 ## Release status
 
-**The new Storybird Windows app beta is still being validated. No new public app installer is available yet.** The upcoming beta is scoped to the tested RTX 4090/Ada hardware. Physical 16 GB GPU support remains unverified.
+[![Windows beta 1.1.2](https://img.shields.io/badge/Windows_beta-1.1.2-blue)](https://github.com/Lipton1010/Audiobook-Studio/releases/tag/v1.1.2-beta.1)
+
+[**Download Storybird 1.1.2 experimental Windows beta**](https://github.com/Lipton1010/Audiobook-Studio/releases/tag/v1.1.2-beta.1)
+
+Unsigned full installer, 1.1.0-only patch and SHA-256 checksums are available. Read the release notes before installing. The beta is scoped to tested RTX 4090/Ada hardware; physical 16 GB support and clean-PC WebView2 provisioning remain unverified. No model downloads automatically during core installation.
 
 [**Available now: optional Drama runtime-only prerelease**](https://github.com/Lipton1010/Audiobook-Studio/releases/tag/drama-runtime-4e6018f-win64-ada-beta.1)
 
 That separate unsigned Windows x64 ZIP contains **no model weights and is not the Storybird application installer**. It targets NVIDIA Ada compute capability 8.9. Review its component terms, compatibility limits and SHA-256 before use. Do not overwrite a working runtime or assume it supports another GPU architecture.
 
-The published source and earlier private 1.0.7 beta are distinct from the new 1.1.2 candidate described below. Historical [1.0.7 validation](RELEASE_1_0_7.md) does not certify the new installer. Application download links will be added only after exact-build validation and publication.
+The earlier private 1.0.7 beta is distinct from this release. Historical [1.0.7 validation](RELEASE_1_0_7.md) does not certify this installer; current coverage is recorded in the release notes and [checklist](RELEASE_CHECKLIST.md).
 
 ## The workflow
 
@@ -27,9 +31,9 @@ Storybird keeps resumable jobs and existing audio separate from text-review deci
 
 No purchased books, voice samples or generated audiobooks are distributed with the application.
 
-## Upcoming 1.1.2 core and optional packs
+## 1.1.2 core and optional packs
 
-These changes are in the release candidate, not a claim about older installers:
+These changes apply to 1.1.2, not older installers:
 
 - **Core-first installation:** private Miniforge-based Python runtime, without downloading any narrator model automatically.
 - **Optional narrator picker:** review the model source, terms, download size and local hardware check before downloading a supported pack. Existing jobs and narrator choices are not silently changed.
@@ -52,11 +56,11 @@ Drama's speech checker runs separately from generation. Voice/model licensing, c
 
 Application books, jobs and audio are stored locally. Optional downloads contact the displayed upstream providers. Crash reporting is disabled by default; any configured reporting endpoint is an explicit local choice. Microsoft WebView2 has its own diagnostic-data and automatic-update behavior, separate from Storybird's reporting settings.
 
-The owner selected **Apache-2.0 for original application code in the upcoming release**. Do not infer that this relicenses older snapshots, third-party dependencies or model weights. Each component and model keeps its own terms, including any noncommercial or conditional-use restrictions. Only use books, voices and media for which you have the necessary rights.
+This release uses **Apache-2.0 for original application code**. Do not infer that this relicenses older snapshots, third-party dependencies or model weights. Each component and model keeps its own terms, including any noncommercial or conditional-use restrictions. Only use books, voices and media for which you have the necessary rights.
 
 ## Development and validation
 
-The upcoming full installer and patch are built from a clean committed source snapshot using `install\build_installer.bat`. The build audits its manifest to exclude books, audio, voices, jobs and private configuration. The regression suite is `python -m unittest discover -s tests -v`; dependency-specific skips must be reported separately from passes.
+The released full installer and patch were built from a clean committed source snapshot using `install\build_installer.bat`. The build audits its manifest to exclude books, audio, voices, jobs and private configuration. The regression suite is `python -m unittest discover -s tests -v`; dependency-specific skips must be reported separately from passes.
 
 The beta patch accepts version **1.1.0 only** and refuses other or missing version markers before copying app files. For older versions, back up books, voices, jobs, audiobooks and configuration before considering the full installer. Older-version upgrades and their data preservation are **unverified**. A failed partial patch must be repaired with the full installer, not reapplied.
 
@@ -64,4 +68,4 @@ Clean-PC WebView2 installation remains **unverified** after Windows Sandbox bloc
 
 Fresh-install, native-window, upgrade/data-preservation and shutdown checks are tracked separately. An Alpha developer-machine run is not a clean-machine certification. See [the release checklist](RELEASE_CHECKLIST.md) for the repository's published gates; the candidate records the owner's narrower experimental-hardware scope separately until its source is published.
 
-Earlier setup documentation may refer to Miniconda, PyMuPDF or automatic narrator prefetch. Those describe historical builds, not the upcoming core-plus-optional-packs installer. Wait for the new release's verified assets and instructions rather than treating an old private installer as current.
+Earlier setup documentation may refer to Miniconda, PyMuPDF or automatic narrator prefetch. Those describe historical builds, not this core-plus-optional-packs installer. Use the linked release's verified assets and instructions rather than treating an old private installer as current.
