@@ -99,6 +99,7 @@ UninstallDisplayIcon={app}\app\icon.ico
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
+Name: "webview2"; Description: "I accept Microsoft WebView2 terms and allow installation if missing (shared runtime, automatic updates and diagnostics)"; GroupDescription: "Native desktop prerequisite - review the Microsoft terms in the notice:"; Flags: unchecked
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"
 
 [Files]
@@ -152,11 +153,19 @@ Filename: "{app}\runtime\miniconda3\pythonw.exe"; Parameters: """{app}\app\launc
     Flags: postinstall skipifsilent nowait; Check: SetupPySucceeded
 
 [Code]
+
 var
   CondaPythonPath: string;
   MiniforgeFailureLogPath: string;
   SetupPyOk: Boolean;
   AppProcessCheckError: Boolean;
+
+function WebViewConsentArgs(): string;
+begin
+  Result := '';
+  if WizardIsTaskSelected('webview2') then
+    Result := ' --accept-webview2-terms';
+end;
 
 function SetEnvironmentVariableW(lpName, lpValue: string): Boolean;
   external 'SetEnvironmentVariableW@kernel32.dll stdcall';
@@ -508,7 +517,7 @@ begin
   LogPath := ExpandConstant('{app}\install_log.txt');
   WarnPath := ExpandConstant('{app}\install_warnings.txt');
   Params := '/C ""' + CondaPythonPath + '" "' + ExpandConstant('{app}\setup.py') +
-            '" --yes --auto-install-ffmpeg --prefetch-weights --runtime-root "' +
+            '" --yes' + WebViewConsentArgs() + ' --auto-install-ffmpeg --prefetch-weights --runtime-root "' +
             ExpandConstant('{app}\runtime') + '" > "' + LogPath + '" 2>&1"';
 
   WizardForm.StatusLabel.Caption :=

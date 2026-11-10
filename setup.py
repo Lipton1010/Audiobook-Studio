@@ -426,6 +426,8 @@ def main():
                     help="optional narrator; default is core only, existing jobs are unchanged")
     ap.add_argument("--accept-model-terms", action="store_true",
                     help="confirm you reviewed the selected model terms and unvalidated hardware requirements")
+    ap.add_argument("--accept-webview2-terms", action="store_true",
+                    help="allow missing WebView2 installation after reviewing Microsoft terms, diagnostics and automatic updates")
     args = ap.parse_args()
 
     # This check precedes installs, downloads and runtime-directory creation.
@@ -475,6 +477,18 @@ def main():
     else:
         cb_ok = setup_chatterbox_env(conda, assume_yes=args.yes)
         all_ok = verify(conda) and base_ok and cb_ok
+    if base_ok:
+        step("Checking the native desktop WebView2 prerequisite")
+        command = [conda, "run", "-n", "base", "python", str(INSTALL / "bootstrap_webview2.py"),
+                   "--cache", str((args.runtime_root or REPO / "runtime") / "downloads")]
+        if args.accept_webview2_terms:
+            command.append("--accept-webview2-terms")
+        webview_ok = run(command).returncode == 0
+        if not webview_ok:
+            user_warn("Native desktop prerequisite missing or unusable. Review Microsoft WebView2 terms at "
+                      "https://developer.microsoft.com/en-us/microsoft-edge/webview2/ (x64 download), "
+                      "then rerun with --accept-webview2-terms or install it yourself. No browser fallback is provided.")
+        all_ok = all_ok and webview_ok
     if args.narrator == "chatterbox" and args.prefetch_weights and cb_ok:
         # Deliberately NOT part of all_ok: a failed pre-fetch means a slow first
         # narration, not a broken install, and prefetch_weights() already says
@@ -493,7 +507,7 @@ def main():
     hr()
     if all_ok:
         print("  Setup complete. Launch the app with:  Start_Audiobook_Studio.bat")
-        print("  It opens in its own window (falls back to your browser if that fails).")
+        print("  It opens in its own native window; WebView2 is required.")
         if USER_WARNINGS:
             print("\n  Things to know about this machine:")
             for w in USER_WARNINGS:

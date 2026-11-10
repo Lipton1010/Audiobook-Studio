@@ -46,7 +46,9 @@ class VibeVoiceInstallerTests(unittest.TestCase):
 
     def test_patch_updates_core_without_narrator_downloads_and_suppresses_launch_on_failure(self):
         self.assertIn('bootstrap_vibevoice.py', self.patch)
-        self.assertIn('--yes --narrator none --runtime-root', self.patch)
+        self.assertIn('--narrator none --runtime-root', self.patch)
+        self.assertIn('WebViewConsentArgs()', self.patch)
+        self.assertIn('Flags: unchecked', self.patch)
         self.assertNotIn('--install --conda', self.patch)
         self.assertNotIn('ignoreversion copying', self.patch)
         self.assertIn('requirements-base.txt', self.patch)

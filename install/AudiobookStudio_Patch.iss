@@ -30,6 +30,7 @@
 #define MyAppPublisher "Audiobook Studio"
 
 [Setup]
+InfoBeforeFile=runtime-provider-notice.txt
 ; Same GUID as the main installer on purpose: this is an update to that same
 ; product, not a separate app, and sharing it is what makes UsePreviousAppDir
 ; find the real install location.
@@ -60,7 +61,13 @@ ExtraDiskSpaceRequired=21474836480
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+[Tasks]
+Name: "webview2"; Description: "I accept Microsoft WebView2 terms and allow installation if missing (shared runtime, automatic updates and diagnostics)"; GroupDescription: "Native desktop prerequisite - review the Microsoft terms in the notice:"; Flags: unchecked
+
 [Files]
+Source: "..\app\webview_runtime.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\install\bootstrap_webview2.py"; DestDir: "{app}\install"; Flags: ignoreversion
+Source: "..\install\runtime-provider-notice.txt"; DestDir: "{app}\install"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\NOTICE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\setup.py"; DestDir: "{app}"; Flags: ignoreversion
@@ -139,9 +146,17 @@ Filename: "{app}\runtime\miniconda3\pythonw.exe"; Parameters: """{app}\app\launc
     Flags: postinstall skipifsilent nowait; Check: PatchSetupSucceeded
 
 [Code]
+
 var
   PatchSetupOk: Boolean;
   AppProcessCheckError: Boolean;
+
+function WebViewConsentArgs(): string;
+begin
+  Result := '';
+  if WizardIsTaskSelected('webview2') then
+    Result := ' --accept-webview2-terms';
+end;
 
 function PrivateBasePython(): string;
 begin
@@ -241,7 +256,7 @@ begin
   LogPath := ExpandConstant('{app}\install_log.txt');
   Params := '/C ""' + PrivateBasePython() + '" "' +
             ExpandConstant('{app}\setup.py') +
-            '" --yes --narrator none --runtime-root "' + ExpandConstant('{app}\runtime') +
+            '" --yes' + WebViewConsentArgs() + ' --narrator none --runtime-root "' + ExpandConstant('{app}\runtime') +
             '" >> "' + LogPath + '" 2>&1"';
   WizardForm.StatusLabel.Caption :=
     'Updating core PDF dependencies. No narrator weights are downloaded and saved narrator choices stay unchanged.';

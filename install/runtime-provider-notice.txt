@@ -7,3 +7,16 @@ https://github.com/conda-forge/miniforge/blob/26.9.4-2/LICENSE
 Individual package notices remain under the private runtime package directories.
 
 The core installation does not download voice or image-generation weights. Optional packs require their own hardware and terms review.
+
+Native window prerequisite: Microsoft Edge WebView2 Evergreen Runtime
+
+Existing usable runtimes are reused. If missing, the optional unchecked WebView2 task downloads a reviewed Microsoft-signed Windows x64 installer (about 215 MB), verifies its SHA-256, and installs it without elevation. The application will not launch without this prerequisite. Declining leaves WebView2 unchanged; you can install it yourself and rerun setup.
+
+Review Microsoft's license terms before selecting the WebView2 task. On the official page choose the x64 download to display the terms:
+https://developer.microsoft.com/en-us/microsoft-edge/webview2/#download-section
+
+WebView2 is proprietary Microsoft software, not covered by Storybird's Apache license. It is a shared component outside Storybird's private runtime folder, receives automatic Microsoft updates, and collects required and optional diagnostic data according to Microsoft settings and policies. A per-user installation may be replaced by a machine-wide copy when Microsoft's machine-wide updater already exists. Storybird does not remove the shared runtime during uninstall.
+https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/data-privacy
+https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution
+
+Unattended deployments must explicitly select /TASKS="webview2" only after accepting the terms. --yes alone is never WebView2 consent.

@@ -1,7 +1,7 @@
 """
 Storybird desktop launcher.
 
-Runs in the BASE conda env (same one as server.py: stdlib + fitz + requests,
+Runs in the BASE conda env (same one as server.py: stdlib + PDFium/pdfplumber/Pillow + requests,
 plus pywebview added by the installer). Starts server.py's HTTP server on a
 background thread, then opens a native desktop window pointed at it, so the
 app feels like a real program instead of "open your browser to localhost".
@@ -156,6 +156,20 @@ def _enable_webview_downloads(webview_module):
     webview_module.settings["ALLOW_DOWNLOADS"] = True
 
 
+from webview_runtime import runtime_version as _webview2_version
+
+
+def _require_webview2(webview_module):
+    if sys.platform != "win32":
+        return
+    try:
+        version = _webview2_version(webview_module)
+    except (OSError, AttributeError, TypeError) as exc:
+        raise RuntimeError("The Microsoft WebView2 Runtime could not be checked.") from exc
+    if not version:
+        raise RuntimeError("Microsoft Edge WebView2 Runtime is not installed or usable.")
+
+
 def _set_windows_app_id():
     """Keep the running window grouped with the Storybird shortcut."""
     if sys.platform != "win32":
@@ -198,6 +212,22 @@ def _open_native_window(webview_module, url):
 
 
 def main():
+    # WebView2 initialization can fail asynchronously inside pywebview without
+    # raising from start(). Check first, before opening the server or job queue.
+    try:
+        import webview
+        _require_webview2(webview)
+    except (ImportError, RuntimeError) as exc:
+        _show_error(
+            "Storybird desktop prerequisite is unavailable",
+            f"{exc}\n\n"
+            "Storybird needs pywebview and Microsoft Edge WebView2 to open its "
+            "desktop window. Run Storybird setup again if pywebview is missing. "
+            "Install or repair the WebView2 Evergreen Runtime from Microsoft:\n"
+            "https://developer.microsoft.com/microsoft-edge/webview2/\n\n"
+            "Then reopen Storybird. No narration jobs were started.\n\n"
+            f"Details: {LOG_PATH}")
+        return
     _hold_app_mutex()
     url = f"http://127.0.0.1:{CFG.port}"
 
@@ -231,18 +261,6 @@ def main():
                 f"{LOG_PATH}\n\n"
                 + detail.strip().splitlines()[-1][:300])
             return
-
-    try:
-        import webview
-    except ImportError as e:
-        _show_error(
-            "Storybird desktop window is unavailable",
-            "Storybird needs its pywebview desktop component, but it is not "
-            "installed in the Python environment used by this shortcut.\n\n"
-            "Run setup again, then reopen Storybird.\n\n"
-            f"Details were written to:\n{LOG_PATH}")
-        _log(f"[launcher] pywebview import failed: {e}")
-        return
 
     try:
         _open_native_window(webview, url)

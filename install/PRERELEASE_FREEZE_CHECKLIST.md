@@ -11,12 +11,11 @@ Build only from clean committed HEAD using install/build_installer.bat.
 Verify exact artifact manifests, hashes, preservation and native installed UI.
 No weights, user settings, books, voices, jobs or generated audio may be bundled.
 
-Repository RELEASE_CHECKLIST.md still requires clean-account/VM validation,
-physical 16 GB GPU testing and confirmation the old webhook is revoked.
-These have not been established for this candidate. Isolated Alpha tests and
-RTX 4090 smokes must not be described as satisfying those requirements.
-Public app publication remains held pending satisfaction or an explicit
-owner-approved change to the beta release scope. No gate is silently waived.
+Repository RELEASE_CHECKLIST.md still requires exact-build clean-account/VM validation. On 2026-11-10 the owner approved an
+experimental beta scoped to tested RTX 4090/Ada hardware; physical 16 GB
+support remains explicitly unverified. He also confirmed deleting the old
+Discord webhook. This is owner attestation, not an independent provider check.
+Public app publication remains held pending the exact-build gates.
 
 Hardware estimates and observed tests remain labeled. Drama runtime is Ada
 compute capability 8.9 only; other architectures are not certified. Existing

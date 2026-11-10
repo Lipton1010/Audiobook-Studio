@@ -9,7 +9,7 @@ the exact commit and installer artifact being published.
 - [x] Dependency-free regression tests pass: `python -m unittest discover -s tests -v`.
 - [x] Python and embedded JavaScript syntax checks pass.
 - [x] Current source and installer designs contain no live crash-report credential; reporting is local opt-in and disabled by default.
-- [ ] The formerly embedded Discord webhook has been revoked at the provider. Revocation is separate from source removal.
+- [x] Owner confirmed deleting the formerly embedded Discord webhook on 2026-11-10. Owner attestation; no independent credential request or test message was sent. Revocation is separate from source removal.
 - [x] The two former `ab_samples` excerpt files are absent from every rewritten Git ref.
 - [x] A recoverable pre-rewrite Git bundle exists outside the published history.
 - [x] No PDF, generated audio, voice sample, job data, local config, or private audition text is tracked.
@@ -32,7 +32,7 @@ the exact commit and installer artifact being published.
 - [ ] Import a real PDF through the UI and confirm the recommended start page.
 - [ ] Generate a short CUDA narration with the installed build and verify the final audio.
 - [ ] In the installed pywebview window, save and inspect both a beta-report ZIP and finished audio.
-- [ ] On a 16 GB NVIDIA GPU, force or naturally reach a recoverable batched OOM and confirm ordered bisection/resume succeeds.
+- [x] Owner-approved beta scope change (2026-11-10): experimental RTX 4090/Ada only. Physical 16 GB OOM/bisection testing remains NOT RUN; do not advertise 16 GB support. Restore this gate before expanding supported hardware.
 - [ ] Apply the patch to an actual 1.0.1 install and verify narration imports, audio downloads, and retained user data.
 - [ ] Observe dedicated and shared GPU memory through a complete installed-build narration; a developer-machine allocator cap test is not a physical small-card test.
 - [ ] Close the app during a synthetic narration and confirm no owned GPU worker survives and no unrelated process is terminated.
