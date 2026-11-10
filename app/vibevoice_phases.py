@@ -102,6 +102,8 @@ def _progress(job, plan, status, current=None):
 
 def _run_phase(job, config, phase):
     _cancel(job)
+    from model_hardware import require_generation_capacity
+    require_generation_capacity("parakeet" if phase == "check" else config.get("backend", "vibevoice"), job)
     workers = config.get("render_workers", 1) if phase == "render" else 1
     drama = config.get("backend") == "drama3"
     if drama and workers != 1:

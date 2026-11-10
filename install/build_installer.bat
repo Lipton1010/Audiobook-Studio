@@ -38,7 +38,7 @@ if /I "%BUILD_KIND%"=="full" (
     exit /b 1
 )
 
-set "STAGE=%TEMP%\audiobook_studio_build"
+set "STAGE=%TEMP%\audiobook_studio_build_%RANDOM%_%RANDOM%"
 set "OUTDIR=%CD%\Output"
 set "MANIFEST=%OUTDIR%\%OUTPUT_BASE%-manifest.txt"
 
@@ -76,7 +76,7 @@ if errorlevel 1 (
 echo Staging a clean copy of HEAD in %STAGE% ...
 for /f %%H in ('git rev-parse HEAD') do set "BUILD_COMMIT=%%H"
 if not defined BUILD_COMMIT (echo ERROR: cannot identify HEAD. & exit /b 1)
-if exist "%STAGE%" rmdir /s /q "%STAGE%"
+if exist "%STAGE%" (echo ERROR: unique stage already exists; preserving it. & exit /b 1)
 mkdir "%STAGE%" || exit /b 1
 git archive --format=tar %BUILD_COMMIT% | tar -x -C "%STAGE%"
 if errorlevel 1 (echo ERROR: git archive failed. & exit /b 1)

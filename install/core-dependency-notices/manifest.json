@@ -1,0 +1,202 @@
+[
+  {
+    "name": "bottle",
+    "version": "0.13.4",
+    "license": "MIT",
+    "files": [
+      {
+        "path": "bottle/bottle-0.13.4.dist-info/licenses/LICENSE",
+        "sha256": "af150257b1f7cce92b6207854f2e8f90ea9ae52d7cac758d13a47bd12e2a2443"
+      }
+    ]
+  },
+  {
+    "name": "certifi",
+    "version": "2026.10.23",
+    "license": "MPL-2.0",
+    "files": [
+      {
+        "path": "certifi/certifi-2026.10.23.dist-info/licenses/LICENSE",
+        "sha256": "e93716da6b9c0d5a4a1df60fe695b370f0695603d21f6f83f053e42cfc10caf7"
+      }
+    ]
+  },
+  {
+    "name": "cffi",
+    "version": "2.1.1",
+    "license": "MIT-0",
+    "files": [
+      {
+        "path": "cffi/cffi-2.1.1.dist-info/licenses/LICENSE",
+        "sha256": "5ba24ddc57067f9249add644c3afc41a5d6dc37e23433ef759d95df370b0af63"
+      }
+    ]
+  },
+  {
+    "name": "charset-normalizer",
+    "version": "3.5.2",
+    "license": "MIT",
+    "files": [
+      {
+        "path": "charset-normalizer/charset_normalizer-3.5.2.dist-info/licenses/LICENSE",
+        "sha256": "18577485d3704f1a479ded8e573c0976cfed315fd2fd17983fa988da4c2f70d1"
+      }
+    ]
+  },
+  {
+    "name": "clr_loader",
+    "version": "0.3.1",
+    "license": "review metadata/classifiers",
+    "files": [
+      {
+        "path": "clr_loader/clr_loader-0.3.1.dist-info/licenses/LICENSE",
+        "sha256": "dd6bdca10cdc3b24c6b0b6cef5fd611b7feb6917f127833283ddcdb310d3b453"
+      }
+    ]
+  },
+  {
+    "name": "cryptography",
+    "version": "50.0.2",
+    "license": "Apache-2.0 OR BSD-3-Clause",
+    "files": [
+      {
+        "path": "cryptography/cryptography-50.0.2.dist-info/licenses/LICENSE",
+        "sha256": "3e0c7c091a948b82533ba98fd7cbb40432d6f1a9acbf85f5922d2f99a93ae6bb"
+      },
+      {
+        "path": "cryptography/cryptography-50.0.2.dist-info/licenses/LICENSE.APACHE",
+        "sha256": "aac73b3148f6d1d7111dbca32099f68d26c644c6813ae1e4f05f6579aa2663fe"
+      },
+      {
+        "path": "cryptography/cryptography-50.0.2.dist-info/licenses/LICENSE.BSD",
+        "sha256": "602c4c7482de6479dd2e9793cda275e5e63d773dacd1eca689232ab7008fb4fb"
+      }
+    ]
+  },
+  {
+    "name": "idna",
+    "version": "3.20",
+    "license": "BSD-3-Clause",
+    "files": [
+      {
+        "path": "idna/idna-3.20.dist-info/licenses/LICENSE.md",
+        "sha256": "1a9a4f0e3d479a27240ddd59a9137a66ab4a0f9dfdc8ca6188cc0bfd85187f04"
+      }
+    ]
+  },
+  {
+    "name": "pdfminer.six",
+    "version": "20260107",
+    "license": "MIT",
+    "files": [
+      {
+        "path": "pdfminer.six/pdfminer_six-20260107.dist-info/licenses/LICENSE",
+        "sha256": "f01e5d699a33766b5caf4a5099f2856aba4f3f75ea1df05dc0572b34b4bea8f2"
+      }
+    ]
+  },
+  {
+    "name": "pdfplumber",
+    "version": "0.11.10",
+    "license": "review metadata/classifiers",
+    "files": [
+      {
+        "path": "pdfplumber/pdfplumber-0.11.10.dist-info/licenses/LICENSE.txt",
+        "sha256": "0d48994da4d1321e395b5e64a724ed4dec63fb96b88ac5b88fc014771e690821"
+      }
+    ]
+  },
+  {
+    "name": "pillow",
+    "version": "13.0.0",
+    "license": "MIT-CMU",
+    "files": [
+      {
+        "path": "pillow/pillow-13.0.0.dist-info/licenses/LICENSE",
+        "sha256": "988ffe8ab3480b0f4e9a0ab2702bffd73d9fb6b47198043fb3ba101a62fac236"
+      }
+    ]
+  },
+  {
+    "name": "proxy_tools",
+    "version": "0.1.0",
+    "license": "MIT",
+    "files": []
+  },
+  {
+    "name": "pycparser",
+    "version": "3.12",
+    "license": "BSD-3-Clause",
+    "files": [
+      {
+        "path": "pycparser/pycparser-3.12.dist-info/licenses/LICENSE",
+        "sha256": "0a9e78156ae8b96caf1b4f11ac2df424b83de29736f9e757630548a6272fdf90"
+      }
+    ]
+  },
+  {
+    "name": "pypdfium2",
+    "version": "5.15.2",
+    "license": "BSD-3-Clause, Apache-2.0, dependency licenses",
+    "files": []
+  },
+  {
+    "name": "pythonnet",
+    "version": "3.2.1",
+    "license": "MIT",
+    "files": [
+      {
+        "path": "pythonnet/pythonnet-3.2.1.dist-info/licenses/LICENSE",
+        "sha256": "e1dc3a6ff017a6800dc27a7220500f512b95fbcd996d38ebbbff85c693245369"
+      }
+    ]
+  },
+  {
+    "name": "pywebview",
+    "version": "5.4",
+    "license": "BSD 3-Clause License\n\nCopyright (c) 2014-2017, Roman Sirokov\nAll rights reserved.\n\nRedistribution and use in source and binary forms, with or without\nmodification, are permitted provided that the following conditions are met:\n\n* Redistributions of source code must retain the above copyright notice, this\n  list of conditions and the following disclaimer.\n\n* Redistributions in binary form must reproduce the above copyright notice,\n  this list of conditions and the following disclaimer in the documentation\n  and/or other materials provided with the distribution.\n\n* Neither the name of the copyright holder nor the names of its\n  contributors may be used to endorse or promote products derived from\n  this software without specific prior written permission.\n\nTHIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\"\nAND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\nIMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE\nDISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE\nFOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL\nDAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR\nSERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER\nCAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,\nOR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\nOF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n",
+    "files": [
+      {
+        "path": "pywebview/pywebview-5.4.dist-info/LICENSE",
+        "sha256": "4a988dd3598832cd3653de20dc33cb677d0fb53ab5551c879ca31280ae653675"
+      }
+    ]
+  },
+  {
+    "name": "requests",
+    "version": "2.33.1",
+    "license": "Apache-2.0",
+    "files": [
+      {
+        "path": "requests/requests-2.33.1.dist-info/licenses/LICENSE",
+        "sha256": "09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b"
+      },
+      {
+        "path": "requests/requests-2.33.1.dist-info/licenses/NOTICE",
+        "sha256": "f5110972dedad2b4e9d314518daf3b7d72d6e02e499acd802181de6f74571dcc"
+      }
+    ]
+  },
+  {
+    "name": "typing_extensions",
+    "version": "4.16.0",
+    "license": "PSF-2.0",
+    "files": [
+      {
+        "path": "typing_extensions/typing_extensions-4.16.0.dist-info/licenses/LICENSE",
+        "sha256": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf"
+      }
+    ]
+  },
+  {
+    "name": "urllib3",
+    "version": "2.8.0",
+    "license": "MIT",
+    "files": [
+      {
+        "path": "urllib3/urllib3-2.8.0.dist-info/licenses/LICENSE.txt",
+        "sha256": "130e3a64d5fdd5d096a752694634a7d9df284469de86e5732100268041e3d686"
+      }
+    ]
+  }
+]

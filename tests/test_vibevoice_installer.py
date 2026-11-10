@@ -11,9 +11,10 @@ class VibeVoiceInstallerTests(unittest.TestCase):
         cls.full = (root / 'install/AudiobookStudio.iss').read_text(encoding='utf-8')
         cls.patch = (root / 'install/AudiobookStudio_Patch.iss').read_text(encoding='utf-8')
 
-    def test_setup_defaults_to_vibevoice_bootstrap(self):
-        self.assertIn('choices=("vibevoice", "chatterbox")', self.setup)
-        self.assertIn('default="vibevoice"', self.setup)
+    def test_setup_defaults_to_core_with_optional_vibevoice(self):
+        self.assertIn('choices=tuple(MODEL_CHOICES)', self.setup)
+        self.assertIn('default="none"', self.setup)
+        self.assertIn("--accept-model-terms", self.setup)
         self.assertIn('bootstrap_vibevoice.py", "--install"', self.setup)
 
     def test_full_installer_runs_setup_with_private_runtime(self):
@@ -43,9 +44,13 @@ class VibeVoiceInstallerTests(unittest.TestCase):
             self.assertNotRegex(script, r'(?<!Suppressible)MsgBox\(')
             self.assertIn('SuppressibleMsgBox', script)
 
-    def test_patch_provisions_vibevoice_and_suppresses_launch_on_failure(self):
+    def test_patch_updates_core_without_narrator_downloads_and_suppresses_launch_on_failure(self):
         self.assertIn('bootstrap_vibevoice.py', self.patch)
-        self.assertIn('--install --conda', self.patch)
+        self.assertIn('--yes --narrator none --runtime-root', self.patch)
+        self.assertNotIn('--install --conda', self.patch)
+        self.assertNotIn('ignoreversion copying', self.patch)
+        self.assertIn('requirements-base.txt', self.patch)
+        self.assertIn('pdf_backend.py', self.patch)
         self.assertIn('PrivateBasePython', self.patch)
         self.assertIn('PrivateConda', self.patch)
         self.assertIn('LogPath := ExpandConstant', self.patch)

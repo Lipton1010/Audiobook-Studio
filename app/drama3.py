@@ -23,6 +23,7 @@ except ImportError:
 
 SOURCE_REVISION = "4e6018fd018499d75e5070ba4eb38db4e48b9b59"
 EXE_SHA256 = "7438ba2c37bc42da4b9875ecde6dae3d6eb71148a1148ee0eee9daa86f8436db"
+PORTABLE_EXE_SHA256 = "9bcd7ffc5887d99e8db62ecc47d9b6eee8858358b42a389332a5cb380fafc12b"
 MODEL_SHA256 = "b946a8c9806deba559590b98e37ffc9e0957109263e111513734fa93284db16b"
 MODEL_REVISION = "bcb065b8b0b98535a5c002b39bcceeb8bf065513"
 SAMPLE_RATE = 44100
@@ -61,8 +62,8 @@ def assets(config, verify=False):
         entry = file_stamp(path)
         if verify:
             entry["sha256"] = sha256_file(path)
-            expected = (EXE_SHA256, MODEL_SHA256)[index] if index < 2 else None
-            if expected and entry["sha256"] != expected:
+            expected = {EXE_SHA256, PORTABLE_EXE_SHA256} if index == 0 else ({MODEL_SHA256} if index == 1 else None)
+            if expected and entry["sha256"] not in expected:
                 raise ValueError(f"Drama 3 requires the tested native Q3 asset: {path.name}")
         result.append(entry)
     return result

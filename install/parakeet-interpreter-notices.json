@@ -1,0 +1,193 @@
+[
+  {
+    "name": "bzip2",
+    "version": "1.0.8",
+    "license": "bzip2-1.0.6",
+    "url": "https://conda.anaconda.org/conda-forge/win-64/bzip2-1.0.8-h0ad9c76_10.conda",
+    "sha256": "04767466ee9227c9c57ab2c6503e0149177d34111c7418d2f420297acb1eb229",
+    "notice_files": [
+      "LICENSE"
+    ]
+  },
+  {
+    "name": "ca-certificates",
+    "version": "2026.10.23",
+    "license": "ISC",
+    "url": "https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.10.23-h4c7d964_0.conda",
+    "sha256": "f1d280d2618de987204102090e83733089c092dc2dd45686fd3dcbe809034f6a",
+    "notice_files": [
+      "LICENSE"
+    ]
+  },
+  {
+    "name": "libexpat",
+    "version": "2.9.0",
+    "license": "MIT",
+    "url": "https://conda.anaconda.org/conda-forge/win-64/libexpat-2.9.0-hac47afa_0.conda",
+    "sha256": "d4a8e5aac8999a90cd71aa6f9f5c40d8594ed2b89cd7f898f997767ecc6cd52d",
+    "notice_files": [
+      "COPYING"
+    ]
+  },
+  {
+    "name": "libffi",
+    "version": "3.7.0",
+    "license": "MIT",
+    "url": "https://conda.anaconda.org/conda-forge/win-64/libffi-3.7.0-h3d046cb_1.conda",
+    "sha256": "613e8077c5cca5df7fe84ade7d5050301bee3c6c4c450ffe61d34a349ab4f11c",
+    "notice_files": [
+      "LICENSE"
+    ]
+  },
+  {
+    "name": "liblzma",
+    "version": "5.8.3",
+    "license": "0BSD",
+    "url": "https://conda.anaconda.org/conda-forge/win-64/liblzma-5.8.3-hfd05255_1.conda",
+    "sha256": "d36c4a1e1f80fd08e18a407e03622ff2f34dfdd022da6488ad19603dea19e6d5",
+    "notice_files": [
+      "COPYING",
+      "COPYING.0BSD"
+    ]
+  },
+  {
+    "name": "libsqlite",
+    "version": "3.54.1",
+    "license": "blessing",
+    "url": "https://conda.anaconda.org/conda-forge/win-64/libsqlite-3.54.1-hf5d6505_101.conda",
+    "sha256": "1f7ddd7d9383cf6ab6ee5a3a84e07a679a8539edc0ddd05fe476ff08142bf742",
+    "notice_files": []
+  },
+  {
+    "name": "libzlib",
+    "version": "1.3.2",
+    "license": "Zlib",
+    "url": "https://conda.anaconda.org/conda-forge/win-64/libzlib-1.3.2-hfd05255_3.conda",
+    "sha256": "0629c2cc0404d3bb29d6baa7b4ba62da80797015e86de050db81ea5a07050527",
+    "notice_files": [
+      "LICENSE"
+    ]
+  },
+  {
+    "name": "openssl",
+    "version": "3.6.5",
+    "license": "Apache-2.0",
+    "url": "https://conda.anaconda.org/conda-forge/win-64/openssl-3.6.5-hf411b9b_0.conda",
+    "sha256": "bc44625e0c6d83f3e02b5f6adc01e0e3ca7001d3d94e24959591a57f5a011b9a",
+    "notice_files": [
+      "LICENSE.txt"
+    ]
+  },
+  {
+    "name": "packaging",
+    "version": "26.3",
+    "license": "Apache-2.0",
+    "url": "https://conda.anaconda.org/conda-forge/noarch/packaging-26.3-pyhc364b38_0.conda",
+    "sha256": "c432626b16768b8dab228bfb706f7060c2d462a21c516d240f68f2f902b5a044",
+    "notice_files": [
+      "LICENSE"
+    ]
+  },
+  {
+    "name": "pip",
+    "version": "26.2.2",
+    "license": "MIT",
+    "url": "https://conda.anaconda.org/conda-forge/noarch/pip-26.2.2-pyh8b19718_2.conda",
+    "sha256": "27543e132e4f80285e638a08d6d90de631227186ba96901e1e069fa587d9e62f",
+    "notice_files": [
+      "LICENSE.txt"
+    ]
+  },
+  {
+    "name": "python",
+    "version": "3.11.15",
+    "license": "Python-2.0",
+    "url": "https://conda.anaconda.org/conda-forge/win-64/python-3.11.15-hb12b558_2_cpython.conda",
+    "sha256": "716076778c1bfcd3bb5f0a6922c76b0799bd1b3c98c0a070fee21c6fe67324aa",
+    "notice_files": [
+      "LICENSE"
+    ]
+  },
+  {
+    "name": "setuptools",
+    "version": "84.2.1",
+    "license": "MIT",
+    "url": "https://conda.anaconda.org/conda-forge/noarch/setuptools-84.2.1-pyhe730653_0.conda",
+    "sha256": "17add609d1a31c874e39a03935072be59bcafb06d42383eceabea746d12e6025",
+    "notice_files": [
+      "LICENSE"
+    ]
+  },
+  {
+    "name": "tk",
+    "version": "8.6.13",
+    "license": "TCL",
+    "url": "https://conda.anaconda.org/conda-forge/win-64/tk-8.6.13-h967ab96_4.conda",
+    "sha256": "f19618a3a82cc483dacf1c70a30367ee7b0c7e71b90f1f80e14feff44fbd3688",
+    "notice_files": [
+      "tcl8.6.13\\license.terms"
+    ]
+  },
+  {
+    "name": "tzdata",
+    "version": "2026e",
+    "license": "LicenseRef-Public-Domain",
+    "url": "https://conda.anaconda.org/conda-forge/noarch/tzdata-2026e-h5d301ff_0.conda",
+    "sha256": "2b7ca858879f183ce2dcc65b300f48a0133d5430550f35b23d80d405a0788dbf",
+    "notice_files": [
+      "LICENSE"
+    ]
+  },
+  {
+    "name": "ucrt",
+    "version": "10.0.26100.0",
+    "license": "LicenseRef-MicrosoftWindowsSDK10",
+    "url": "https://conda.anaconda.org/conda-forge/win-64/ucrt-10.0.26100.0-h57928b3_0.conda",
+    "sha256": "3005729dce6f3d3f5ec91dfc49fc75a0095f9cd23bab49efb899657297ac91a5",
+    "notice_files": [
+      "LICENSE.txt"
+    ]
+  },
+  {
+    "name": "vc",
+    "version": "14.5",
+    "license": "BSD-3-Clause",
+    "url": "https://conda.anaconda.org/conda-forge/win-64/vc-14.5-ha367084_42.conda",
+    "sha256": "0598ca1ce913618cff9bd90391bcf75cd9edb22057c85dd6784dd762b7a888e2",
+    "notice_files": []
+  },
+  {
+    "name": "vc14_runtime",
+    "version": "14.51.36247",
+    "license": "LicenseRef-MicrosoftVisualCpp2015-2022Runtime",
+    "url": "https://conda.anaconda.org/conda-forge/win-64/vc14_runtime-14.51.36247-habf1de7_42.conda",
+    "sha256": "8dfbfd68ebf53249d11e528cbb80ad5a2460b0c5b4636eed82ee0d3950827a3d",
+    "notice_files": [
+      "LICENSE.DOCX",
+      "LICENSE.RTF",
+      "LICENSE.TXT"
+    ]
+  },
+  {
+    "name": "vcomp14",
+    "version": "14.51.36247",
+    "license": "LicenseRef-MicrosoftVisualCpp2015-2022Runtime",
+    "url": "https://conda.anaconda.org/conda-forge/win-64/vcomp14-14.51.36247-habf1de7_42.conda",
+    "sha256": "b3558ed059d6272ef919ea959311af73c35b5fe43c789cd43f71b398671fec49",
+    "notice_files": [
+      "LICENSE.DOCX",
+      "LICENSE.RTF",
+      "LICENSE.TXT"
+    ]
+  },
+  {
+    "name": "wheel",
+    "version": "0.48.0",
+    "license": "MIT",
+    "url": "https://conda.anaconda.org/conda-forge/noarch/wheel-0.48.0-pyhd8ed1ab_0.conda",
+    "sha256": "ba64b29b6d418024cb565081a1799262cb2780d2534ff4c14f76aa858c4286cd",
+    "notice_files": [
+      "LICENSE.txt"
+    ]
+  }
+]

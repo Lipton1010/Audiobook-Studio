@@ -1,6 +1,6 @@
 """
 Storybird server. Runs in the base miniconda env (stdlib +
-PyMuPDF + requests only, no Flask, nothing installed anywhere).
+PDFium + pdfplumber/Pillow + requests, no Flask, nothing installed anywhere).
 
     python server.py            -> http://localhost:8765
 
@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-import fitz  # PyMuPDF
+import pdf_backend as fitz  # Internal PDF interface; retained alias for test seams.
 import requests
 
 import pipeline_text as pt
@@ -889,12 +889,7 @@ def _validated_cover_png(raw):
     else:
         raise ValueError("Choose a PNG, JPEG, or WebP image.")
     try:
-        with fitz.open(stream=raw, filetype=image_type) as doc:
-            page = doc.load_page(0)
-            if page.rect.width * page.rect.height > MAX_COVER_PIXELS:
-                raise ValueError("Choose an image under 24 megapixels.")
-            pixmap = page.get_pixmap(alpha=False)
-            return pixmap.tobytes("png")
+        return fitz.cover_png(raw, max_bytes=MAX_COVER_BYTES, max_pixels=MAX_COVER_PIXELS)
     except ValueError:
         raise
     except Exception as exc:
@@ -1359,6 +1354,9 @@ def _discard_legacy_worker_pid_file(job_dir):
 
 
 def _spawn_worker(job_dir, logf, extra_args, backend="chatterbox"):
+    if "--assemble" not in extra_args:
+        from model_hardware import require_generation_capacity
+        require_generation_capacity(backend, job_dir)
     python, worker = (CHATTERBOX_PY, "narrate_worker.py")
     if backend == "vibevoice":
         python, worker = VIBEVOICE_PY, "vibevoice_worker.py"
@@ -2620,7 +2618,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         try:
-            if path == "/api/ffmpeg/install":
+            if path == "/api/models/setup":
+                from model_setup_ui import authorized, launch
+                if not authorized(self.headers, self.client_address[0], self.server.server_address[1]):
+                    _json_response(self, {"error": "Open model setup from this computer's Storybird window."}, 403)
+                    return
+                started = launch(APP_DIR.parent)
+                _json_response(self, {"started": started, "message": "Model setup opened. Review hardware, download sizes and terms before installing. Existing jobs and narrator choices stay unchanged."})
+            elif path == "/api/ffmpeg/install":
                 started = start_ffmpeg_install()
                 st = ffmpeg_status()
                 st["started"] = started

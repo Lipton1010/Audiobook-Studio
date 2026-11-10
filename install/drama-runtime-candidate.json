@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "status": "candidate-not-published",
+  "source_revision": "4e6018fd018499d75e5070ba4eb38db4e48b9b59",
+  "executable": {
+    "name": "audiocpp_cli.exe",
+    "sha256": "9bcd7ffc5887d99e8db62ecc47d9b6eee8858358b42a389332a5cb380fafc12b"
+  },
+  "cuda_dlls": [
+    {
+      "name": "cudart64_12.dll",
+      "bytes": 583680,
+      "sha256": "760c38928bbe5759f7b31ed6692599eb7ec83cedd5702e84c2b72028a89837e1",
+      "source_url": "https://conda.anaconda.org/nvidia/win-64/cuda-cudart-12.9.79-0.conda",
+      "source_archive_sha256": "4649dc2c2949dac4840fe4fd67707410e4d690191f5c874ace25ae4f06434534"
+    },
+    {
+      "name": "cublas64_12.dll",
+      "bytes": 102518272,
+      "sha256": "52ce5ba0ec5327d39be6021f0f9362d2ed4d64d7206f9b5afc06398d827b8e82",
+      "source_url": "https://conda.anaconda.org/nvidia/win-64/libcublas-12.9.2.10-heb274f4_0.conda",
+      "source_archive_sha256": "9c50b08f449aa68bc684642ec18aad48e9f22200978da32629f5edceaca7b854"
+    },
+    {
+      "name": "cublasLt64_12.dll",
+      "bytes": 668673536,
+      "sha256": "71705a7cf0923f4ab034d0d2620bbfc989ff669ac3d79f868b7a7c597ca559c5",
+      "source_url": "https://conda.anaconda.org/nvidia/win-64/libcublas-12.9.2.10-heb274f4_0.conda",
+      "source_archive_sha256": "9c50b08f449aa68bc684642ec18aad48e9f22200978da32629f5edceaca7b854"
+    }
+  ],
+  "notices": {
+    "audio.cpp-LICENSE.txt": "7e125adced85b7f84c04371179d15d51fbd702cefd060a37043fe38d6eb1722e",
+    "NVIDIA-cudart-LICENSE.txt": "213f2f1cc4bfecd53eb1579edc89d6e3a024ddd2f77413b69b40e2bf3c114d84",
+    "NVIDIA-cuBLAS-LICENSE.txt": "72c22161fc1ebf242443d45158a7dd382d68597b00eeb7a7f539be5c6114be33",
+    "external__cJSON__LICENSE.txt": "ca7ea72cf3674a70394b1f377e85dc402a2dfae37385f14da6ccba4296849f9b",
+    "external__cpp-httplib__LICENSE.txt": "bb546eae5924d8ee842e0e567e6d533c5824bdebccf605f99a5b3429034e6697",
+    "external__ggml__LICENSE.txt": "bcd8ec749126d45cb06737d0690295d73df4b6e7e194205bcf91190368f27285",
+    "external__libyaml__License.txt": "6c2ea37323f6191cb829c3ae906a878f5c5fafa03b53d4155c0ce8053a5c8944",
+    "external__sentencepiece__LICENSE.txt": "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5",
+    "external__utf8proc__LICENSE.md.txt": "767edbcafb23016d7f203aaf2cbdef5690ad58bcede52ee241427dcb816cd644",
+    "external__sentencepiece__third_party__absl__LICENSE.txt": "7871ddb0d7635157a82afc21720d795660a024c59652b7a5b1ed812355320fdc",
+    "external__sentencepiece__third_party__darts_clone__LICENSE.txt": "ed8437dc7358a40ef10afd3635ac1cd43c88fbaaaf6cd27c414f8ada5d68f447",
+    "external__sentencepiece__third_party__esaxx__LICENSE.txt": "c32d2b3a60ed4b71616dd544f0865e171631ce26d3a3855c43428e61cbf89d67",
+    "external__sentencepiece__third_party__protobuf-lite__LICENSE.txt": "f4df8b2457697851385d9ebb93267832c1dfa24e0e61881952f6b0c452663dc9",
+    "NVIDIA-CUDA-CRT-LICENSE.txt": "72c22161fc1ebf242443d45158a7dd382d68597b00eeb7a7f539be5c6114be33"
+  },
+  "system_prerequisites": {
+    "microsoft_vc_runtime": "Install official supported x64 Visual C++ redistributable separately; do not copy Alpha system DLLs.",
+    "driver": "Compatible NVIDIA driver; tested 621.14 on RTX 4090. Driver DLLs must not be bundled.",
+    "architecture": "Windows x64, baseline CPU, CUDA capability 8.9 only"
+  },
+  "observed_dynamic_closure": "Synthetic TTS only: cudart, cuBLAS, cuBLASLt; no NVRTC observed. Other workloads still require validation.",
+  "distribution_gates": [
+    "Preserve upstream dependency licenses, including third-party ggml/codec code compiled into executable.",
+    "Apply CUDA distribution requirements; a notice alone is not full compliance.",
+    "Test the minimal directory with system prerequisites only; no developer CUDA PATH.",
+    "Publish the reviewed pack separately and update new-install bindings without changing existing jobs."
+  ],
+  "static_link_components": [
+    "audio.cpp engine",
+    "ggml CPU/CUDA",
+    "SentencePiece and bundled third-party code",
+    "cJSON",
+    "libyaml",
+    "CUDA cudadevrt and cudart_static"
+  ]
+}

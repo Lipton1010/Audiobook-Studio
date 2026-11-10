@@ -57,7 +57,8 @@ class WorkerOwnershipTests(unittest.TestCase):
     def test_spawn_failure_stops_worker_if_job_assignment_fails(self):
         proc = mock.Mock()
         proc.poll.return_value = None
-        with mock.patch.object(server.subprocess, "Popen", return_value=proc), \
+        with mock.patch("model_hardware.require_generation_capacity"), \
+             mock.patch.object(server.subprocess, "Popen", return_value=proc), \
              mock.patch.object(
                  server, "_assign_worker_to_job", side_effect=OSError("cannot assign")
              ):

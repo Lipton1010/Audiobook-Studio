@@ -1,0 +1,6 @@
+# Preserve reviewed upstream notices byte-for-byte, including their whitespace.
+install/core-dependency-notices/** -text
+install/drama-runtime-notices/** -text
+install/parakeet-runtime-notices/** -text
+install/pdf-backend-notices/** -text
+LICENSE -text

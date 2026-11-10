@@ -77,6 +77,7 @@
       <button type="button" data-screen="voices" onclick="showScreen('voices')"><span class="nav-icon" aria-hidden="true">♬</span>Narrator voices</button>
     </nav>
     <div class="side-bottom">
+      <button type="button" id="model-setup-button" onclick="openModelSetup()">Download narrator models</button><p class="help" id="model-setup-status" role="status"></p>
       <div class="storage"><strong>Local library</strong><span>Books and finished audiobooks stay on this computer.</span></div>
       <div class="theme-switch" aria-label="Color theme"><button type="button" data-theme-choice="light" aria-pressed="true" onclick="setTheme('light')">Light</button><button type="button" data-theme-choice="dark" aria-pressed="false" onclick="setTheme('dark')">Dark</button></div>
     </div>
@@ -241,6 +242,18 @@
 </dialog>
 
 <script>
+async function openModelSetup() {
+  const status = document.getElementById('model-setup-status');
+  const button = document.getElementById('model-setup-button');
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/models/setup', {method: 'POST', headers: {'X-Storybird-Action': 'model-setup'}});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Could not open model setup.');
+    status.textContent = result.started ? result.message : 'Model setup is already open. Check its window.';
+  } catch (error) { status.textContent = error.message; }
+  finally { button.disabled = false; }
+}
 const dlg = document.getElementById('dlg');
 let dlgBook = null;
 let library = [];

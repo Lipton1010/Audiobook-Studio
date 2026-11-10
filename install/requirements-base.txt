@@ -1,3 +1,20 @@
-pymupdf==1.28.0
+pypdfium2==5.15.2
+pdfplumber==0.11.10
+pdfminer.six==20260107
+Pillow==13.0.0
+charset-normalizer==3.5.2
+cryptography==50.0.2
+cffi==2.1.1
+pycparser==3.12
 requests==2.33.1
 pywebview==5.4
+# Transitive core dependencies resolved and tested on Windows/Python 3.13,
+# 2026-11-09. Keep these aligned with requirements-base.lock.txt.
+bottle==0.13.4
+certifi==2026.10.23
+clr_loader==0.3.1
+idna==3.20
+proxy_tools==0.1.0
+pythonnet==3.2.1
+typing_extensions==4.16.0
+urllib3==2.8.0

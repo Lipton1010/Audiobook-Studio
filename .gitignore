@@ -94,3 +94,11 @@ HANDOFF_*.md
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+
+# Isolated PDF migration comparison environment (never packaged).
+.pdf-research/
+# Local release investigations are not part of the public application source.
+/install/DRAMA3_PROVISIONING_FOLLOWUP.md
+/install/DRAMA_RUNTIME_VALIDATION.md
+/install/PARAKEET_RUNTIME_VALIDATION.md
+/install/PDF_BACKEND_INVESTIGATION.md

@@ -16,8 +16,8 @@
 ; What this does, in order:
 ;   1. PrepareToInstall (before any file is copied): looks for the app's own
 ;      private conda base python; if absent, downloads and silently installs
-;      Miniconda under {app}\runtime with Inno's built-in downloader (current user only, no admin:
-;      /InstallationType=JustMe /RegisterPython=0 /S /D=path). This has to be
+;      Miniforge under {app}\runtime with Inno's built-in downloader (current user only, no admin:
+;      /InstallationType=JustMe /RegisterPython=0 /AddToPath=0 /NoRegistry=1 /NoShortcuts=1 /S /D=path). This has to be
 ;      Pascal Script, not install\bootstrap_conda.py, because on a truly clean
 ;      machine there is no Python yet to run that script with. If it fails,
 ;      setup ABORTS here with a readable message instead of installing a
@@ -43,14 +43,15 @@
 ;     only) and is commonly shared with other things on a user's machine, so
 ;     installing or upgrading it is not this installer's business.
 ;   - Reuse a machine-wide Python. The one-click install owns a private
-;     Miniconda under {app}\runtime so its 20 GB runtime footprint stays together.
+;     Miniforge under {app}\runtime so its 20 GB runtime footprint stays together.
 
-#define MyAppName "Audiobook Studio"
+#define MyAppName "Storybird"
 #define MyAppDirName "AudiobookStudio"
-#define MyAppVersion "1.0.7"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "Audiobook Studio"
 
 [Setup]
+InfoBeforeFile=runtime-provider-notice.txt
 ; Real GUID (generated once for this project) so Windows recognizes upgrades
 ; of this same app rather than treating every rebuild as a new install.
 ; Regenerate only if you deliberately want a rebuild to be seen as unrelated.
@@ -59,9 +60,9 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppMutex=AudiobookStudio_1E05_4C9D_9B5D_204F12CD7183
-; Per-user install, no admin required -- matches the "JustMe" Miniconda
+; Per-user install, no admin required -- matches the "JustMe" Miniforge
 ; install and keeps this usable on a locked-down work laptop.
-; Miniconda's Windows installer rejects or misbehaves with some destinations
+; Miniforge's Windows installer rejects or misbehaves with some destinations
 ; containing spaces. Keep the physical folder space-free while retaining the
 ; normal spaced product name everywhere the user sees it.
 DefaultDirName={userpf}\{#MyAppDirName}
@@ -72,7 +73,7 @@ DefaultDirName={userpf}\{#MyAppDirName}
 UsePreviousAppDir=no
 DefaultGroupName={#MyAppName}
 PrivilegesRequired=lowest
-; The embedded source is tiny, but Miniconda, the conda environment, pip cache,
+; The embedded source is tiny, but Miniforge, the conda environment, pip cache,
 ; torch, the isolated VibeVoice and quality environments, caches, and model
 ; weights need substantial headroom. The legacy fresh install measured 16.4 GB,
 ; so reserve 20 GiB for the current VibeVoice runtime.
@@ -115,9 +116,10 @@ Source: "..\install\check_running_app.ps1"; Flags: dontcopy
 ; it would have packaged every purchased book under source_pdfs\ and samples\
 ; plus the voice clip that CLAUDE.md says must never be distributed.
 Source: "..\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; \
-    Excludes: "*.pdf,*.wav,*.mp3,*.flac,*.ogg,*.m4a,*.m4b,*.aac,*.jpg,*.jpeg,*.pyc,__pycache__,.git,.claude,\tests\*,\app\jobs\*,\app\voices\*,\app\config.json,\app\*.log,\audiobooks\*,\ab_samples\*,\source_pdfs\*,\samples\Voice_Sample\*,\tools\*,\Output\*,\install\*.exe,\install_log.txt,\install_warnings.txt,\launcher_log.txt,\AUDIT_HANDOFF.md,\AUDIT_TRIAGE_HANDOFF.md"
+    Excludes: "*.pdf,*.wav,*.mp3,*.flac,*.ogg,*.m4a,*.m4b,*.aac,*.jpg,*.jpeg,*.pyc,__pycache__,.git,.claude,.pdf-research,\tests\*,\app\jobs\*,\app\voices\*,\app\config.json,\app\*.log,\audiobooks\*,\ab_samples\*,\source_pdfs\*,\samples\Voice_Sample\*,\tools\*,\Output\*,\install\*.exe,\install_log.txt,\model_setup.log,\install_warnings.txt,\launcher_log.txt,\AUDIT_HANDOFF.md,\AUDIT_TRIAGE_HANDOFF.md,\CLAUDE.md,\AGENTS.md,\handoff.md,\PROJECT_STATE.md,\install\*VALIDATION.md,\install\PDF_BACKEND_INVESTIGATION.md,\install\PRERELEASE_FREEZE_CHECKLIST.md,\install\BETA_HANDOFF.md"
 
 [Icons]
+Name: "{group}\Storybird optional narrators"; Filename: "{app}\runtime\miniconda3\pythonw.exe"; Parameters: """{app}\install\model_setup.py"""; WorkingDir: "{app}"
 ; pythonw.exe keeps the normal installed launch completely console-free.
 ; launcher.py redirects detached stdout/stderr to launcher_log.txt, and still
 ; uses MessageBoxW for a failure the user needs to see.
@@ -152,7 +154,7 @@ Filename: "{app}\runtime\miniconda3\pythonw.exe"; Parameters: """{app}\app\launc
 [Code]
 var
   CondaPythonPath: string;
-  MinicondaFailureLogPath: string;
+  MiniforgeFailureLogPath: string;
   SetupPyOk: Boolean;
   AppProcessCheckError: Boolean;
 
@@ -161,37 +163,37 @@ function SetEnvironmentVariableW(lpName, lpValue: string): Boolean;
 
 const
   // PINNED, and kept in sync with install/bootstrap_conda.py's MINICONDA_FILE
-  // and MINICONDA_SHA256. Miniconda3-latest is a moving alias (as of 2026-07-08
+  // and MINICONDA_SHA256. Miniforge3-latest is a moving alias (as of 2026-07-08
   // it is byte-identical to the py314 build), so an unpinned install would give
   // a friend a different base Python from the 3.13 one everything was verified
   // on, and a moving alias has no stable hash to verify against. Passing the
   // SHA-256 as DownloadTemporaryFile's 3rd argument makes Inno verify it and
   // raise on mismatch, so a corrupted or swapped 125 MB executable is never
-  // run. To bump, update both files from https://repo.anaconda.com/miniconda/
-  MinicondaFile = 'Miniconda3-py313_26.5.3-1-Windows-x86_64.exe';
-  MinicondaUrl = 'https://repo.anaconda.com/miniconda/Miniconda3-py313_26.5.3-1-Windows-x86_64.exe';
-  MinicondaSha256 = 'c229a161e9fad48fd7d2c701da363e6a307b233eba379cd967bc26aa2cb3fa68';
+  // run. To bump, update both files from https://github.com/conda-forge/miniforge/releases/download/26.9.4-2/
+  MiniforgeFile = 'Miniforge3-Windows-x86_64.exe';
+  MiniforgeUrl = 'https://github.com/conda-forge/miniforge/releases/download/26.9.4-2/Miniforge3-Windows-x86_64.exe';
+  MiniforgeSha256 = '9d83983669bc5d3b5dd4c631454bf953c3caf4ac78b9c9ada9971e5b021d83c3';
 
 procedure SetManagedRuntimeEnvironment();
 var
   RuntimeRoot: string;
   CacheRoot: string;
-  MinicondaRoot: string;
+  MiniforgeRoot: string;
 begin
-  // Do not call this before Miniconda's own installer has finished. The
+  // Do not call this before Miniforge's own installer has finished. The
   // installer invokes `conda constructor` internally; CONDA_NO_PLUGINS=true
   // removes that command and makes the pinned installer abort with code 2.
   // These settings are for Audiobook Studio's later conda/setup processes.
   RuntimeRoot := ExpandConstant('{app}\runtime');
   CacheRoot := RuntimeRoot + '\cache';
-  MinicondaRoot := RuntimeRoot + '\miniconda3';
+  MiniforgeRoot := RuntimeRoot + '\miniconda3';
   SetEnvironmentVariableW('HF_HOME', CacheRoot + '\huggingface');
   SetEnvironmentVariableW('TORCH_HOME', CacheRoot + '\torch');
   SetEnvironmentVariableW('PIP_CACHE_DIR', CacheRoot + '\pip');
   SetEnvironmentVariableW('XDG_CACHE_HOME', CacheRoot);
   SetEnvironmentVariableW('XDG_CONFIG_HOME', RuntimeRoot + '\config');
-  SetEnvironmentVariableW('CONDA_ENVS_PATH', MinicondaRoot + '\envs');
-  SetEnvironmentVariableW('CONDA_PKGS_DIRS', MinicondaRoot + '\pkgs');
+  SetEnvironmentVariableW('CONDA_ENVS_PATH', MiniforgeRoot + '\envs');
+  SetEnvironmentVariableW('CONDA_PKGS_DIRS', MiniforgeRoot + '\pkgs');
   SetEnvironmentVariableW('CONDA_REGISTER_ENVS', 'false');
   SetEnvironmentVariableW('CONDA_NO_PLUGINS', 'true');
   SetEnvironmentVariableW('CONDA_SOLVER', 'classic');
@@ -249,36 +251,36 @@ begin
     Result := '';
 end;
 
-function OnMinicondaDownloadProgress(const Url, FileName: String; const Progress, ProgressMax: Int64): Boolean;
+function OnMiniforgeDownloadProgress(const Url, FileName: String; const Progress, ProgressMax: Int64): Boolean;
 begin
   if ProgressMax > 0 then
     WizardForm.PreparingLabel.Caption :=
-      Format('Downloading Miniconda... %d MB of %d MB', [Progress div 1048576, ProgressMax div 1048576])
+      Format('Downloading Miniforge... %d MB of %d MB', [Progress div 1048576, ProgressMax div 1048576])
   else
     WizardForm.PreparingLabel.Caption :=
-      Format('Downloading Miniconda... %d MB', [Progress div 1048576]);
+      Format('Downloading Miniforge... %d MB', [Progress div 1048576]);
   Result := True;
 end;
 
-procedure AppendMinicondaInstallerLog(const S: String);
+procedure AppendMiniforgeInstallerLog(const S: String);
 var
   Lines: TArrayOfString;
 begin
   SetArrayLength(Lines, 1);
   Lines[0] := S;
-  if not SaveStringsToUTF8FileWithoutBOM(MinicondaFailureLogPath, Lines, True) then
-    Log('Could not append to Miniconda diagnostic log: ' + MinicondaFailureLogPath);
+  if not SaveStringsToUTF8FileWithoutBOM(MiniforgeFailureLogPath, Lines, True) then
+    Log('Could not append to Miniforge diagnostic log: ' + MiniforgeFailureLogPath);
 end;
 
-procedure OnMinicondaInstallerOutput(const S: String; const Error, FirstLine: Boolean);
+procedure OnMiniforgeInstallerOutput(const S: String; const Error, FirstLine: Boolean);
 begin
   if Error then
-    AppendMinicondaInstallerLog('[output capture error] ' + S)
+    AppendMiniforgeInstallerLog('[output capture error] ' + S)
   else
-    AppendMinicondaInstallerLog(S);
+    AppendMiniforgeInstallerLog(S);
 end;
 
-// Downloads and silently runs the official Miniconda installer using Inno's
+// Downloads and silently runs the official Miniforge installer using Inno's
 // built-in downloader (no Python needed). Same silent flags as
 // install/bootstrap_conda.py, kept in sync deliberately.
 //
@@ -289,7 +291,7 @@ end;
 // script passed a destination path as the 4th argument and treated the result
 // as a Boolean, which is a hard compile error (type mismatch) -- the installer
 // could never have been built at all.
-function InstallMinicondaViaInno(): Boolean;
+function InstallMiniforgeViaInno(): Boolean;
 var
   InstallerPath: string;
   InstallDir: string;
@@ -298,55 +300,55 @@ var
   ResultCode: Integer;
 begin
   Result := False;
-  InstallerPath := ExpandConstant('{tmp}\') + MinicondaFile;
+  InstallerPath := ExpandConstant('{tmp}\') + MiniforgeFile;
   InstallDir := ExpandConstant('{app}\runtime\miniconda3');
-  Params := '/InstallationType=JustMe /RegisterPython=0 /S /D=' + InstallDir;
-  MinicondaFailureLogPath := ExpandConstant('{userpf}\AudiobookStudio_Miniconda_Install.log');
-  DeleteFile(MinicondaFailureLogPath);
-  AppendMinicondaInstallerLog('Audiobook Studio Miniconda child-process log');
-  AppendMinicondaInstallerLog('Executable: ' + InstallerPath);
-  AppendMinicondaInstallerLog('Resolved application directory: ' + ExpandConstant('{app}'));
-  AppendMinicondaInstallerLog('Working directory: ' + ExpandConstant('{userpf}'));
-  AppendMinicondaInstallerLog('Arguments: ' + Params);
+  Params := '/InstallationType=JustMe /RegisterPython=0 /AddToPath=0 /NoRegistry=1 /NoShortcuts=1 /S /D=' + InstallDir;
+  MiniforgeFailureLogPath := ExpandConstant('{userpf}\AudiobookStudio_Miniforge_Install.log');
+  DeleteFile(MiniforgeFailureLogPath);
+  AppendMiniforgeInstallerLog('Audiobook Studio Miniforge child-process log');
+  AppendMiniforgeInstallerLog('Executable: ' + InstallerPath);
+  AppendMiniforgeInstallerLog('Resolved application directory: ' + ExpandConstant('{app}'));
+  AppendMiniforgeInstallerLog('Working directory: ' + ExpandConstant('{userpf}'));
+  AppendMiniforgeInstallerLog('Arguments: ' + Params);
 
   // This function is called only when the private python.exe was not found.
-  // Miniconda refuses to install into any non-empty target, so remove an
+  // Miniforge refuses to install into any non-empty target, so remove an
   // incomplete app-owned target left by an interrupted or rolled-back attempt.
   // A complete private runtime is never removed here, and user data lives
   // outside runtime\miniconda3.
   if FileExists(InstallDir + '\python.exe') then
   begin
-    AppendMinicondaInstallerLog('A complete private Miniconda appeared before installation; reusing it.');
+    AppendMiniforgeInstallerLog('A complete private Miniforge appeared before installation; reusing it.');
     Result := True;
     exit;
   end;
   if DirExists(InstallDir) then
   begin
-    AppendMinicondaInstallerLog('Removing incomplete private Miniconda target before retry: ' + InstallDir);
+    AppendMiniforgeInstallerLog('Removing incomplete private Miniforge target before retry: ' + InstallDir);
     if not DelTree(InstallDir, True, True, True) then
     begin
-      AppendMinicondaInstallerLog('Could not remove the incomplete private Miniconda target.');
-      SuppressibleMsgBox('Setup found an incomplete private Miniconda installation but could not remove it:' + #13#10#13#10 +
+      AppendMiniforgeInstallerLog('Could not remove the incomplete private Miniforge target.');
+      SuppressibleMsgBox('Setup found an incomplete private Miniforge installation but could not remove it:' + #13#10#13#10 +
              InstallDir + #13#10#13#10 +
              'Close programs using that folder and run Setup again.' + #13#10#13#10 +
-             'Diagnostic log:' + #13#10 + MinicondaFailureLogPath,
+             'Diagnostic log:' + #13#10 + MiniforgeFailureLogPath,
              mbError, MB_OK, IDOK);
       exit;
     end;
     if DirExists(InstallDir) then
     begin
-      AppendMinicondaInstallerLog('The incomplete private Miniconda target still exists after cleanup.');
-      SuppressibleMsgBox('Setup could not completely remove an earlier partial Miniconda installation:' + #13#10#13#10 +
+      AppendMiniforgeInstallerLog('The incomplete private Miniforge target still exists after cleanup.');
+      SuppressibleMsgBox('Setup could not completely remove an earlier partial Miniforge installation:' + #13#10#13#10 +
              InstallDir + #13#10#13#10 +
-             'Diagnostic log:' + #13#10 + MinicondaFailureLogPath,
+             'Diagnostic log:' + #13#10 + MiniforgeFailureLogPath,
              mbError, MB_OK, IDOK);
       exit;
     end;
-    AppendMinicondaInstallerLog('Incomplete private Miniconda target removed successfully.');
+    AppendMiniforgeInstallerLog('Incomplete private Miniforge target removed successfully.');
   end;
 
   // PrepareToInstall runs before [Files], so {app}\runtime does not exist yet.
-  // Create the parent explicitly rather than relying on Miniconda's NSIS
+  // Create the parent explicitly rather than relying on Miniforge's NSIS
   // wrapper to create multiple missing levels from its /D argument.
   if not ForceDirectories(ExpandConstant('{app}\runtime')) then
   begin
@@ -355,21 +357,21 @@ begin
     exit;
   end;
 
-  WizardForm.PreparingLabel.Caption := 'Downloading Miniconda (first-time setup)...';
+  WizardForm.PreparingLabel.Caption := 'Downloading Miniforge (first-time setup)...';
   try
     // BaseName is written under {tmp}; that is what InstallerPath points at.
     // The 3rd argument is a required SHA-256: Inno checks it and raises if the
     // download does not match, so the except branch below covers both a failed
     // download and a corrupted or substituted one.
-    DownloadTemporaryFile(MinicondaUrl, MinicondaFile, MinicondaSha256, @OnMinicondaDownloadProgress);
+    DownloadTemporaryFile(MiniforgeUrl, MiniforgeFile, MiniforgeSha256, @OnMiniforgeDownloadProgress);
   except
     // NOTE: no continuation line may start with '#'. ISPP treats a line whose
     // first non-blank character is '#' as a preprocessor directive, so a wrapped
     // '#13#10' at the start of a line aborts the compile with 'Unknown
     // preprocessor directive'. Keep the newline constants mid-line.
-    SuppressibleMsgBox('Could not download Miniconda:' + #13#10#13#10 + GetExceptionMessage + #13#10#13#10 +
+    SuppressibleMsgBox('Could not download Miniforge:' + #13#10#13#10 + GetExceptionMessage + #13#10#13#10 +
            'Check your internet connection and run this installer again. ' +
-           'If the message mentions a hash or checksum, the pinned Miniconda build ' +
+           'If the message mentions a hash or checksum, the pinned Miniforge build ' +
            'has been replaced upstream and this installer needs rebuilding.',
            mbError, MB_OK, IDOK);
     exit;
@@ -377,12 +379,12 @@ begin
 
   if not FileExists(InstallerPath) then
   begin
-    SuppressibleMsgBox('Miniconda downloaded but the installer file was not found at' + #13#10 +
+    SuppressibleMsgBox('Miniforge downloaded but the installer file was not found at' + #13#10 +
            InstallerPath, mbError, MB_OK, IDOK);
     exit;
   end;
 
-  WizardForm.PreparingLabel.Caption := 'Installing Miniconda (this can take a few minutes)...';
+  WizardForm.PreparingLabel.Caption := 'Installing Miniforge (this can take a few minutes)...';
   // /D must be LAST and must not be quoted, per Anaconda's own silent-install
   // docs. Do not add arguments after it.
   // Empty WorkingDir made Inno use the downloaded executable's private {tmp}
@@ -395,28 +397,28 @@ begin
   try
     if not ExecAndLogOutput(InstallerPath, Params,
         ExpandConstant('{userpf}'), SW_SHOWNORMAL, ewWaitUntilTerminated,
-        ResultCode, @OnMinicondaInstallerOutput) then
+        ResultCode, @OnMiniforgeInstallerOutput) then
     begin
-      AppendMinicondaInstallerLog('Failed to launch: ' + SysErrorMessage(ResultCode));
-      SuppressibleMsgBox('The Miniconda installer failed to launch.' + #13#10#13#10 +
-             'Diagnostic log:' + #13#10 + MinicondaFailureLogPath,
+      AppendMiniforgeInstallerLog('Failed to launch: ' + SysErrorMessage(ResultCode));
+      SuppressibleMsgBox('The Miniforge installer failed to launch.' + #13#10#13#10 +
+             'Diagnostic log:' + #13#10 + MiniforgeFailureLogPath,
              mbError, MB_OK, IDOK);
       exit;
     end;
   except
-    AppendMinicondaInstallerLog('Output-capture exception: ' + GetExceptionMessage);
-    SuppressibleMsgBox('The Miniconda installer could not be launched with output capture:' + #13#10#13#10 +
+    AppendMiniforgeInstallerLog('Output-capture exception: ' + GetExceptionMessage);
+    SuppressibleMsgBox('The Miniforge installer could not be launched with output capture:' + #13#10#13#10 +
            GetExceptionMessage + #13#10#13#10 + 'Diagnostic log:' + #13#10 +
-           MinicondaFailureLogPath, mbError, MB_OK, IDOK);
+           MiniforgeFailureLogPath, mbError, MB_OK, IDOK);
     exit;
   end;
-  AppendMinicondaInstallerLog('Exit code: ' + IntToStr(ResultCode));
+  AppendMiniforgeInstallerLog('Exit code: ' + IntToStr(ResultCode));
 
   if ResultCode <> 0 then
   begin
-    SuppressibleMsgBox('The Miniconda installer exited with error code ' + IntToStr(ResultCode) +
+    SuppressibleMsgBox('The Miniforge installer exited with error code ' + IntToStr(ResultCode) +
            '.' + #13#10#13#10 + 'Target folder:' + #13#10 + InstallDir + #13#10#13#10 +
-           'Diagnostic log:' + #13#10 + MinicondaFailureLogPath,
+           'Diagnostic log:' + #13#10 + MiniforgeFailureLogPath,
            mbError, MB_OK, IDOK);
     exit;
   end;
@@ -427,8 +429,8 @@ begin
   InstallLogPath := ExpandConstant('{app}\miniconda_install_log.txt');
   if FileExists(InstallLogPath) then
     DeleteFile(InstallLogPath);
-  if not RenameFile(MinicondaFailureLogPath, InstallLogPath) then
-    Log('Could not move Miniconda diagnostic log into the application folder.');
+  if not RenameFile(MiniforgeFailureLogPath, InstallLogPath) then
+    Log('Could not move Miniforge diagnostic log into the application folder.');
   Result := True;
 end;
 
@@ -455,11 +457,11 @@ begin
   CondaPythonPath := FindPrivateCondaPython();
   if CondaPythonPath = '' then
   begin
-    if not InstallMinicondaViaInno() then
+    if not InstallMiniforgeViaInno() then
     begin
-      Result := 'Audiobook Studio''s private Miniconda runtime could not be installed. ' +
+      Result := 'Audiobook Studio''s private Miniforge runtime could not be installed. ' +
                 'Setup stopped before copying the app files.' + #13#10#13#10 +
-                'Do not install Miniconda manually: this installer deliberately uses ' +
+                'Do not install Miniforge manually: this installer deliberately uses ' +
                 'its own isolated copy. Send the error-code screenshot to whoever gave ' +
                 'you this installer.';
       exit;
@@ -468,7 +470,7 @@ begin
     CondaPythonPath := FindPrivateCondaPython();
     if CondaPythonPath = '' then
     begin
-      Result := 'Miniconda reported a successful install but python.exe is not at the ' +
+      Result := 'Miniforge reported a successful install but python.exe is not at the ' +
                 'expected private runtime location:' + #13#10 +
                 ExpandConstant('{app}\runtime\miniconda3\python.exe') + #13#10#13#10 +
                 'Run this installer again. If it repeats, send install_log.txt to ' +
@@ -477,7 +479,7 @@ begin
     end;
   end;
 
-  // Miniconda is now complete. Its internal constructor command is no longer
+  // Miniforge is now complete. Its internal constructor command is no longer
   // needed, so subsequent setup.py and conda children can use the isolated,
   // plugin-free managed environment.
   SetManagedRuntimeEnvironment();
@@ -581,7 +583,7 @@ begin
     WizardForm.FinishedLabel.Caption :=
       'Audiobook Studio is installed.' + #13#10#13#10 +
       'Start it from the Start Menu (or the desktop shortcut). The first launch ' +
-      'takes a minute while the voice model loads.' + #13#10#13#10 +
+      'does not download a voice model. Optional narrator setup requires a hardware and terms review.' + #13#10#13#10 +
       'If anything misbehaves, the full install log is at ' +
       ExpandConstant('{app}\install_log.txt') + '. Send that file along when ' +
       'reporting a problem.'

@@ -1,0 +1,20 @@
+Storybird
+Copyright 2026 Storybird contributors.
+
+Original application code is licensed under Apache License 2.0 (LICENSE).
+Third-party components, model weights and optional runtimes retain their own
+terms. This license does not grant rights to books, voices, input media,
+generated content or any third-party material.
+
+Core PDF handling uses PDFium/pypdfium2, pdfplumber, pdfminer.six and Pillow.
+See install/pdf-backend-notices and install/core-dependency-notices for the
+preserved component notices. PyMuPDF is not a core dependency in this release.
+The private Miniforge runtime and its packages have separate licenses.
+
+Optional Drama runtime code is Apache-2.0 with separately licensed CUDA DLLs
+and other components; see install/drama-runtime-notices. Drama model weights
+remain subject to Fish Audio Community License terms. Parakeet weights retain
+CC-BY-4.0 and their attribution; see install/parakeet-pack.json and the retained
+upstream README. VibeVoice, Whisper, Chatterbox, Ollama/OCR and FFmpeg retain
+their upstream terms. Nothing here overrides model restrictions, vendor terms,
+voice consent requirements, copyright, or codec-patent obligations.

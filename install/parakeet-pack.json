@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "repo": "nvidia/parakeet-tdt-0.6b-v3",
+  "revision": "541d1f99c6b0c3cd0b11a95167540bb8edefd82b",
+  "license": "CC-BY-4.0",
+  "license_url": "https://creativecommons.org/licenses/by/4.0/legalcode.en",
+  "attribution": "NVIDIA Parakeet TDT 0.6B v3; original model, no weight modification.",
+  "python": "3.11 x64 validated runtime candidate",
+  "files": [
+    {
+      "name": "README.md",
+      "url": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/README.md",
+      "bytes": 42888,
+      "sha256": "7a4306a43f395e3a716e77f1d81c03db18a0a355d7b566bb1d6307213ba0302b"
+    },
+    {
+      "name": "config.json",
+      "url": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/config.json",
+      "bytes": 1153,
+      "sha256": "e747b85e1bdfd300c8b8ac63bac8dd5221f8fe9bc275b48d06c735fcd6971b6e"
+    },
+    {
+      "name": "generation_config.json",
+      "url": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/generation_config.json",
+      "bytes": 289,
+      "sha256": "b141de6ec6d7f982ece13f98f604e3fe1807ea9c0e839185d0ab7064604209d0"
+    },
+    {
+      "name": "model.safetensors",
+      "url": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/model.safetensors",
+      "bytes": 2508311120,
+      "sha256": "3a2026366188c8c68598edbbff92f8d11590a08e0ae2e6775544e7b07d6a5e11"
+    },
+    {
+      "name": "processor_config.json",
+      "url": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/processor_config.json",
+      "bytes": 392,
+      "sha256": "8346a93a3b987fa1dec57a78f045cd0817d21786589a5a096b41a57a446fd1d7"
+    },
+    {
+      "name": "tokenizer.json",
+      "url": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/tokenizer.json",
+      "bytes": 1159960,
+      "sha256": "bd321b096832a3f270bd3b2a88823957920f1a5c5ada71114a26ea729d0cbe91"
+    },
+    {
+      "name": "tokenizer_config.json",
+      "url": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/tokenizer_config.json",
+      "bytes": 290,
+      "sha256": "0b2fe0037599ee335f0b972fa682bf0ece74e4ccfec755cb7daa3405d3d3e874"
+    }
+  ]
+}

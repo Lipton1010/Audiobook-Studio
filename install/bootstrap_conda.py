@@ -1,14 +1,14 @@
 """
-Silent Miniconda bootstrap for machines that don't have conda yet.
+Silent Miniforge bootstrap for machines that don't have conda yet.
 
-Only runs the official Miniconda Windows installer with its documented
+Only runs the official Miniforge Windows installer with its documented
 silent-install flags:
 
     /InstallationType=JustMe   (no admin required, current user only)
     /RegisterPython=0          (does not hijack the system 'python' command)
     /S                         (silent, no UI, no prompts)
     /D=<path>                  (install location; must be the LAST argument
-                                and must not be quoted, per Miniconda's own
+                                and must not be quoted, per Miniforge's own
                                 installer docs)
 
 This does not create any conda environments and does not install ffmpeg or
@@ -29,7 +29,7 @@ from pathlib import Path
 
 # PINNED, not "latest", for two reasons.
 #
-# 1. Reproducibility. Miniconda3-latest-Windows-x86_64.exe is a moving alias:
+# 1. Reproducibility. Miniforge3-latest-Windows-x86_64.exe is a moving alias:
 #    on 2026-07-08 it became byte-identical to the py314 build (same SHA-256,
 #    124.7 MB). So an unpinned install gives a friend whatever base Python
 #    Anaconda shipped that week, while this machine keeps the 3.13 base that
@@ -43,12 +43,12 @@ from pathlib import Path
 #    cannot be checked at all.
 #
 # To bump: take the name and SHA-256 from the table at
-# https://repo.anaconda.com/miniconda/ and update BOTH constants, and the
+# https://github.com/conda-forge/miniforge/releases/tag/26.9.4-2 and update BOTH constants, and the
 # matching pair in install/AudiobookStudio.iss.
-MINICONDA_FILE = "Miniconda3-py313_26.5.3-1-Windows-x86_64.exe"
-MINICONDA_URL = "https://repo.anaconda.com/miniconda/" + MINICONDA_FILE
-MINICONDA_SHA256 = "c229a161e9fad48fd7d2c701da363e6a307b233eba379cd967bc26aa2cb3fa68"
-DEFAULT_INSTALL_DIR = str(Path.home() / "miniconda3")
+MINICONDA_FILE = "Miniforge3-Windows-x86_64.exe"
+MINICONDA_URL = "https://github.com/conda-forge/miniforge/releases/download/26.9.4-2/" + MINICONDA_FILE
+MINICONDA_SHA256 = "9d83983669bc5d3b5dd4c631454bf953c3caf4ac78b9c9ada9971e5b021d83c3"
+DEFAULT_INSTALL_DIR = str(Path.home() / "miniforge3")
 
 
 def find_conda():
@@ -81,11 +81,11 @@ def verify_hash(path):
             h.update(chunk)
     actual = h.hexdigest().lower()
     if actual != MINICONDA_SHA256:
-        print("  [FAIL] downloaded Miniconda installer does not match its published SHA-256.")
+        print("  [FAIL] downloaded Miniforge installer does not match its published SHA-256.")
         print(f"         expected {MINICONDA_SHA256}")
         print(f"         got      {actual}")
         print("         Refusing to run it. If Anaconda has replaced this build, update")
-        print("         MINICONDA_FILE and MINICONDA_SHA256 from https://repo.anaconda.com/miniconda/")
+        print("         MINICONDA_FILE and MINICONDA_SHA256 from https://github.com/conda-forge/miniforge/releases/tag/26.9.4-2")
         return False
     return True
 
@@ -103,36 +103,39 @@ def install_miniconda(install_dir=DEFAULT_INSTALL_DIR):
     if not verify_hash(tmp):
         tmp.unlink(missing_ok=True)
         return False
-    print("  [ OK ] installer checksum matches Anaconda's published SHA-256")
+    print("  [ OK ] installer checksum matches conda-forge's published SHA-256")
 
-    print(f"  Installing Miniconda to {install_dir} (silent, current user only)...")
+    print(f"  Installing Miniforge to {install_dir} (silent, current user only)...")
     # shell=False and an argument LIST. With shell=True this went through cmd,
     # which splits on its own metacharacters: an install path containing '&'
     # (legal in a Windows username, e.g. "C:\Users\A&B\miniconda3") was being
     # torn in half before the installer ever saw it. The list form hands the
     # arguments to CreateProcess unmodified.
     #
-    # /D must still be LAST and must still be unquoted, per Anaconda's own
+    # /D must still be LAST and must still be unquoted, per conda-forge's own
     # silent-install docs; that is a property of the NSIS installer, not of how
     # the process is spawned.
     cmd = [
         str(tmp),
         "/InstallationType=JustMe",
         "/RegisterPython=0",
+        "/AddToPath=0",
+        "/NoRegistry=1",
+        "/NoShortcuts=1",
         "/S",
         f"/D={install_dir}",
     ]
     r = subprocess.run(cmd)
     tmp.unlink(missing_ok=True)
     if r.returncode != 0:
-        print(f"  [FAIL] Miniconda installer exited with code {r.returncode}")
+        print(f"  [FAIL] Miniforge installer exited with code {r.returncode}")
         return False
-    print("  [ OK ] Miniconda installed")
+    print("  [ OK ] Miniforge installed")
     return True
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Silently install Miniconda if not already present")
+    ap = argparse.ArgumentParser(description="Silently install Miniforge if not already present")
     ap.add_argument("--install-dir", default=DEFAULT_INSTALL_DIR)
     ap.add_argument("--force", action="store_true", help="install even if conda is already found")
     args = ap.parse_args()

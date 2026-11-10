@@ -102,8 +102,8 @@ def _find_chatterbox_python(base_dir):
 
     Order: an explicit env/config value is handled by the caller; here we
     search the conda roots a Windows install is likely to use. Returns the
-    first match, or the author's original path as a last resort so behavior
-    is unchanged when detection cannot see the file (e.g. env not created
+    first match, or the current user's conventional path as a last resort
+    when detection cannot see the file (e.g. env not created
     yet at import time)."""
     candidates = []
     # If we are launched from inside a conda base, its sibling envs/ dir.
@@ -130,8 +130,8 @@ def _find_chatterbox_python(base_dir):
         py = root / "envs" / "chatterbox" / "python.exe"
         if py.exists():
             return str(py)
-    # Last resort: original author path (unchanged behavior on that machine).
-    return r"C:\Users\paulm\miniconda3\envs\chatterbox\python.exe"
+    # Last resort remains user-relative; never ship a developer account path.
+    return str(home / "miniconda3" / "envs" / "chatterbox" / "python.exe")
 
 
 def _find_env_python(env_name):

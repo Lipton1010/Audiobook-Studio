@@ -13,14 +13,14 @@ old do-not-upgrade rule is retired, see CLAUDE.md) and never upgrades an
 existing chatterbox env without asking.
 
 What it sets up:
-  * base env  (the web server): PyMuPDF + requests, into the conda base env
-  * VibeVoice 1.5B narrator and CPU quality-check environments by default,
+  * base env  (the web server): PDFium + pdfplumber/Pillow + requests, into the conda base env
+  * Core only by default. Optional VibeVoice 1.5B narrator and CPU quality-check environments,
     with pinned model/tokenizer downloads and ownership-checked runtime folders.
   * With --narrator chatterbox, the legacy narrator: Python 3.11 + torch 2.6.0+cu124 +
     chatterbox-tts 0.1.7 + transformers 5.2.0, from install/requirements-chatterbox.txt
 
 Prerequisites it checks and reports on:
-  * Miniconda/Anaconda        - required. Auto-installed silently with
+  * Miniforge/Anaconda        - required. Auto-installed silently with
                                 --auto-install-conda (install/bootstrap_conda.py);
                                 otherwise only reported.
   * an NVIDIA GPU (nvidia-smi) - required for narration; text extraction works
@@ -42,12 +42,14 @@ which is the single most common thing that makes a fresh install look broken.
 """
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 from app.managed_runtime import configure_managed_runtime
+from app.model_hardware import inventory, describe, MODEL_CHOICES
 
 REPO = Path(__file__).resolve().parent
 INSTALL = REPO / "install"
@@ -143,7 +145,7 @@ def env_exists(conda, name):
 # ---------- auto-install (opt-in) ----------
 
 def auto_install_conda():
-    step("Miniconda not found; installing silently")
+    step("Miniforge not found; installing silently")
     r = run([sys.executable, str(INSTALL / "bootstrap_conda.py")])
     return r.returncode == 0
 
@@ -181,28 +183,18 @@ def check_prereqs(auto_conda=False, auto_ffmpeg=False):
             if conda:
                 ok(f"conda installed: {conda}")
             else:
-                err("Miniconda installer reported success but conda still can't be found. "
+                err("Miniforge installer reported success but conda still can't be found. "
                     "Close and reopen this terminal (PATH may need a refresh) and re-run.")
                 problems.append("conda")
         else:
-            err("Automatic Miniconda install failed; see output above.")
+            err("Automatic Miniforge install failed; see output above.")
             problems.append("conda")
     else:
-        err("conda not found. Install Miniconda from https://docs.conda.io/en/latest/miniconda.html, "
+        err("conda not found. Install Miniforge from https://github.com/conda-forge/miniforge, "
             "reopen your terminal, and re-run this (or re-run with --auto-install-conda).")
         problems.append("conda")
 
-    if shutil.which("nvidia-smi"):
-        try:
-            r = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total",
-                                "--format=csv,noheader"], capture_output=True, text=True, timeout=15)
-            ok(f"NVIDIA GPU: {r.stdout.strip().splitlines()[0]}")
-        except Exception:
-            ok("NVIDIA GPU present")
-    else:
-        user_warn("No NVIDIA GPU detected (nvidia-smi missing). Narration REQUIRES an "
-                  "NVIDIA GPU with ~6 GB+ VRAM. You can extract text from PDFs but "
-                  "the app will not be able to generate audio on this machine.")
+    print(describe(inventory(REPO)))
 
     # Auto-install BEFORE reporting, so the user is not shown a scary "ffmpeg
     # not found" warning immediately followed by it being installed.
@@ -263,9 +255,17 @@ def check_prereqs(auto_conda=False, auto_ffmpeg=False):
 # ---------- env building ----------
 
 def setup_base_env(conda):
-    step("Base env (web server): PyMuPDF + requests")
+    step("Base env (web server): PDFium + pdfplumber/Pillow + requests")
     req = INSTALL / "requirements-base.txt"
-    r = run([conda, "run", "-n", "base", "python", "-m", "pip", "install", "-r", str(req)])
+    env = os.environ.copy()
+    if os.name == 'nt':
+        # Core package installation needs only the chosen private runtime and
+        # Windows tools. Do not traverse unrelated user/developer PATH entries.
+        base = Path(conda).resolve().parent.parent
+        windows = Path(os.environ.get('SystemRoot', r'C:\Windows'))
+        env['PATH'] = os.pathsep.join(str(p) for p in
+            (base, base/'Scripts', base/'Library/bin', windows/'System32', windows))
+    r = run([conda, "run", "-n", "base", "python", "-m", "pip", "install", "-r", str(req)], env=env)
     if r.returncode == 0:
         ok("base env dependencies installed")
     else:
@@ -284,7 +284,7 @@ def setup_chatterbox_env(conda, assume_yes=False):
                 print("    Skipping chatterbox env package install.")
                 return True
     else:
-        # Current Miniconda refuses non-interactive use of its default Anaconda
+        # Current Miniforge refuses non-interactive use of its default Anaconda
         # channels until their Terms of Service have been accepted. The
         # one-click installer must not accept legal terms on the recipient's
         # behalf, and only Python itself is obtained through conda here. Use
@@ -375,10 +375,10 @@ def verify(conda, narrator="chatterbox"):
     step("Verifying the install")
     good = True
     r = run([conda, "run", "-n", "base", "python", "-c",
-             "import fitz, requests; print('base ok', fitz.__doc__ is not None)"],
+             "import pypdfium2, pdfplumber, PIL, requests; print('base PDF imports ok')"],
             capture_output=True, text=True)
     if r.returncode == 0:
-        ok("base env imports (fitz + requests)")
+        ok("base env imports (PDFium + pdfplumber/Pillow + requests)")
     else:
         err(f"base env import failed: {(r.stderr or '').strip()[:200]}")
         good = False
@@ -415,16 +415,32 @@ def main():
     ap.add_argument("--yes", action="store_true", help="non-interactive; assume yes")
     ap.add_argument("--check-only", action="store_true", help="only check prerequisites, install nothing")
     ap.add_argument("--auto-install-conda", action="store_true",
-                     help="silently install Miniconda if not found (current user only, no admin)")
+                     help="silently install Miniforge if not found (current user only, no admin)")
     ap.add_argument("--auto-install-ffmpeg", action="store_true",
                      help="fetch a static ffmpeg build into tools/ if not found")
     ap.add_argument("--prefetch-weights", action="store_true",
                      help="download Chatterbox's ~3 GB of TTS weights now instead of on first narration")
     ap.add_argument("--runtime-root", type=Path,
                      help="keep installer-owned conda environments and caches under this folder")
-    ap.add_argument("--narrator", choices=("vibevoice", "chatterbox"), default="vibevoice",
-                    help="narrator to prepare; VibeVoice 1.5B is the default, Chatterbox supports older jobs")
+    ap.add_argument("--narrator", choices=tuple(MODEL_CHOICES), default="none",
+                    help="optional narrator; default is core only, existing jobs are unchanged")
+    ap.add_argument("--accept-model-terms", action="store_true",
+                    help="confirm you reviewed the selected model terms and unvalidated hardware requirements")
     args = ap.parse_args()
+
+    # This check precedes installs, downloads and runtime-directory creation.
+    machine = inventory(REPO)
+    print(describe(machine))
+    if not args.check_only and args.narrator != "none":
+        if args.narrator == "drama3":
+            ap.error("Drama 3 fresh provisioning is not yet reproducible. Keep the existing verified runtime; no downloads or settings changed.")
+        if machine["selected_gpu"] is None:
+            ap.error("Narrator GPU compatibility is unknown. Select core only or resolve device detection first.")
+        if not args.accept_model_terms:
+            if args.yes or not sys.stdin.isatty():
+                ap.error("Optional model setup requires --accept-model-terms after reviewing the listed terms and hardware caveats; --yes alone is not model consent.")
+            if input("Review the selected model card/terms and hardware caveats above. Install this optional pack? [y/N] ").strip().lower() != "y":
+                ap.error("Optional model installation canceled; no changes made.")
 
     if args.runtime_root:
         runtime_root = configure_managed_runtime(args.runtime_root, create_dirs=not args.check_only)
@@ -446,7 +462,11 @@ def main():
         return
 
     base_ok = setup_base_env(conda)
-    if args.narrator == "vibevoice":
+    if args.narrator == "none":
+        all_ok = base_ok
+        cb_ok = False
+        user_warn("Core installed without a narrator download. Run setup.py with --narrator vibevoice or --narrator chatterbox to review hardware and model terms. Existing jobs and narrator settings were not changed.")
+    elif args.narrator == "vibevoice":
         step("VibeVoice 1.5B and CPU quality checker in isolated runtimes")
         result = run([sys.executable, INSTALL / "bootstrap_vibevoice.py", "--install",
                       "--conda", conda, "--runtime-root", args.runtime_root or REPO / "runtime"])

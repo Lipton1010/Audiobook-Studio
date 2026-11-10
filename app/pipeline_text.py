@@ -14,7 +14,7 @@ narrate_tagged.py validated. Fixes carried here beyond samples/stage_two.py:
 
 import re
 
-import fitz  # PyMuPDF
+import pdf_backend as fitz  # Internal PDF interface; retained alias for test seams.
 
 
 # ---------- shared helpers ----------

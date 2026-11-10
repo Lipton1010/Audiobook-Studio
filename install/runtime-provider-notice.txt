@@ -1,0 +1,9 @@
+Storybird private runtime
+
+Fresh installations download the official Miniforge 26.9.4-2 Windows x64 installer (about 158 MB), verified by SHA-256. Existing private conda installations are reused, not replaced. No system Python registration, PATH changes or separate runtime shortcuts are requested.
+
+Miniforge installer code is BSD-3-Clause. Included packages have their own open-source licenses, including GPL components. Review the provider terms before installation:
+https://github.com/conda-forge/miniforge/blob/26.9.4-2/LICENSE
+Individual package notices remain under the private runtime package directories.
+
+The core installation does not download voice or image-generation weights. Optional packs require their own hardware and terms review.

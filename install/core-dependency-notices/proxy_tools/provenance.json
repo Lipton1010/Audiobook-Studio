@@ -1,0 +1,7 @@
+{
+  "version": "0.1.0",
+  "source_archive_sha256": "ccb3751f529c047e2d8a58440d86b205303cf0fe8146f784d1cbcd94f0a28010",
+  "notice_source": "https://raw.githubusercontent.com/jtushman/proxy_tools/db43f1e35d4f90a65c5a4d56d9e9af88212ec6e6/LICENSE.txt",
+  "notice_sha256": "a428fb8a2e762af3eb0a6edbbb88e9b42ccfee80fd9b423958bcacf9b9abbfe4",
+  "note": "Published 0.1.0 source and installed wheel omit license text and declare MIT in metadata. Pinned upstream LICENSE.txt is BSD, with Armin Ronacher and Jonathan Tushman copyright notices. Preserve this notice; do not silently call it MIT or claim provenance ambiguity resolved."
+}

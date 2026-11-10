@@ -1,0 +1,145 @@
+{
+  "checked_utc": "2026-11-09T17:06:55Z",
+  "installed": false,
+  "candidates": [
+    {
+      "package": "pypdfium2",
+      "version": "5.15.2",
+      "source": "https://pypi.org/project/pypdfium2/5.15.2/",
+      "released_utc": "2026-11-09T15:32:35.375047Z",
+      "requires_python": ">=3.6",
+      "dependencies": null,
+      "windows_wheels": [
+        "pypdfium2-5.15.2-py3-none-win_amd64.whl"
+      ]
+    },
+    {
+      "package": "pdfplumber",
+      "version": "0.11.10",
+      "source": "https://pypi.org/project/pdfplumber/0.11.10/",
+      "released_utc": "2026-06-15T03:31:29.702225Z",
+      "requires_python": ">=3.8",
+      "dependencies": [
+        "pdfminer.six==20260107",
+        "Pillow>=12.2.0",
+        "pypdfium2>=5.9.0"
+      ],
+      "windows_wheels": []
+    },
+    {
+      "package": "pdfminer.six",
+      "version": "20260107",
+      "source": "https://pypi.org/project/pdfminer.six/20260107/",
+      "released_utc": "2026-01-07T13:29:10.742517Z",
+      "requires_python": ">=3.10",
+      "dependencies": [
+        "charset-normalizer>=2.0.0",
+        "cryptography>=36.0.0",
+        "Pillow; extra == \"image\""
+      ],
+      "windows_wheels": []
+    },
+    {
+      "package": "pypdf",
+      "version": "7.0.0",
+      "source": "https://pypi.org/project/pypdf/7.0.0/",
+      "released_utc": "2026-11-06T12:10:01.205119Z",
+      "requires_python": ">=3.10",
+      "dependencies": [
+        "typing_extensions>=4.0; python_version < \"3.11\"",
+        "brotli>=1.2.0; extra == \"brotli\"",
+        "cryptography>=43; extra == \"crypto\"",
+        "pycryptodome; extra == \"cryptodome\"",
+        "flit; extra == \"dev\"",
+        "pip-tools; extra == \"dev\"",
+        "pre-commit; extra == \"dev\"",
+        "pytest-cov; extra == \"dev\"",
+        "pytest-socket; extra == \"dev\"",
+        "pytest-timeout; extra == \"dev\"",
+        "pytest-xdist; extra == \"dev\"",
+        "wheel; extra == \"dev\"",
+        "myst-parser; extra == \"docs\"",
+        "sphinx; extra == \"docs\"",
+        "sphinx-rtd-theme; extra == \"docs\"",
+        "fonttools; extra == \"fonts\"",
+        "arabic-reshaper; extra == \"full\"",
+        "brotli>=1.2.0; extra == \"full\"",
+        "cryptography>=43; extra == \"full\"",
+        "fonttools; extra == \"full\"",
+        "pillow>=8.0.0; extra == \"full\"",
+        "python-bidi; extra == \"full\"",
+        "pillow>=8.0.0; extra == \"image\"",
+        "arabic-reshaper; extra == \"rtl-text\"",
+        "python-bidi; extra == \"rtl-text\""
+      ],
+      "windows_wheels": []
+    },
+    {
+      "package": "Pillow",
+      "version": "13.0.0",
+      "source": "https://pypi.org/project/Pillow/13.0.0/",
+      "released_utc": "2026-10-16T22:15:24.672561Z",
+      "requires_python": ">=3.11",
+      "dependencies": [
+        "furo; extra == \"docs\"",
+        "olefile; extra == \"docs\"",
+        "sphinx>=8.2; extra == \"docs\"",
+        "sphinx-autobuild; extra == \"docs\"",
+        "sphinx-copybutton; extra == \"docs\"",
+        "sphinx-inline-tabs; extra == \"docs\"",
+        "sphinxext-opengraph; extra == \"docs\"",
+        "olefile; extra == \"fpx\"",
+        "olefile; extra == \"mic\"",
+        "arro3-compute; extra == \"test-arrow\"",
+        "arro3-core; extra == \"test-arrow\"",
+        "nanoarrow; extra == \"test-arrow\"",
+        "pyarrow; extra == \"test-arrow\"",
+        "coverage>=7.4.2; extra == \"tests\"",
+        "defusedxml; extra == \"tests\"",
+        "markdown2; extra == \"tests\"",
+        "olefile; extra == \"tests\"",
+        "packaging; extra == \"tests\"",
+        "psutil; (sys_platform == \"linux\" or sys_platform == \"darwin\") and extra == \"tests\"",
+        "pytest; extra == \"tests\"",
+        "pytest-cov; extra == \"tests\"",
+        "pytest-timeout; extra == \"tests\"",
+        "pytest-xdist; extra == \"tests\"",
+        "setuptools; extra == \"tests\"",
+        "trove-classifiers>=2024.10.12; extra == \"tests\"",
+        "defusedxml; extra == \"xmp\""
+      ],
+      "windows_wheels": [
+        "pillow-13.0.0-cp311-cp311-win_amd64.whl",
+        "pillow-13.0.0-cp312-cp312-win_amd64.whl",
+        "pillow-13.0.0-cp313-cp313-win_amd64.whl",
+        "pillow-13.0.0-cp314-cp314t-win_amd64.whl",
+        "pillow-13.0.0-cp314-cp314-win_amd64.whl",
+        "pillow-13.0.0-cp315-cp315t-win_amd64.whl",
+        "pillow-13.0.0-cp315-cp315-win_amd64.whl",
+        "pillow-13.0.0-pp311-pypy311_pp80-win_amd64.whl",
+        "pillow-13.0.0-pp312-pypy312_pp80-win_amd64.whl"
+      ]
+    },
+    {
+      "package": "PyMuPDF",
+      "version": "2.1",
+      "source": "https://pypi.org/project/PyMuPDF/2.1/",
+      "released_utc": "2026-11-02T17:15:19.686059Z",
+      "requires_python": ">=3.11",
+      "dependencies": [
+        "networkx",
+        "numpy",
+        "onnxruntime",
+        "pyyaml",
+        "pymupdf-layout==2.1",
+        "pymupdf_layout==2.1",
+        "psutil",
+        "tabulate",
+        "pymupdf4llm==2.1"
+      ],
+      "windows_wheels": [
+        "pymupdf-2.1-cp311-abi3-win_amd64.whl"
+      ]
+    }
+  ]
+}

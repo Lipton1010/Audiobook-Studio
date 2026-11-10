@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "status": "runtime-prerelease-published",
+  "name": "Drama 3 Q3 optional Ada pack",
+  "source": {
+    "url": "https://github.com/JarodMica/audio.cpp",
+    "revision": "4e6018fd018499d75e5070ba4eb38db4e48b9b59",
+    "license": "Apache-2.0",
+    "clean_checkout_verified": true
+  },
+  "runtime": {
+    "filename": "audiocpp_cli.exe",
+    "sha256": "9bcd7ffc5887d99e8db62ecc47d9b6eee8858358b42a389332a5cb380fafc12b",
+    "download_url": "https://github.com/Lipton1010/Audiobook-Studio/releases/download/drama-runtime-4e6018f-win64-ada-beta.1/Drama3-runtime-win64-ada-candidate.zip",
+    "cuda_architectures": [
+      "8.9"
+    ],
+    "build_type": "Release",
+    "compiler": "MSVC 14.44.35207",
+    "cuda_compiler": "12.9.86",
+    "cpu_architecture": "baseline",
+    "native_cpu": false,
+    "legacy_registered_executable_sha256": "7438ba2c37bc42da4b9875ecde6dae3d6eb71148a1148ee0eee9daa86f8436db",
+    "archive": {
+      "filename": "Drama3-runtime-win64-ada-candidate.zip",
+      "bytes": 574208967,
+      "sha256": "8349aa257199f5f76ac8565e34a2b175cdb07d8f66b73b28da38b75ce8e5a960",
+      "source_revision": "4e6018fd018499d75e5070ba4eb38db4e48b9b59",
+      "contains_model_weights": false
+    }
+  },
+  "model": {
+    "repo": "Jmica/Drama-3-GGUF",
+    "revision": "bcb065b8b0b98535a5c002b39bcceeb8bf065513",
+    "filename": "drama-3-backbone-8bit-experts-Q3_K_S.gguf",
+    "bytes": 20325196992,
+    "sha256": "b946a8c9806deba559590b98e37ffc9e0957109263e111513734fa93284db16b",
+    "license": "Fish Audio Community License 1.0",
+    "license_url": "https://huggingface.co/Jmica/Drama-3-GGUF/blob/bcb065b8b0b98535a5c002b39bcceeb8bf065513/LICENSE"
+  },
+  "notices": {
+    "LICENSE": "733a32442087acbda12ecafe8e71eb8ee5890c89b50ce7ac4ea3777faa3c823e",
+    "NOTICE": "f7b0aeb1012b472e6f59cc527a09053c5d5881b03851cfe94e82ccea4c17f24c"
+  },
+  "release_gates": [
+    "Freeze and validate the application installer from committed source before advertising it as released.",
+    "Retain all component notices and separate model/runtime license acknowledgments.",
+    "Fresh Windows VM, broader hardware and long-book/voice-quality validation remain uncertified."
+  ]
+}

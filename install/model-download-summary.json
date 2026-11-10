@@ -1,0 +1,104 @@
+{
+  "verified": "2026-11-09",
+  "vibevoice": [
+    {
+      "name": "VibeVoice 1.5B",
+      "repository": "microsoft/VibeVoice-1.5B",
+      "revision": "c00898d257e6b46004e3e2866a47534085fb685a",
+      "source": "https://huggingface.co/microsoft/VibeVoice-1.5B/tree/c00898d257e6b46004e3e2866a47534085fb685a",
+      "files": [
+        {
+          "name": "config.json",
+          "bytes": 2762
+        },
+        {
+          "name": "model-00001-of-00003.safetensors",
+          "bytes": 1975317828
+        },
+        {
+          "name": "model-00002-of-00003.safetensors",
+          "bytes": 1983051688
+        },
+        {
+          "name": "model-00003-of-00003.safetensors",
+          "bytes": 1449832938
+        },
+        {
+          "name": "model.safetensors.index.json",
+          "bytes": 122616
+        },
+        {
+          "name": "preprocessor_config.json",
+          "bytes": 351
+        }
+      ],
+      "bytes": 5408328183,
+      "card_license": "mit"
+    },
+    {
+      "name": "VibeVoice tokenizer",
+      "repository": "Qwen/Qwen2.5-1.5B",
+      "revision": "8faed761d45a263340a0528343f099c05c9a4323",
+      "source": "https://huggingface.co/Qwen/Qwen2.5-1.5B/tree/8faed761d45a263340a0528343f099c05c9a4323",
+      "files": [
+        {
+          "name": "config.json",
+          "bytes": 684
+        },
+        {
+          "name": "generation_config.json",
+          "bytes": 138
+        },
+        {
+          "name": "merges.txt",
+          "bytes": 1671839
+        },
+        {
+          "name": "tokenizer.json",
+          "bytes": 7031645
+        },
+        {
+          "name": "tokenizer_config.json",
+          "bytes": 7228
+        },
+        {
+          "name": "vocab.json",
+          "bytes": 2776833
+        }
+      ],
+      "bytes": 11488367,
+      "card_license": "apache-2.0"
+    },
+    {
+      "name": "VibeVoice quality checker",
+      "repository": "Systran/faster-whisper-large-v3",
+      "revision": "edaa852ec7e145841d8ffdb056a99866b5f0a478",
+      "source": "https://huggingface.co/Systran/faster-whisper-large-v3/tree/edaa852ec7e145841d8ffdb056a99866b5f0a478",
+      "files": [
+        {
+          "name": "config.json",
+          "bytes": 2394
+        },
+        {
+          "name": "model.bin",
+          "bytes": 3087284237
+        },
+        {
+          "name": "preprocessor_config.json",
+          "bytes": 340
+        },
+        {
+          "name": "tokenizer.json",
+          "bytes": 2480617
+        },
+        {
+          "name": "vocabulary.json",
+          "bytes": 1068114
+        }
+      ],
+      "bytes": 3090835702,
+      "card_license": "mit"
+    }
+  ],
+  "note": "Model/tokenizer/checker payload only; runtime dependency and temporary cache space is additional."
+}
