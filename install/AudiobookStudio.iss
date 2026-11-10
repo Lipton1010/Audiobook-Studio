@@ -23,10 +23,10 @@
 ;      setup ABORTS here with a readable message instead of installing a
 ;      half-working app.
 ;   2. [Files] copies the repo to the install folder.
-;   3. ssPostInstall runs setup.py --yes --auto-install-ffmpeg
-;      --prefetch-weights with the conda python from step 1, redirecting all
-;      output to install_log.txt, and CHECKS ITS EXIT CODE. setup.py in turn
-;      calls install\bootstrap_ffmpeg.py and install\bootstrap_weights.py.
+;   3. ssPostInstall runs setup.py --yes --narrator none --auto-install-ffmpeg
+;      with the private Python from step 1, redirects output to install_log.txt,
+;      and CHECKS ITS EXIT CODE. Core setup never downloads narrator weights.
+;      Optional narrators are selected explicitly after installation.
 ;   4. Creates Start Menu + Desktop shortcuts that launch launcher.py through
 ;      the private pythonw.exe, so the native app window has no console behind it.
 ;
@@ -47,7 +47,7 @@
 
 #define MyAppName "Storybird"
 #define MyAppDirName "AudiobookStudio"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.1.1"
 #define MyAppPublisher "Audiobook Studio"
 
 [Setup]
@@ -517,7 +517,7 @@ begin
   LogPath := ExpandConstant('{app}\install_log.txt');
   WarnPath := ExpandConstant('{app}\install_warnings.txt');
   Params := '/C ""' + CondaPythonPath + '" "' + ExpandConstant('{app}\setup.py') +
-            '" --yes' + WebViewConsentArgs() + ' --auto-install-ffmpeg --prefetch-weights --runtime-root "' +
+            '" --yes' + WebViewConsentArgs() + ' --narrator none --auto-install-ffmpeg --runtime-root "' +
             ExpandConstant('{app}\runtime') + '" > "' + LogPath + '" 2>&1"';
 
   WizardForm.StatusLabel.Caption :=

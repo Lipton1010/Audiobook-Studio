@@ -1627,6 +1627,13 @@ def run_narration(st):
         "cover_image": cover,
         "pdf_outline": outline,
     }
+    # Bind only new jobs; a resume keeps its previous model choice, including
+    # legacy cache-based jobs that never recorded a model directory.
+    prior_path = job_dir / "config.json"
+    prior = json.loads(prior_path.read_text(encoding="utf-8")) if prior_path.exists() else None
+    model_dir = prior.get("chatterbox_model_dir", "") if prior is not None else CFG.chatterbox_model_dir
+    if model_dir:
+        config["chatterbox_model_dir"] = model_dir
     config.update(runtime_settings("chatterbox", st["path"], st.get("generation_settings")))
     if config["batch_preference"] == "conservative":
         config["batch_size"] = 1

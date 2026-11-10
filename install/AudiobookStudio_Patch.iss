@@ -26,7 +26,7 @@
 ;
 #define MyAppName "Storybird"
 #define MyAppDirName "AudiobookStudio"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.1.1"
 #define MyAppPublisher "Audiobook Studio"
 
 [Setup]
@@ -105,6 +105,11 @@ Source: "..\app\transcript_review.py"; DestDir: "{app}\app"; Flags: ignoreversio
 Source: "..\app\vibevoice_assembly.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\vibevoice_audio.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\install\bootstrap_vibevoice.py"; DestDir: "{app}\install"; Flags: ignoreversion
+Source: "..\app\chatterbox_pack.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\install\bootstrap_chatterbox.py"; DestDir: "{app}\install"; Flags: ignoreversion
+Source: "..\install\requirements-chatterbox-win311.lock.txt"; DestDir: "{app}\install"; Flags: ignoreversion
+Source: "..\install\chatterbox-pack.json"; DestDir: "{app}\install"; Flags: ignoreversion
+Source: "..\docs\CHATTERBOX_DEPENDENCIES.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\install\bootstrap_parakeet.py"; DestDir: "{app}\install"; Flags: ignoreversion
 Source: "..\install\requirements-parakeet.txt"; DestDir: "{app}\install"; Flags: ignoreversion
 Source: "..\install\requirements-parakeet-win311.lock.txt"; DestDir: "{app}\install"; Flags: ignoreversion

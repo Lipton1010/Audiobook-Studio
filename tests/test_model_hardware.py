@@ -36,6 +36,18 @@ class HardwareTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "no CPU fallback"):
             require_generation_capacity("vibevoice", ".", {"selected_gpu": None})
 
+    def test_drama_evidence_does_not_claim_twelve_layer_success(self):
+        evidence = MODEL_CHOICES["drama3"]["evidence"]
+        self.assertIn("four-layer default", evidence)
+        self.assertIn("remain unvalidated", evidence)
+        self.assertNotIn("passed with 22.75", evidence)
+
+    def test_core_installer_explicitly_selects_no_narrator(self):
+        from pathlib import Path
+        source = (Path(__file__).resolve().parents[1] / "install" / "AudiobookStudio.iss").read_text()
+        self.assertIn("--narrator none --auto-install-ffmpeg", source)
+        self.assertNotIn("--prefetch-weights", source)
+
     def test_model_evidence_disclosed(self):
         self.assertEqual(set(MODEL_CHOICES), {'none', 'vibevoice', 'chatterbox', 'drama3'})
         for model in MODEL_CHOICES.values():

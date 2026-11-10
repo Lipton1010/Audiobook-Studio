@@ -14,11 +14,11 @@ MODEL_CHOICES = {
     "vibevoice": {"name": "VibeVoice 1.5B", "vram": "Observed 5.6-7.1 GiB reservation on RTX 4090; minimum not certified",
                   "evidence": "Smaller NVIDIA GPUs are candidates, not validated devices. RAM/disk minimum not yet measured for a clean install.",
                   "terms": "https://huggingface.co/microsoft/VibeVoice-1.5B"},
-    "chatterbox": {"name": "Chatterbox (legacy jobs)", "vram": "Minimum not certified; a 16 GB laptop trial failed with OOM",
-                   "evidence": "4090 tests and simulated memory caps do not certify physical smaller GPUs. RAM/disk requirements need clean-install measurement.",
+    "chatterbox": {"name": "Chatterbox original English", "vram": "Minimum not certified; a 16 GB laptop trial failed with OOM",
+                   "evidence": "Pinned optional pack produced a 2.56-second built-in-voice sample offline on RTX 4090 with 3.19 GiB peak PyTorch reserved VRAM. This short test is not a long-book memory requirement. Prior 4090 tests and simulated memory caps do not certify physical smaller GPUs; clean-install RAM/disk minima remain unmeasured.",
                    "terms": "https://huggingface.co/ResembleAI/chatterbox"},
     "drama3": {"name": "Drama 3 Q3 (optional Ada pack)", "vram": "Observed 18,920 MiB whole-board peak for existing runtime; 19,534 MiB in isolated portable-build smoke on RTX 4090 24 GB",
-               "evidence": "An untrimmed load previously exhausted 32 GB RAM. The pinned 12-layer CPU-offload reference test passed with 22.75 GiB initially free RAM and 3.47 GiB minimum remaining. The isolated portable build passed short synthetic speech with 12 CPU expert layers; this does not establish a minimum or long-book guarantee. Q3 uses CPU expert offload, not CPU-only inference. The pinned executable targets CUDA capability 8.9 (Ada) only. The optional verified runtime downloads from the Storybird runtime-only prerelease; weights download from their original pinned repositories. Parakeet checker observed 4,544 MiB whole-board peak in a separate fresh-runtime smoke. Keep 50 GiB free disk for setup (estimate). Checker terms: https://creativecommons.org/licenses/by/4.0/legalcode.en . Runtime/vendor notices accompany the verified ZIP. CUDA terms: https://docs.nvidia.com/cuda/archive/12.9.1/eula/index.html . Runtime source: https://github.com/JarodMica/audio.cpp .",
+               "evidence": "An untrimmed load previously exhausted 32 GB RAM. Correction: earlier standalone tests passed CPU placement through the wrong CLI option and used the four-layer default, not twelve. Their successful short synthetic speech does not validate the app's twelve-layer configuration. A matched twelve-layer loading diagnostic hit the same protective test cap in original and portable runtimes; neither completed inference in that comparison. RAM and Windows commit requirements for the twelve-layer profile remain unvalidated. Q3 uses CPU expert offload, not CPU-only inference. The pinned executable targets CUDA capability 8.9 (Ada) only. The optional verified runtime downloads from the Storybird runtime-only prerelease; weights download from their original pinned repositories. Parakeet checker observed 4,544 MiB whole-board peak in a separate fresh-runtime smoke. Keep 50 GiB free disk for setup (estimate). Checker terms: https://creativecommons.org/licenses/by/4.0/legalcode.en . Runtime/vendor notices accompany the verified ZIP. CUDA terms: https://docs.nvidia.com/cuda/archive/12.9.1/eula/index.html . Runtime source: https://github.com/JarodMica/audio.cpp .",
                "terms": "https://huggingface.co/fishaudio/drama-3/blob/main/LICENSE"},
 }
 
@@ -104,7 +104,8 @@ def describe(machine):
         lines.extend((f"  {key}: {model['name']}", "    " + model["vram"], "    " + model["evidence"]))
         if key != "none":
             policy = "20 GiB free VRAM / 22 GiB free RAM" if key == "drama3" else "8 GiB free VRAM / 8 GiB free RAM"
-            lines.append("    Current generation admission estimate: " + policy + "; at least 2 GiB free job disk, more for long books. Not a fit guarantee.")
+            qualification = " (Drama twelve-layer requirements unvalidated)" if key == "drama3" else ""
+            lines.append("    Current conservative admission policy" + qualification + ": " + policy + "; at least 2 GiB free job disk, more for long books. Not a fit guarantee.")
         if model.get("terms"):
             lines.append("    Terms/model card: " + model["terms"])
     lines.append("Free memory changes. Recheck before generation; no automatic CPU fallback or change to existing jobs.")
@@ -121,9 +122,10 @@ def require_generation_capacity(backend, path, machine=None):
     gpu = machine.get("selected_gpu")
     if gpu is None:
         raise RuntimeError("Narration hardware is unknown. Check the NVIDIA driver/device mapping; no CPU fallback or model change was made.")
-    # Pinned Ada runtime with 12 CPU expert layers passed synthetic-reference
-    # speech from 22.75 GiB free RAM, leaving 3.47 GiB. The 22 GiB admission
-    # estimate retains headroom above that observed consumption; not a minimum.
+    # Temporary conservative hold, NOT a validated twelve-layer requirement.
+    # Earlier standalone evidence used the four-layer default due to an option
+    # mistake. Keep existing safety behavior pending a separately validated
+    # physical-RAM/Windows-commit policy; do not infer that passing guarantees fit.
     floors = {"drama3": (20, 22), "vibevoice": (8, 8), "chatterbox": (8, 8), "parakeet": (4, 4)}
     if backend not in floors:
         raise RuntimeError("Unknown narrator hardware policy; choose a supported runtime.")

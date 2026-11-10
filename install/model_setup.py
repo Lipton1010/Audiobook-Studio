@@ -25,7 +25,8 @@ def download_details():
     summary=json.loads((REPO/'install/model-download-summary.json').read_text())
     for item in summary['vibevoice']:
         lines.append(f"{item['name']}: {item['bytes']:,} bytes; {item['source']} ; model-card license: {item['card_license']}")
-    lines.append('Chatterbox: existing legacy jobs remain supported. Its historical ~3 GB download is not a frozen tested pack, so this new GUI does not offer a fresh download yet.')
+    cb=json.loads((REPO/'install/chatterbox-pack.json').read_text())
+    lines.append(f"Chatterbox original English: {sum(f['bytes'] for f in cb['files']):,} bytes plus runtime; {cb['license_url']}. Separate dependencies include GPL/LGPL; review docs/CHATTERBOX_DEPENDENCIES.md. Upstream retired August 2026 (no maintenance/support). Storybird retains its existing no-op watermark adapter.")
     return '\n'.join(lines)
 
 
@@ -78,9 +79,6 @@ def main():
         if state["running"]:
             return
         choice = selected.get()
-        if choice == 'chatterbox':
-            messagebox.showinfo('Existing Chatterbox runtimes', 'Existing jobs and configured Chatterbox runtimes remain available. A frozen tested fresh-download pack is not ready; no files or settings were changed.')
-            return
         machine = inventory(REPO)
         if choice != "none" and (not accepted.get() or machine["selected_gpu"] is None):
             messagebox.showwarning("Review required", "Confirm the selected model terms and hardware caveats. NVIDIA device detection must succeed before narrator setup. Core-only setup remains available.")
@@ -88,7 +86,11 @@ def main():
         if not messagebox.askyesno("Install selected components?", "Install " + MODEL_CHOICES[choice]["name"] +
                                   "? Setup may download dependencies and model weights. Clean-install RAM/disk minima are not certified; see the machine report. Existing book settings will not be migrated."):
             return
-        if choice == "drama3":
+        if choice == "chatterbox":
+            if not messagebox.askyesno("Chatterbox model and runtime terms", "Download the original English Chatterbox model (~3.2 GB) and separate dependencies? Model/code MIT; dependencies include pykakasi GPL-3.0-or-later and soxr/libsndfile LGPL notices. Review docs/CHATTERBOX_DEPENDENCIES.md. Runtime installation is not blanket commercial-use clearance. Existing configured Chatterbox runtimes will not be replaced. Continue?"):
+                return
+            command=[sys.executable,str(REPO/'install/bootstrap_chatterbox.py'),'--install','--accept-model-terms','--accept-runtime-terms','--runtime-root',str(REPO/'runtime')]
+        elif choice == "drama3":
             import json
             manifest=json.loads((REPO/'install/drama3-pack.json').read_text())
             if not messagebox.askyesno("Drama model and runtime terms", "Drama uses the Fish Audio Community License (conditional commercial use), NVIDIA Parakeet CC-BY-4.0 and separate CUDA/runtime terms. Only use voice references you have permission to use. This downloads about 23 GB of weights plus runtime dependencies; keep 50 GiB free. Existing jobs and narrator defaults stay unchanged. Continue?"):
@@ -102,7 +104,6 @@ def main():
             command = [sys.executable, str(REPO / "setup.py"), "--yes", "--narrator", choice,
                        "--runtime-root", str(REPO / "runtime")]
             if choice != "none":command.append("--accept-model-terms")
-            if choice == "chatterbox":command.append("--prefetch-weights")
         state["running"] = True
         install.configure(state="disabled")
         recheck.configure(state="disabled")

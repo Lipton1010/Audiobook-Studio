@@ -48,6 +48,7 @@ _ENV = {
     "drama3_reference_profiles": "AUDIOBOOK_DRAMA3_REFERENCE_PROFILES",
     "base_dir": "AUDIOBOOK_BASE_DIR",
     "chatterbox_python": "AUDIOBOOK_CHATTERBOX_PY",
+    "chatterbox_model_dir": "AUDIOBOOK_CHATTERBOX_MODEL_DIR",
     "vibevoice_python": "AUDIOBOOK_VIBEVOICE_PY",
     "vibevoice_inference_backend": "AUDIOBOOK_VIBEVOICE_INFERENCE_BACKEND",
     "vibevoice_compiled_python": "AUDIOBOOK_VIBEVOICE_COMPILED_PY",
@@ -174,6 +175,7 @@ class Config:
         self.chatterbox_python = _pick(
             "chatterbox_python", file_cfg, _find_chatterbox_python(self.base_dir)
         )
+        self.chatterbox_model_dir = _pick("chatterbox_model_dir", file_cfg, "")
         self.vibevoice_python = _pick(
             "vibevoice_python", file_cfg, _find_env_python("vibevoice-env")
         )

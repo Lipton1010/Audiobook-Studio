@@ -498,7 +498,7 @@ def _generate_batched(model, plan, ref_wav, todo, seg_dir, sr, shard, batch_size
 
 def run_generate(job_dir, plan, ref_wav, shard, nshards, engine="parallel",
                  batch_size=BATCH_SIZE, token_budget=BATCH_TOKEN_BUDGET,
-                 batch_s3gen=BATCH_S3GEN):
+                 batch_s3gen=BATCH_S3GEN, model_dir=None):
     """
     Generate this shard's segments. Work is split by index modulo nshards,
     so N workers cover disjoint chunks with no coordination, and every
@@ -523,7 +523,8 @@ def run_generate(job_dir, plan, ref_wav, shard, nshards, engine="parallel",
     print(f"CUDA allocator budget: {allowed / 1024 ** 3:.2f} GiB "
           "(physical VRAM headroom reserved)", flush=True)
     print("Loading Chatterbox model...", flush=True)
-    model = ChatterboxTTS.from_pretrained(device="cuda")
+    from chatterbox_pack import load_local
+    model = load_local(ChatterboxTTS, model_dir)
     sr = model.sr
 
     if engine == "batched":
@@ -679,7 +680,7 @@ def main():
     try:
         run_generate(job_dir, plan, config["reference_wav"], shard, args.num_shards,
                      engine=engine, batch_size=batch_size, token_budget=token_budget,
-                     batch_s3gen=batch_s3gen)
+                     batch_s3gen=batch_s3gen, model_dir=config.get("chatterbox_model_dir"))
     except Exception as exc:
         if not is_cuda_oom(exc, torch):
             raise

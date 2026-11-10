@@ -580,10 +580,18 @@ class PhasedNarrationTests(unittest.TestCase):
         self.assertEqual(w.sha256_file(peer_path), peer_hash)
         self.assertTrue(w._valid_unit(self.job / w.SEGMENTS_DIR / w.UNITS_DIR, selected))
 
+    def test_hardware_refusal_does_not_spawn_a_phase(self):
+        with mock.patch("model_hardware.require_generation_capacity", side_effect=RuntimeError("hardware hold")), \
+             mock.patch.object(phases.subprocess, "Popen") as spawn, \
+             self.assertRaisesRegex(RuntimeError, "hardware hold"):
+            phases._run_phase(self.job, {}, "render")
+        spawn.assert_not_called()
+
     def test_cancel_terminates_and_waits_for_owned_gpu_phase(self):
         process = mock.Mock()
         process.poll.return_value = None
-        with mock.patch.object(phases.subprocess, "Popen", return_value=process), \
+        with mock.patch("model_hardware.require_generation_capacity", return_value={}), \
+             mock.patch.object(phases.subprocess, "Popen", return_value=process), \
              mock.patch.object(w, "_prepare_voice"), \
              mock.patch.object(phases, "WindowsWorkerJob"), \
              mock.patch.object(phases, "_cancel", side_effect=[None, None, SystemExit(2)]), self.assertRaises(SystemExit):
@@ -610,7 +618,8 @@ class PhasedNarrationTests(unittest.TestCase):
         processes = [mock.Mock(), mock.Mock()]
         for process in processes:
             process.poll.return_value = None
-        with mock.patch.object(phases.subprocess, "Popen", side_effect=processes) as spawn, \
+        with mock.patch("model_hardware.require_generation_capacity", return_value={}), \
+             mock.patch.object(phases.subprocess, "Popen", side_effect=processes) as spawn, \
              mock.patch.object(w, "_prepare_voice"), \
              mock.patch.object(phases, "WindowsWorkerJob"), \
              mock.patch.object(phases, "_cancel", side_effect=[None, None, None, SystemExit(2)]), self.assertRaises(SystemExit):
@@ -625,7 +634,8 @@ class PhasedNarrationTests(unittest.TestCase):
         failed, peer = mock.Mock(), mock.Mock()
         failed.poll.return_value = 1
         peer.poll.return_value = None
-        with mock.patch.object(phases.subprocess, "Popen", side_effect=[failed, peer]), \
+        with mock.patch("model_hardware.require_generation_capacity", return_value={}), \
+             mock.patch.object(phases.subprocess, "Popen", side_effect=[failed, peer]), \
              mock.patch.object(w, "_prepare_voice"), \
              mock.patch.object(phases, "WindowsWorkerJob"), self.assertRaisesRegex(RuntimeError, "render phase failed"):
             phases._run_phase(self.job, {"render_workers": 2}, "render")

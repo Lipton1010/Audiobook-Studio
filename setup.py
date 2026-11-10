@@ -16,8 +16,8 @@ What it sets up:
   * base env  (the web server): PDFium + pdfplumber/Pillow + requests, into the conda base env
   * Core only by default. Optional VibeVoice 1.5B narrator and CPU quality-check environments,
     with pinned model/tokenizer downloads and ownership-checked runtime folders.
-  * With --narrator chatterbox, the legacy narrator: Python 3.11 + torch 2.6.0+cu124 +
-    chatterbox-tts 0.1.7 + transformers 5.2.0, from install/requirements-chatterbox.txt
+  * Chatterbox setup is now a separate explicit optional pack. Open
+    install/model_setup.py to review pinned downloads and separate dependency terms.
 
 Prerequisites it checks and reports on:
   * Miniforge/Anaconda        - required. Auto-installed silently with
@@ -33,12 +33,9 @@ Prerequisites it checks and reports on:
   * Ollama                    - OPTIONAL, only for scanned-image books (Path B).
                                 Never touched by this installer (hard project rule).
 
---prefetch-weights downloads Chatterbox's ~3 GB of TTS weights right after the
-chatterbox env is built, via install/bootstrap_weights.py. This is a plain
-HTTP download (huggingface_hub), no CUDA/inference involved, so a failure here
-is isolated from whether the GPU/torch stack itself works. Point of this flag:
-without it, the ~3 GB download happens silently on first narration instead,
-which is the single most common thing that makes a fresh install look broken.
+The legacy --prefetch-weights path is inactive for fresh Chatterbox installation.
+Core installation never downloads narrator weights. The optional model setup
+performs explicit verified downloads; narration does not fetch missing weights.
 """
 import argparse
 import json
@@ -430,6 +427,9 @@ def main():
                     help="allow missing WebView2 installation after reviewing Microsoft terms, diagnostics and automatic updates")
     args = ap.parse_args()
 
+    if args.narrator == "chatterbox" and not args.check_only:
+        ap.error("Use install/model_setup.py for the pinned optional Chatterbox pack, or install/bootstrap_chatterbox.py --plan to review explicit model/runtime consent. The legacy unpinned installer was not run.")
+
     # This check precedes installs, downloads and runtime-directory creation.
     machine = inventory(REPO)
     print(describe(machine))
@@ -467,7 +467,7 @@ def main():
     if args.narrator == "none":
         all_ok = base_ok
         cb_ok = False
-        user_warn("Core installed without a narrator download. Run setup.py with --narrator vibevoice or --narrator chatterbox to review hardware and model terms. Existing jobs and narrator settings were not changed.")
+        user_warn("Core installed without a narrator download. Open Storybird optional narrators (install/model_setup.py) to review hardware, model terms and supported downloads. Existing jobs and narrator settings were not changed.")
     elif args.narrator == "vibevoice":
         step("VibeVoice 1.5B and CPU quality checker in isolated runtimes")
         result = run([sys.executable, INSTALL / "bootstrap_vibevoice.py", "--install",
