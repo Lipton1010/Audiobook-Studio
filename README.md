@@ -1,124 +1,63 @@
-<p align="center"><img src="app/static/storybird-mark.svg" width="110" alt="Storybird mark"></p>
+# Storybird
 
-# Storybird · Audiobook Studio
+**A local Windows workspace for turning PDFs into chaptered audiobooks, with text and narration review along the way.**
 
-**Turn legally owned PDFs into locally generated, chaptered audiobooks, with review steps along the way.**
+![Storybird native Windows application, clean candidate workspace](docs/screenshots/storybird-candidate-workspace.png)
 
-[Requirements](#requirements) · [Source setup](#install) · [Run Storybird](#run) · [Narration engines](#narration-engines)
+*Actual native-app screenshot from the upcoming 1.1.0 candidate, captured in an isolated empty workspace. It contains no private books, voices or jobs. This is a development preview, not evidence that the public app installer has shipped.*
 
-![Storybird workflow: import and extract a legally owned book, review flagged passages and narrate, then export a chaptered audiobook](docs/portfolio/workflow.svg)
+## Release status
 
-*Workflow illustration, not an application screenshot. No book pages, voice samples or generated narration are included.*
+**The new Storybird Windows app beta is still being validated. No new public app installer is available yet.** The upcoming beta is scoped to the tested RTX 4090/Ada hardware. Physical 16 GB GPU support remains unverified.
 
-- **Keep the work local.** Extract and narrate on your own machine.
-- **Review what needs interpretation.** Keep visual passages, write a spoken description or skip them explicitly.
-- **Keep chapters navigable.** Export M4B with chapter markers, or choose MP3 or WAV.
+[**Available now: optional Drama runtime-only prerelease**](https://github.com/Lipton1010/Audiobook-Studio/releases/tag/drama-runtime-4e6018f-win64-ada-beta.1)
 
-Local PDF to audiobook pipeline for legally purchased books, personal use only. Storybird runs extraction and narration locally. The current source defaults new jobs to Drama 3 Q3. VibeVoice and Chatterbox remain legacy choices; saved jobs retain their recorded backend.
+That separate unsigned Windows x64 ZIP contains **no model weights and is not the Storybird application installer**. It targets NVIDIA Ada compute capability 8.9. Review its component terms, compatibility limits and SHA-256 before use. Do not overwrite a working runtime or assume it supports another GPU architecture.
 
-**Current source version: 1.0.7. Latest documented private beta installers: 1.0.7. No public GitHub installer release is published.** The source includes later narration and review changes beyond the September beta build. See [1.0.7 beta verification and limits](RELEASE_1_0_7.md); that historical beta report does not certify the current source or a new public release.
+The published source and earlier private 1.0.7 beta are distinct from the new 1.1.0 candidate described below. Historical [1.0.7 validation](RELEASE_1_0_7.md) does not certify the new installer. Application download links will be added only after exact-build validation and publication.
 
-In 1.0.7, selecting a voice imports it immediately, new audiobooks appear at the top of the main window, and additional books queue automatically. Right-click a finished book for artwork, export, regeneration, and deletion options. Advanced options include a restore-defaults button. The historical VibeVoice CPU-checking workflow supports bounded render-ahead. Current Drama 3 generation uses separate rendering and Parakeet GPU-checking phases.
+## The workflow
 
-## Optional Drama runtime prerelease
+1. Add a PDF you have the right to use and choose the pages to narrate.
+2. Review extracted text, chapter divisions and visual passages before rendering.
+3. Choose a supported narrator and a voice reference you are authorized to use.
+4. Generate locally, review flagged passages, then export the finished audiobook.
 
-[Download the Windows x64 / Ada runtime-only beta](https://github.com/Lipton1010/Audiobook-Studio/releases/tag/drama-runtime-4e6018f-win64-ada-beta.1). This separate, unsigned runtime ZIP contains **no model weights and is not the Storybird app installer**. It targets NVIDIA Ada GPUs (compute capability 8.9); review the release's compatibility limits, component licenses and SHA-256 before use.
+Storybird keeps resumable jobs and existing audio separate from text-review decisions. Books queue sequentially. OCR and speech generation do not run together on the GPU. Completed books have playback, download and export controls; M4B supports chapter navigation when the source and assembly metadata provide it.
 
-The updated application installer and its one-click optional model downloads are still being prepared. Model weights will download from their original pinned repositories after hardware and license review. This runtime prerelease does not change the app's license or existing narration jobs.
+No purchased books, voice samples or generated audiobooks are distributed with the application.
 
-## What's here
+## Upcoming 1.1.0 core and optional packs
 
-- `app/` — Audiobook Studio, a local web app wrapping the whole pipeline.
-  - `server.py` — stdlib HTTP server + job queue (base conda env). UI at http://localhost:8765. Runs every stage strictly sequentially so the OCR model and the TTS model never share the GPU.
-  - `pipeline_text.py` — extraction and tagging. Path A: text-layer PDFs (adaptive prose paragraphing uses first-line indents when present and vertical spacing otherwise; verse uses sentence-run grouping). Path B: PyMuPDF rasterize, GLM-OCR via Ollama, block tagging. Visual passages retain their extracted source and require review before narration. Both paths retain source-page provenance.
-  - `visual_review.py` — saved visual treatments and the narration adaptation, kept separately from original extraction.
-  - `narrate_worker.py` — Chatterbox narration subprocess (chatterbox conda env). Per-chunk WAV checkpoints make multi-hour narrations resumable; output is a single file, default **m4b with navigable chapters**, or mp3 / lossless wav. Chapter marks use detected top-level headings and fall back to accurately mapped PDF-outline entries when the outline is more complete. m4b/mp3 are encoded straight from the segments via ffmpeg.
-  - `convert_voice.py` — converts an uploaded voice sample (wav/mp3/flac/ogg) to a mono reference WAV for cloning.
-  - `static/index.html` — the UI: PDF import and library, jobs with live progress, voice upload and per-job voice selection. Completed jobs have an explicit audio download, an **Open output folder** button, safe segment-cache cleanup, and a compressed beta-test report containing the job and available setup logs.
-- `samples/` — the validated standalone scripts the app grew out of (`path_a.py`, `stage_two.py`, `harvest_lazy_dm.py`, `chunk_and_narrate.py`, `narrate_tagged.py`) and the Ollama `Modelfile` for the tuned `glm-ocr-doc` model.
-- `CLAUDE.md` — standing rules and current validated state of the project.
-- `Start_Audiobook_Studio.bat` — one-click launcher; opens the app in its own window (falls back to your browser if that fails).
-- `install/AudiobookStudio.iss` — Inno Setup script that builds a single `Setup_AudiobookStudio.exe` (see Install below). Build it with `install\build_installer.bat`, which stages a clean copy of the repo with `git archive` first so only tracked files can be packaged, then verifies the compiled installer against Inno's own `OutputManifestFile` and fails the build if any book, audio file, voice clip or local config got embedded. (Do not try to audit the .exe with 7-Zip; it cannot open an Inno-compiled installer.)
+These changes are in the release candidate, not a claim about older installers:
 
-Books (PDFs), audio, and generated jobs are gitignored; only code and docs are tracked.
+- **Core-first installation:** private Miniforge-based Python runtime, without downloading narrator weights by default.
+- **Optional narrator picker:** review the model source, terms, download size and local hardware check before downloading a supported pack. Existing jobs and narrator choices are not silently changed.
+- **PDF backend migration:** PDFium renders pages and pdfplumber/Pillow support extraction and image handling. The candidate replaces the PyMuPDF dependency. This is distinct from OCR: scanned-page recognition still uses the configured GLM-OCR workflow through Ollama.
+- **Native-window prerequisite:** Microsoft WebView2 is required. Existing usable installations are reused; installing a missing runtime requires a separate terms/diagnostics/update disclosure and opt-in. There is no silent browser fallback.
 
-For development validation, run `python -m unittest discover -s tests -v`. Release builds must also satisfy `RELEASE_CHECKLIST.md`.
+Complex layouts still need review. A successful novel extraction does not establish perfect reading order for every illustrated or multi-column PDF. OCR setup is separate and is not silently installed or changed.
 
-## Requirements
+## Narrator and hardware expectations
 
-You provide these; the installer sets up everything else, including Miniconda and ffmpeg if you don't already have them.
+The candidate checks GPU total/free VRAM, RAM and disk before optional setup and again before generation. Unknown device information is treated as unknown, not as a compatible GPU. Multiple GPUs do not have their memory added together.
 
-- **Windows** with an **NVIDIA CUDA GPU**. VibeVoice 1.5B has been exercised on a 24 GB RTX 4090; smaller cards have not been validated by this project. Text extraction alone works without a GPU.
-- The legacy Chatterbox setup requires roughly **15 GB free disk**. The new VibeVoice and CPU checker add separate environments and model weights; their complete fresh-install footprint has not yet been measured. Generated audiobooks require additional space.
-- **Your own** reference voice clip and books. The default voice sample is **not** shipped (see below), and PDFs are never included.
-- Optional: **Ollama** with the `glm-ocr-doc` model, only for scanned-image books (Path B):
-  ```
-  ollama pull glm-ocr
-  ollama create glm-ocr-doc -f samples/Modelfile
-  ```
+- **Drama 3 Q3:** optional Ada runtime and separately downloaded weights. Short synthetic speech has been tested on RTX 4090 24 GB. The candidate uses admission estimates of 20 GiB free VRAM and 22 GiB free RAM, with CPU expert offload. Allow approximately 50 GiB free setup disk as an estimate. These are not universal minimums or a long-book guarantee.
+- **VibeVoice 1.5B:** supported optional narrator path, with RTX 4090 evidence. Smaller cards are candidates, not validated devices; setup and generation estimates are not guarantees.
+- **Chatterbox:** retained for existing legacy jobs. A prior 16 GB laptop trial encountered OOM, so no 16 GB compatibility claim is made. Fresh reproducible provisioning is not presented as equivalent to the tested newer packs.
 
-## Install
+Drama's speech checker runs separately from generation. Voice/model licensing, context length, other GPU programs and available host RAM all affect usable configurations. The model picker lists the exact pack sources and terms. No model is automatically downloaded merely because it is selected for inspection.
 
-**No public installer is currently available on [GitHub Releases](https://github.com/Lipton1010/Audiobook-Studio/releases).** Private beta handoffs are separate from this source repository. Development builds use `install\\build_installer.bat` and must satisfy `RELEASE_CHECKLIST.md` before public release.
+## Privacy and licenses
 
-The latest documented private beta files are `Installer_AudiobookStudio_1.0.7.exe` for a new installation and `Patch_AudiobookStudio_1.0.7.exe` for an existing installation. Future handoffs use the same versioned naming pattern, without timestamp or hash suffixes. Superseded installers belong under `Old, do not use`. Build records identify source commits, sizes, and SHA-256 values; `RELEASE_CHECKLIST.md` determines release readiness. See [the beta handoff procedure](install/BETA_HANDOFF.md).
+Application books, jobs and audio are stored locally. Optional downloads contact the displayed upstream providers. Crash reporting is disabled by default; any configured reporting endpoint is an explicit local choice. Microsoft WebView2 has its own diagnostic-data and automatic-update behavior, separate from Storybird's reporting settings.
 
-**Private beta installer background.** One installer, no terminal. It installs a private Miniconda and ffmpeg, builds the app's Python environment, and pre-downloads the ~3 GB of TTS model weights so the first narration doesn't have to. The complete setup downloads several gigabytes and uses roughly 10 GB on disk, so have at least 15 GB free before starting. All large app-owned pieces are kept below the single Audiobook Studio installation folder instead of creating Miniconda and model-cache folders across your user profile. Double-click it, click through the wizard, and it's done — a shortcut is added to your Start Menu (and Desktop, if you check that box). Those shortcuts launch the app without showing a Command Prompt window. This installer is built from source with Inno Setup (see `install/AudiobookStudio.iss`) rather than distributed as a signed release, so Windows SmartScreen will probably warn that it's from an unknown publisher the first time. That's expected for an unsigned personal-project installer, not a sign anything is wrong. If you see a blue **"Windows protected your PC"** box, click **More info**, then **Run anyway**. If you were sent a SHA-256 alongside the file, you can confirm it first by running this in PowerShell:
+The owner selected **Apache-2.0 for original application code in the upcoming release**. Do not infer that this relicenses older snapshots, third-party dependencies or model weights. Each component and model keeps its own terms, including any noncommercial or conditional-use restrictions. Only use books, voices and media for which you have the necessary rights.
 
-```
-Get-FileHash .\Setup_AudiobookStudio.exe -Algorithm SHA256
-```
+## Development and validation
 
-If the wizard warns that **ffmpeg** could not be installed, the install is still fine: the app opens, WAV narration works, and the job dialog has an **Install ffmpeg** button that fetches it in one click and then re-enables the m4b and mp3 options. Only m4b and mp3 need it.
+The upcoming full installer and patch are built from a clean committed source snapshot using `install\build_installer.bat`. The build audits its manifest to exclude books, audio, voices, jobs and private configuration. The regression suite is `python -m unittest discover -s tests -v`; dependency-specific skips must be reported separately from passes.
 
-If the Python environment build fails or the wizard shows a warning box, everything after Miniconda is logged to `install_log.txt` in the install folder (usually `%LOCALAPPDATA%\Programs\AudiobookStudio`). Send that file. A Miniconda failure happens before that log exists, so send the error-code screenshot instead. You can retry the environment build without reinstalling by running `setup.bat` from that same folder.
+Fresh-install, native-window, upgrade/data-preservation and shutdown checks are tracked separately. An Alpha developer-machine run is not a clean-machine certification. See [the release checklist](RELEASE_CHECKLIST.md) for the repository's published gates; the candidate records the owner's narrower experimental-hardware scope separately until its source is published.
 
-The one-click folder layout is intentionally self-contained: `runtime/` holds private Miniconda, the Chatterbox environment, package caches, and model weights; `source_pdfs/` holds PDFs waiting to be processed; `processed_pdfs/` keeps app-imported sources after their audiobook completes; and `app/jobs/`, `app/voices/`, and `audiobooks/` hold user data. Windows still keeps the normal Start Menu shortcut and uninstall registration in its own system-managed locations. A source checkout continues to use the developer's existing conda installation unless `--runtime-root` is supplied explicitly.
-
-**From source, for development or if you'd rather see what's happening:**
-
-```
-setup.bat
-```
-
-This checks prerequisites, then prepares the base app dependencies plus separate VibeVoice and CPU speech-checking environments under `runtime/`. It downloads pinned VibeVoice 1.5B, tokenizer and speech-recognition weights before recording the verified paths. Existing unrelated environments and Ollama are not modified. Use `python setup.py --narrator chatterbox` to prepare the legacy narrator instead.
-
-Useful flags (all combinable): `--check-only` (report only, install nothing), `--auto-install-conda` (silently install Miniconda if missing), `--auto-install-ffmpeg` (fetch a static ffmpeg build into `tools\` if missing), `--prefetch-weights` (download the TTS weights now instead of on first narration), `--yes` (don't prompt).
-
-## Configure (optional)
-
-The app auto-detects your conda env and defaults every path relative to the repo, so it usually runs with no config. To override anything (folders, port, the chatterbox python), copy `app/config.example.json` to `app/config.json` and edit it. Settings can also come from environment variables. `app/config.json` is gitignored.
-
-## Provide a voice and books
-
-- **Voice:** the default narrator clip is not distributed. Upload your own in the UI (wav/mp3/flac/ogg), or drop a clip at `samples/Voice_Sample/male_ref.wav`. Per the project rule, a cloned voice must be **licensed, synthetic, or royalty-free** — not a real identifiable person without rights.
-- **Books:** click **Add PDF to library** in the app and choose a PDF you legally own. The app copies it into its managed `source_pdfs/` library. After the audiobook completes, that imported source moves to `processed_pdfs/` and leaves the active library; it is retained, not deleted. PDFs from `samples/` or another configured external `library_roots` folder are never moved.
-
-## Run
-
-Double-click `Start_Audiobook_Studio.bat` (or the Start Menu / Desktop shortcut if you used the installer). It opens Audiobook Studio in its own window — no browser tab, no address bar. Click **Add PDF to library**, choose **Create Audiobook**, review the recommended pipeline and starting page, then choose the voice, output format and page range.
-
-**First narration only, if you skipped the pre-fetch step above:** Chatterbox downloads about 3 GB of model weights with no progress bar. It can look frozen for several minutes; let it run. Later runs are fast, since the weights are cached.
-
-## Narration engines
-
-Current source defaults new jobs to **Drama 3 Q3**, with a separately configured native runtime and Parakeet checking. Legacy **VibeVoice 1.5B** and **Chatterbox** jobs keep their saved backend. The source setup commands in the Install section provision the legacy environments; they are not a complete fresh-machine installer for Drama 3. Hardware fit, runtime configuration and human listening remain separate checks.
-
-The following VibeVoice and Chatterbox notes describe the legacy engines. VibeVoice uses whole passages, native timing, and gain-only loudness adjustment. Its checkpoints and quality receipts are separate from Chatterbox's segment cache. The CPU speech checker rejects major missing or extra wording; it cannot certify pronunciation, naturalness, or the absence of every audible artifact.
-
-To reuse an existing VibeVoice environment without modifying it, run `install/bootstrap_vibevoice.py --configure-existing` with `--python`, `--model-dir`, `--cache-dir`, `--quality-python`, and `--quality-model`. `--check-only` verifies the same supplied paths without writing configuration. See `app/config.example.json` for portable configuration keys. Fresh runtime installation and installer execution are separate checks from narration in a verified existing environment.
-
-Storybird pauses after extraction when it flags visual passages. Select **Review narration text** to see each passage, nearby prose and its original PDF page when available. Choose **Keep as spoken text**, **Replace with a spoken description**, or **Skip: surrounding prose conveys it**. Save each treatment, optionally open **Inspect final narration text**, then select **Start narration**. The full-text preview is optional; unresolved treatments still block narration. Saved treatments can be revisited from the job's controls.
-
-Descriptions are manual adaptations, not automatic interpretations. Preserve important counts, changes, warnings and discovery order. If the graphic is missing, Storybird says so; do not reconstruct details absent from the source. Prose-only jobs continue through the ordinary workflow. See [visual review behavior and verification](VISUAL_REVIEW.md) for cached-job handling and test coverage.
-
-Chatterbox has two execution modes (default `batched`):
-
-- **`batched`** — generates several text chunks in one GPU pass. Much faster than the parallel engine on short/medium chunks; a VRAM budget keeps it from exceeding your card on long chunks. Verified to produce audio equivalent to the parallel engine.
-- **`parallel`** — the original one-chunk-at-a-time engine, run in several processes. Kept as a fallback (`v1-parallel` tag).
-
-Set the default with the `AUDIOBOOK_ENGINE` environment variable, or per job in the UI.
-
-## License
-
-Original application code is licensed under [Apache-2.0](LICENSE). Third-party dependencies and optional models retain their own licenses; see [NOTICE](NOTICE). This does not grant rights to books, voices or restricted model uses.
+Earlier setup documentation may refer to Miniconda, PyMuPDF or automatic narrator prefetch. Those describe historical builds, not the upcoming core-plus-optional-packs installer. Wait for the new release's verified assets and instructions rather than treating an old private installer as current.
