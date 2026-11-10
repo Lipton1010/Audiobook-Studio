@@ -26,7 +26,8 @@
 ;
 #define MyAppName "Storybird"
 #define MyAppDirName "AudiobookStudio"
-#define MyAppVersion "1.1.1"
+#define MyAppVersion "1.1.2"
+#define PatchBaseVersion "1.1.0"
 #define MyAppPublisher "Audiobook Studio"
 
 [Setup]
@@ -214,6 +215,8 @@ end;
 // is the point the main installer's own Miniconda check already proved safe
 // for this: returning a non-empty string aborts cleanly with that message.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  InstalledVersion: AnsiString;
 begin
   Result := '';
   PatchSetupOk := False;
@@ -223,8 +226,18 @@ begin
       'Could not find an existing Audiobook Studio install at:' + #13#10 +
       ExpandConstant('{app}') + #13#10#13#10 +
       'This patch only updates an app that is already installed. Please run ' +
-      'Setup_AudiobookStudio.exe (the full installer) first, then run this ' +
-      'patch again.';
+      'the full installer instead. This patch is only for version {#PatchBaseVersion}.';
+    exit;
+  end;
+  // Fail closed BEFORE copying files or provisioning anything. Only this base
+  // has measured upgrade coverage. Missing/unknown/newer versions are not tested.
+  if not LoadStringFromFile(ExpandConstant('{app}\app\VERSION'), InstalledVersion) then
+    InstalledVersion := '';
+  if Trim(String(InstalledVersion)) <> '{#PatchBaseVersion}' then
+  begin
+    Result := 'This beta patch requires Storybird {#PatchBaseVersion}. No application files were changed.' +
+      #13#10#13#10 + 'For other versions, back up books, voices, jobs, audiobooks and configuration first, then use the full installer. ' +
+      'Upgrades from older versions and their data preservation are unverified.';
     exit;
   end;
   if InstalledAppIsRunning() then
@@ -248,7 +261,7 @@ begin
       'required for the {#MyAppVersion} core upgrade:' + #13#10#13#10 +
       ExpandConstant('{app}\runtime\miniconda3') + #13#10#13#10 +
       'Run the {#MyAppVersion} full installer to repair or create the isolated runtime, ' +
-      'then run this patch again. Your books, voices, jobs, and audiobooks are preserved.';
+      'after backing up your data. Do not rerun this patch after a full installation.';
   end;
 end;
 
@@ -277,8 +290,8 @@ begin
            'will not launch so it cannot run with a partial runtime.' + #13#10#13#10 +
            'Full diagnostic log:' + #13#10 + LogPath + #13#10#13#10 +
            'Close the installer, fix the reported network or disk problem, and ' +
-           'run this patch again. Existing books, voices, jobs, and audiobooks ' +
-           'were not changed.', mbError, MB_OK, IDOK);
+           'use the full installer to repair the core after backing up your data. ' +
+           'This patch will not reapply after its version file has changed.', mbError, MB_OK, IDOK);
     exit;
   end;
   PatchSetupOk := True;
@@ -301,7 +314,7 @@ begin
     WizardForm.FinishedLabel.Caption :=
       'The patch copied its files, but core setup failed. The app was not ' +
       'launched. Read install_log.txt in the Audiobook Studio folder, then run ' +
-      'this patch again after fixing the reported problem.';
+      'the full installer for repair after backing up your data.';
 end;
 
 function GetCustomSetupExitCode(): Integer;

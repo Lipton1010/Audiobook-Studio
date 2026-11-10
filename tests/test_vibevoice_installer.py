@@ -39,6 +39,14 @@ class VibeVoiceInstallerTests(unittest.TestCase):
         self.assertIn('app\\narrate_worker.py', helper)
         self.assertIn('app\\vibevoice_worker.py', helper)
 
+    def test_patch_accepts_only_tested_base_before_process_or_runtime_checks(self):
+        self.assertIn('#define PatchBaseVersion "1.1.0"', self.patch)
+        gate = "if Trim(String(InstalledVersion)) <> '{#PatchBaseVersion}' then"
+        self.assertIn("LoadStringFromFile(ExpandConstant('{app}\\app\\VERSION'), InstalledVersion)", self.patch)
+        self.assertLess(self.patch.index(gate), self.patch.index('  if InstalledAppIsRunning() then'))
+        self.assertIn('data preservation are unverified', self.patch)
+        self.assertIn('This patch will not reapply', self.patch)
+
     def test_custom_dialogs_are_suppressible_for_silent_installs(self):
         for script in (self.full, self.patch):
             self.assertNotRegex(script, r'(?<!Suppressible)MsgBox\(')

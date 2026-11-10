@@ -5,7 +5,7 @@ the exact commit and installer artifact being published.
 
 ## Source and privacy
 
-- [ ] The exact 1.0.3 candidate `git status --short --branch` is clean and synchronized with the intended remote.
+- [ ] The exact 1.1.2 candidate `git status --short --branch` is clean and synchronized with the intended remote.
 - [x] Dependency-free regression tests pass: `python -m unittest discover -s tests -v`.
 - [x] Python and embedded JavaScript syntax checks pass.
 - [x] Current source and installer designs contain no live crash-report credential; reporting is local opt-in and disabled by default.
@@ -17,23 +17,24 @@ the exact commit and installer artifact being published.
 
 ## Installer artifact
 
-- [ ] Build 1.0.3 only with `install\build_installer.bat` and `install\build_installer.bat patch`; never compile the Inno file directly.
-- [ ] The 1.0.3 builds come from clean `HEAD` and record their commit, byte sizes, and SHA-256 at handoff.
-- [ ] Both 1.0.3 Inno output manifests pass the prohibited-content check, and source/artifact credential scans pass.
-- [ ] The built 1.0.3 executables are not committed to Git.
+- [ ] Build 1.1.2 only with `install\build_installer.bat` and `install\build_installer.bat patch`; never compile the Inno file directly.
+- [ ] The 1.1.2 builds come from clean `HEAD` and record their commit, byte sizes, and SHA-256 at handoff.
+- [ ] Both 1.1.2 Inno output manifests pass the prohibited-content check, and source/artifact credential scans pass.
+- [ ] The built 1.1.2 executables are not committed to Git.
 
 ## Exact-build clean-machine validation
 
-- [ ] Install on a clean Windows account or VM with no existing app runtime.
+- [x] Owner-approved beta scope change (2026-11-10): clean-PC WebView2 provisioning is explicitly UNVERIFIED. The Microsoft installer failed inside Windows Sandbox. Validate the exact candidate with existing WebView2; do not call that a clean-PC pass.
 - [ ] Observe the full wizard, disk-space copy, warnings, and Finished page.
-- [ ] Confirm the private Miniconda and all caches stay below the single app runtime folder.
+- [ ] Confirm the private Miniforge and all caches stay below the single app runtime folder.
 - [ ] Confirm the installed shortcut opens the native app without a console window.
 - [ ] Confirm `install_log.txt` exists and the diagnostic logs are usable.
 - [ ] Import a real PDF through the UI and confirm the recommended start page.
 - [ ] Generate a short CUDA narration with the installed build and verify the final audio.
 - [ ] In the installed pywebview window, save and inspect both a beta-report ZIP and finished audio.
 - [x] Owner-approved beta scope change (2026-11-10): experimental RTX 4090/Ada only. Physical 16 GB OOM/bisection testing remains NOT RUN; do not advertise 16 GB support. Restore this gate before expanding supported hardware.
-- [ ] Apply the patch to an actual 1.0.1 install and verify narration imports, audio downloads, and retained user data.
+- [x] Owner-approved beta scope change (2026-11-10): patch support is limited to 1.1.0. The original 1.0.1 installer was unavailable. Older-version full-installer upgrades and data preservation remain UNVERIFIED; recommend a backup.
+- [ ] Verify the exact patch refuses missing, older and newer version markers before app files change, and successfully upgrades the retained 1.1.0 installation copy.
 - [ ] Observe dedicated and shared GPU memory through a complete installed-build narration; a developer-machine allocator cap test is not a physical small-card test.
 - [ ] Close the app during a synthetic narration and confirm no owned GPU worker survives and no unrelated process is terminated.
 - [ ] Confirm M4B chapter navigation and the completed-job segment-cache cleanup action.
@@ -44,4 +45,4 @@ the exact commit and installer artifact being published.
 - [ ] Tag the exact validated commit.
 - [ ] Publish the exact validated installer and its SHA-256 as a GitHub Release asset.
 - [ ] Verify the README latest-release link and badge resolve to that release.
-- [ ] Keep release notes candid about Windows, NVIDIA/CUDA, disk usage, unsigned SmartScreen warnings, and the personal-use scope.
+- [ ] Keep release notes candid about Windows, NVIDIA/CUDA, disk usage, unsigned SmartScreen warnings, and separate application, component and model licensing. Drama portability remains experimental; do not claim the app twelve-layer configuration passed.

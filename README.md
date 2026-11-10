@@ -4,7 +4,7 @@
 
 ![Storybird native Windows application, clean candidate workspace](docs/screenshots/storybird-candidate-workspace.png)
 
-*Actual native-app screenshot from the upcoming 1.1.0 candidate, captured in an isolated empty workspace. It contains no private books, voices or jobs. This is a development preview, not evidence that the public app installer has shipped.*
+*Actual native-app screenshot from the 1.1.0 candidate, captured in an isolated empty workspace. It contains no private books, voices or jobs. This is a development preview, not evidence that the public app installer has shipped.*
 
 ## Release status
 
@@ -14,7 +14,7 @@
 
 That separate unsigned Windows x64 ZIP contains **no model weights and is not the Storybird application installer**. It targets NVIDIA Ada compute capability 8.9. Review its component terms, compatibility limits and SHA-256 before use. Do not overwrite a working runtime or assume it supports another GPU architecture.
 
-The published source and earlier private 1.0.7 beta are distinct from the new 1.1.0 candidate described below. Historical [1.0.7 validation](RELEASE_1_0_7.md) does not certify the new installer. Application download links will be added only after exact-build validation and publication.
+The published source and earlier private 1.0.7 beta are distinct from the new 1.1.2 candidate described below. Historical [1.0.7 validation](RELEASE_1_0_7.md) does not certify the new installer. Application download links will be added only after exact-build validation and publication.
 
 ## The workflow
 
@@ -27,11 +27,11 @@ Storybird keeps resumable jobs and existing audio separate from text-review deci
 
 No purchased books, voice samples or generated audiobooks are distributed with the application.
 
-## Upcoming 1.1.0 core and optional packs
+## Upcoming 1.1.2 core and optional packs
 
 These changes are in the release candidate, not a claim about older installers:
 
-- **Core-first installation:** private Miniforge-based Python runtime, without downloading narrator weights by default.
+- **Core-first installation:** private Miniforge-based Python runtime, without downloading any narrator model automatically.
 - **Optional narrator picker:** review the model source, terms, download size and local hardware check before downloading a supported pack. Existing jobs and narrator choices are not silently changed.
 - **PDF backend migration:** PDFium renders pages and pdfplumber/Pillow support extraction and image handling. The candidate replaces the PyMuPDF dependency. This is distinct from OCR: scanned-page recognition still uses the configured GLM-OCR workflow through Ollama.
 - **Native-window prerequisite:** Microsoft WebView2 is required. Existing usable installations are reused; installing a missing runtime requires a separate terms/diagnostics/update disclosure and opt-in. There is no silent browser fallback.
@@ -42,9 +42,9 @@ Complex layouts still need review. A successful novel extraction does not establ
 
 The candidate checks GPU total/free VRAM, RAM and disk before optional setup and again before generation. Unknown device information is treated as unknown, not as a compatible GPU. Multiple GPUs do not have their memory added together.
 
-- **Drama 3 Q3:** optional Ada runtime and separately downloaded weights. Short synthetic speech has been tested on RTX 4090 24 GB. The candidate uses admission estimates of 20 GiB free VRAM and 22 GiB free RAM, with CPU expert offload. Allow approximately 50 GiB free setup disk as an estimate. These are not universal minimums or a long-book guarantee.
+- **Drama 3 Q3:** separate experimental portability work, not a validated beta narration path. The standalone runtime smoke used its four-CPU-expert-layer default, not the app's twelve-layer configuration. The app configuration remains unverified. Its 20 GiB VRAM / 22 GiB RAM admission estimates are not measured minimums. Do not interpret the runtime download as proof that this configuration will fit your machine.
 - **VibeVoice 1.5B:** supported optional narrator path, with RTX 4090 evidence. Smaller cards are candidates, not validated devices; setup and generation estimates are not guarantees.
-- **Chatterbox:** retained for existing legacy jobs. A prior 16 GB laptop trial encountered OOM, so no 16 GB compatibility claim is made. Fresh reproducible provisioning is not presented as equivalent to the tested newer packs.
+- **Chatterbox original English:** explicit optional download with pinned official files and SHA-256 verification, a separate Python runtime, and offline loading. Fresh provisioning and short synthetic speech were tested on RTX 4090. The five model files total 3.19 GB; runtime downloads and unpacking require additional space. A short sample used about 3.2 GiB allocated/reserved CUDA memory, not a universal VRAM minimum. A prior 16 GB laptop trial encountered OOM; 16 GB support is unverified. Upstream retired this research project in August 2026. Upstream implements PerTh watermarking, but Storybird's existing worker uses a no-op watermark adapter: do not assume its output is watermarked. See [component notices](docs/CHATTERBOX_DEPENDENCIES.md).
 
 Drama's speech checker runs separately from generation. Voice/model licensing, context length, other GPU programs and available host RAM all affect usable configurations. The model picker lists the exact pack sources and terms. No model is automatically downloaded merely because it is selected for inspection.
 
@@ -57,6 +57,10 @@ The owner selected **Apache-2.0 for original application code in the upcoming re
 ## Development and validation
 
 The upcoming full installer and patch are built from a clean committed source snapshot using `install\build_installer.bat`. The build audits its manifest to exclude books, audio, voices, jobs and private configuration. The regression suite is `python -m unittest discover -s tests -v`; dependency-specific skips must be reported separately from passes.
+
+The beta patch accepts version **1.1.0 only** and refuses other or missing version markers before copying app files. For older versions, back up books, voices, jobs, audiobooks and configuration before considering the full installer. Older-version upgrades and their data preservation are **unverified**. A failed partial patch must be repaired with the full installer, not reapplied.
+
+Clean-PC WebView2 installation remains **unverified** after Windows Sandbox blocked the Microsoft installer. Testing with an already installed WebView2 runtime is not a fresh-PC certification. The owner approved this explicitly disclosed experimental-beta limitation.
 
 Fresh-install, native-window, upgrade/data-preservation and shutdown checks are tracked separately. An Alpha developer-machine run is not a clean-machine certification. See [the release checklist](RELEASE_CHECKLIST.md) for the repository's published gates; the candidate records the owner's narrower experimental-hardware scope separately until its source is published.
 
