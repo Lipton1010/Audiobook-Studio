@@ -235,8 +235,8 @@ begin
     InstalledVersion := '';
   if Trim(String(InstalledVersion)) <> '{#PatchBaseVersion}' then
   begin
-    Result := 'This beta patch requires Storybird {#PatchBaseVersion}. No application files were changed.' +
-      #13#10#13#10 + 'For other versions, back up books, voices, jobs, audiobooks and configuration first, then use the full installer. ' +
+    Result := 'This beta patch requires Storybird {#PatchBaseVersion}. No application files were changed.' + #13#10#13#10 +
+      'For other versions, back up books, voices, jobs, audiobooks and configuration first, then use the full installer. ' +
       'Upgrades from older versions and their data preservation are unverified.';
     exit;
   end;
