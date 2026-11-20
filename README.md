@@ -69,3 +69,11 @@ Clean-PC WebView2 installation remains **unverified** after Windows Sandbox bloc
 Fresh-install, native-window, upgrade/data-preservation and shutdown checks are tracked separately. An Alpha developer-machine run is not a clean-machine certification. See [the release checklist](RELEASE_CHECKLIST.md) for the repository's published gates; the candidate records the owner's narrower experimental-hardware scope separately until its source is published.
 
 Earlier setup documentation may refer to Miniconda, PyMuPDF or automatic narrator prefetch. Those describe historical builds, not this core-plus-optional-packs installer. Use the linked release's verified assets and instructions rather than treating an old private installer as current.
+
+### Narration word checking
+
+New jobs in the staged narration workflow use IBM Granite Speech 5.0 2B locally via Ollama. Install and start Ollama, run the command below, and make FFmpeg available on PATH before starting narration.
+
+    ollama pull ibm/granite5-speech:2b
+
+The check runs after the rendering phase releases the GPU. Only audio is sent to the local Ollama listener; the book's expected text is compared independently after recognition. Set narration_check_model to parakeet in the local app configuration to use the legacy checker for new jobs. Existing saved jobs retain their recorded checker, or Parakeet if no checker was recorded. This source change does not update a previously published installer.

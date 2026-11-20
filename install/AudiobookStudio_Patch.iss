@@ -101,6 +101,7 @@ Source: "..\app\vibevoice_units.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\vibevoice_worker.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\vibevoice_phases.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\vibevoice_quality.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\granite_check.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\narration_review.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\transcript_review.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\vibevoice_assembly.py"; DestDir: "{app}\app"; Flags: ignoreversion

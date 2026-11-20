@@ -201,6 +201,7 @@ class Config:
         )
         self.vibevoice_workflow = _pick("vibevoice_workflow", file_cfg, "overlap_cpu")
         self.vibevoice_render_workers = 2 if str(_pick("vibevoice_render_workers", file_cfg, 1)) == "2" else 1
+        self.narration_check_model = _pick("narration_check_model", file_cfg, "granite")
         self.parakeet_python = _pick("parakeet_python", file_cfg, "")
         self.parakeet_model = _pick("parakeet_model", file_cfg, "")
         self.drama3_executable = _pick("drama3_executable", file_cfg, "")

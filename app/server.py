@@ -193,15 +193,24 @@ def narration_backend(st):
     return st.get("backend") if st.get("backend") in BACKENDS else "chatterbox"
 
 
-def missing_drama3_error():
+def missing_main_check_error():
+    if CFG.narration_check_model not in {"granite", "parakeet"}:
+        return "Set narration_check_model to granite or parakeet."
+    if CFG.narration_check_model == "granite":
+        import granite_check
+        return granite_check.setup_error()
     from vibevoice_quality import parakeet_setup_error
+    return parakeet_setup_error(CFG.parakeet_python, CFG.parakeet_model)
+
+
+def missing_drama3_error():
     for key in ("drama3_executable", "drama3_model"):
         value = getattr(CFG, key, "")
         if not value or not Path(value).is_file():
             return f"Drama 3 is not configured. Set {key} to the tested native Q3 runtime asset."
     if not CFG.drama3_cuda_bin or not Path(CFG.drama3_cuda_bin).is_dir():
         return "Drama 3 CUDA libraries are missing. Configure drama3_cuda_bin."
-    return parakeet_setup_error(CFG.parakeet_python, CFG.parakeet_model)
+    return missing_main_check_error()
 
 
 def missing_vibevoice_error(inference=None):
@@ -231,8 +240,7 @@ def missing_vibevoice_error(inference=None):
     if not shards or any(not (model_dir / shard).is_file() for shard in shards):
         return "VibeVoice model weights are incomplete. Re-run the VibeVoice setup check before creating a job."
     if CFG.vibevoice_workflow == "generate_first_parakeet_v1":
-        from vibevoice_quality import parakeet_setup_error
-        return parakeet_setup_error(CFG.parakeet_python, CFG.parakeet_model)
+        return missing_main_check_error()
     if CFG.vibevoice_workflow != "overlap_cpu":
         return "Unknown narration workflow. Configure overlap_cpu or generate_first_parakeet_v1."
     if not CFG.vibevoice_quality_python or not Path(CFG.vibevoice_quality_python).exists():
@@ -1461,13 +1469,13 @@ def _run_vibevoice_narration(st, job_dir, blocks):
         config["render_workers"] = prior_config.get("render_workers", 1)
         config["transcript_review"] = prior_config.get("transcript_review", False)
         config['unit_boundary_policy'] = prior_config.get('unit_boundary_policy', 'legacy_v1')
-        for key in ("parakeet_python", "parakeet_model", "spoken_projection", "delivery_profiles",
+        for key in ("parakeet_python", "parakeet_model", "narration_check_model", "spoken_projection", "delivery_profiles",
                     "unit_boundary_policies", "repair_model", "repair_unit_ids"):
             if key in prior_config:
                 config[key] = prior_config[key]
     else:
         config.update(workflow=CFG.vibevoice_workflow, parakeet_python=CFG.parakeet_python,
-                      parakeet_model=CFG.parakeet_model, render_workers=CFG.vibevoice_render_workers)
+                      parakeet_model=CFG.parakeet_model, narration_check_model=CFG.narration_check_model, render_workers=CFG.vibevoice_render_workers)
     config["inference_backend"] = inference
     if inference == "compiled":
         config.update(vibevoice_plan.runtime_profile(config))
@@ -1488,6 +1496,7 @@ def _run_drama3_narration(st, job_dir, blocks):
         "drama3_model": CFG.drama3_model, "drama3_cuda_bin": CFG.drama3_cuda_bin,
         "drama3_reference_profiles": CFG.drama3_reference_profiles,
         "parakeet_python": CFG.parakeet_python, "parakeet_model": CFG.parakeet_model,
+        "narration_check_model": CFG.narration_check_model,
     }
     if config.get("backend") != "drama3":
         raise ValueError("This saved job belongs to another narrator. Create a new job to use Drama 3.")
@@ -1981,6 +1990,7 @@ def _narration_progress(job_dir, st):
     progress_stale = False
     worker_status = None
     parakeet_check = False
+    checker_name = "Parakeet"
     progress_fraction = None
     verified_fraction = None
     generated_progress = False
@@ -1995,6 +2005,13 @@ def _narration_progress(job_dir, st):
             total = int(progress.get("total", st.get("vibevoice_total", total)))
             worker_status = progress.get("status")
             parakeet_check = progress.get("workflow") == "generate_first_parakeet_v1"
+            if parakeet_check:
+                try:
+                    saved = json.loads((job_dir / "vibevoice_config.json").read_text(encoding="utf-8"))
+                    if saved.get("narration_check_model") == "granite":
+                        checker_name = "Granite Speech"
+                except (OSError, ValueError):
+                    pass
             if parakeet_check and worker_status == "generating":
                 n = int(progress.get("render_workers", 1))
             review_passages = int(progress.get("review_passages", 0))
@@ -2027,14 +2044,14 @@ def _narration_progress(job_dir, st):
         eta = None
         message = "assembling"
     elif progress_stale:
-        message = (("checking words with Parakeet on GPU; waiting for the next update, time estimate unavailable" if parakeet_check else
+        message = ((f"checking words with {checker_name} on GPU; waiting for the next update, time estimate unavailable" if parakeet_check else
                     "checking words on CPU; waiting for the next update, time estimate unavailable")
                    if worker_status == "quality_check" else
                    "current batch is taking longer than expected; time estimate unavailable")
     elif worker_status == "checking_cache":
         message = "checking resumable passages"
     elif worker_status == "quality_check":
-        message = ("checking generated clips with Parakeet on GPU" if parakeet_check else
+        message = (f"checking generated clips with {checker_name} on GPU" if parakeet_check else
                    "checking generated passage quality: comparing words on CPU")
     elif worker_status == "transcript_review":
         message = "reviewing transcript differences with the local language model on GPU"

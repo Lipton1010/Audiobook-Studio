@@ -115,7 +115,7 @@ def _run_phase(job, config, phase):
         # Prepare this shared, immutable reference before either child opens it.
         w._prepare_voice(job, config, plan)
     print(f"Starting {phase} phase with {workers} worker(s); the previous GPU phase has exited.", flush=True)
-    python = config["parakeet_python"] if phase == "check" else sys.executable
+    python = config["parakeet_python"] if phase == "check" and config.get("narration_check_model", "parakeet") == "parakeet" else sys.executable
     command = [python, "-X", "utf8", str(Path(__file__).resolve()), str(job), "--phase", phase]
     processes = []
     owners = []
@@ -322,7 +322,11 @@ def run_generate(job):
     plan, config = w.load_plan(job)
     if config.get("workflow") != WORKFLOW:
         raise ValueError("The book is not configured for the Parakeet workflow")
-    error = parakeet_setup_error(config.get("parakeet_python"), config.get("parakeet_model"))
+    if config.get("narration_check_model", "parakeet") == "granite":
+        import granite_check
+        error = granite_check.setup_error()
+    else:
+        error = parakeet_setup_error(config.get("parakeet_python"), config.get("parakeet_model"))
     if error:
         raise RuntimeError(error)
     for folder in (job / w.SEGMENTS_DIR, job / w.REJECTED_DIR,
@@ -496,28 +500,38 @@ def check_phase(job, plan, config):
         return
     _cancel(job)
     w._assert_no_ocr()
-    import torch
-    transcribe = load_transcriber(config)
-
-    for offset in range(0, len(rows), 4):
-        _cancel(job)
-        batch = rows[offset:offset + 4]
-        _progress(job, plan, "quality_check", batch[0])
-        transcripts = w.bisect_cuda_oom(batch, transcribe, torch)
-        if len(transcripts) != len(batch):
-            raise RuntimeError("Parakeet did not return one transcript per clip")
-        for row, transcript in zip(batch, transcripts):
+    granite = config.get("narration_check_model", "parakeet") == "granite"
+    if granite:
+        import granite_check
+        transcribe = granite_check.load()
+        checker_id, checker_revision = granite_check.MODEL, granite_check.REVISION
+    else:
+        import torch
+        transcribe = load_transcriber(config)
+        checker_id, checker_revision = MODEL_ID, MODEL_REVISION
+    try:
+        for offset in range(0, len(rows), 4):
             _cancel(job)
-            unit = row["unit"]
-            report = w.assess(unit.get("spoken_text", unit["text"]), transcript)
-            report.update(transcript=transcript, checker=MODEL_ID, checker_revision=MODEL_REVISION)
-            if row.get("generation"):
-                report["generation"] = row["generation"]
-            path = job / w.SEGMENTS_DIR / PENDING_DIR / f"check_{unit['index']:06d}_{time.time_ns()}.json"
-            w._write_json(path, report)
-            row.update(status="checked", report=str(path))
-            _save(job, row)
-        _progress(job, plan, "quality_check", batch[-1])
+            batch = rows[offset:offset + 4]
+            _progress(job, plan, "quality_check", batch[0])
+            transcripts = transcribe(batch) if granite else w.bisect_cuda_oom(batch, transcribe, torch)
+            if len(transcripts) != len(batch):
+                raise RuntimeError("The checker did not return one transcript per clip")
+            for row, transcript in zip(batch, transcripts):
+                _cancel(job)
+                unit = row["unit"]
+                report = w.assess(unit.get("spoken_text", unit["text"]), transcript)
+                report.update(transcript=transcript, checker=checker_id, checker_revision=checker_revision)
+                if row.get("generation"):
+                    report["generation"] = row["generation"]
+                path = job / w.SEGMENTS_DIR / PENDING_DIR / f"check_{unit['index']:06d}_{time.time_ns()}.json"
+                w._write_json(path, report)
+                row.update(status="checked", report=str(path))
+                _save(job, row)
+            _progress(job, plan, "quality_check", batch[-1])
+    finally:
+        if granite:
+            granite_check.close()
 
 
 if __name__ == "__main__":
